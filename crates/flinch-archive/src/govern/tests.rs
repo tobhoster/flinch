@@ -1,6 +1,6 @@
 use super::*;
 use crate::arr::{SeasonStats, SeriesSeason};
-use crate::capacity::{AppDisks, CapacityAction, RecycleBin, RootFolder, Volume};
+use crate::capacity::{AppDisks, CapacityAction, Credit, RecycleBin, RootFolder, Volume};
 use std::collections::BTreeMap;
 use rstest::rstest;
 
@@ -68,7 +68,7 @@ fn governed(used_gb: u64, ceiling: f32, release: f32) -> (Governance, ArchivePol
         &[show(7, Some("/media/tv/Seven"), &[1, 2])],
     );
     let mut policy = ArchivePolicy::default();
-    let governance = govern(library, volume_of, |_| true, &settings(ceiling, release), &Latch::default(), BTreeMap::new(), &mut policy);
+    let governance = govern(library, volume_of, |_| true, &settings(ceiling, release), &Latch::default(), OnDisk::default(), &mut policy);
     (governance, policy)
 }
 
@@ -105,7 +105,7 @@ fn malformed_watermarks_govern_nothing_and_say_so(#[case] ceiling: f32, #[case] 
 #[test]
 fn no_library_volume_is_unmeasured() {
     let mut policy = ArchivePolicy::default();
-    let governance = govern(LibraryVolumes::default(), HashMap::new(), |_| true, &RuntimeSettings::default(), &Latch::default(), BTreeMap::new(), &mut policy);
+    let governance = govern(LibraryVolumes::default(), HashMap::new(), |_| true, &RuntimeSettings::default(), &Latch::default(), OnDisk::default(), &mut policy);
     assert_eq!(governance.decision.action, CapacityAction::Unmeasured);
     assert!(!governance.invalid_watermarks);
 }
@@ -136,20 +136,22 @@ fn an_item_on_no_governed_disk_says_it_is_never_evicted() {
     assert_eq!(governance.held_reason("radarr-2"), "Eligible, but no governed disk holds it — never evicted");
 }
 
-#[test]
-fn a_volume_waiting_on_its_recycle_bin_explains_the_hold() {
+#[rstest]
+#[case::recycle_bin(Credit { pending: 40 * GB, held: 0 }, "Eligible — held while /media's recycle bin releases space already evicted")]
+#[case::never_released(
+    Credit { pending: 0, held: 40 * GB },
+    "Eligible — held while /media waits for space handed over earlier that the disk has not released"
+)]
+fn a_volume_waiting_on_credited_space_explains_the_hold(#[case] credit: Credit, #[case] reason: &str) {
     let library = library(90);
     let volume_of = volume_map(&library, &[movie(1, Some("/media/movies/One"))], &[]);
-    let pending = BTreeMap::from([("/media".to_string(), 40 * GB)]);
+    let on_disk = OnDisk { credit: BTreeMap::from([("/media".to_string(), credit)]), ..OnDisk::default() };
     let mut policy = ArchivePolicy::default();
-    let governance = govern(library, volume_of, |_| true, &settings(0.80, 0.75), &Latch::default(), pending, &mut policy);
-    assert_eq!(
-        governance.held_reason("radarr-1"),
-        "Eligible — held while /media's recycle bin releases space already evicted"
-    );
+    let governance = govern(library, volume_of, |_| true, &settings(0.80, 0.75), &Latch::default(), on_disk, &mut policy);
+    assert_eq!(governance.held_reason("radarr-1"), reason);
     let status = governance.status(&[], []).expect("measured");
-    assert_eq!((status.goal_bytes, status.pending_bytes), (0, 40 * GB));
-    assert_eq!(status.goal_met, Some(true), "the in-flight bytes already cover the gap");
+    assert_eq!((status.goal_bytes, status.pending_bytes, status.held_bytes), (0, credit.pending, credit.held));
+    assert_eq!(status.goal_met, Some(true), "the credited bytes already cover the gap: nothing more is evicted for it");
 }
 
 #[test]
@@ -160,7 +162,7 @@ fn an_item_flinch_cannot_hand_over_never_counts_toward_a_goal() {
     let located = volume_map(&library, &[movie(1, Some("/media/movies/One")), movie(2, Some("/media/movies/Two"))], &[]);
     let mut policy = ArchivePolicy::default();
     let governance =
-        govern(library, located, |id| id != "radarr-2", &settings(0.80, 0.75), &Latch::default(), BTreeMap::new(), &mut policy);
+        govern(library, located, |id| id != "radarr-2", &settings(0.80, 0.75), &Latch::default(), OnDisk::default(), &mut policy);
     assert_eq!(governance.volume_for("radarr-2").as_deref(), Some("/media"), "still shown on its disk");
     assert_eq!(
         governance.held_reason("radarr-2"),

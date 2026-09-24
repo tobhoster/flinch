@@ -64,8 +64,19 @@ export default function MaintainerrSync({ sync: s }) {
             <span className="num text-fg">{s.operator_keeps}</span> kept by your own Maintainerr exclusions{s.error ? ' (as last read)' : ''}. <Explain term="operator_keeps" />
           </li>
         )}
+        {s.released_gone > 0 && (
+          <li>
+            <span className="num text-fg">{s.released_gone}</span> {s.released_gone === 1 ? 'item' : 'items'} gone from Plex: FLINCH released its own exclusions for {s.released_gone === 1 ? 'it' : 'them'}.
+            {' '}<Explain term="released_gone" />
+          </li>
+        )}
         {(s.problems || []).map((problem) => (
           <li key={problem} className="break-words text-state-warn">{problem}</li>
+        ))}
+        {(s.warnings || []).map((warning) => (
+          <li key={warning} className="break-words text-state-warn">
+            <span className="text-fg-muted">Advice:</span> {warning}
+          </li>
         ))}
       </ul>
     </section>

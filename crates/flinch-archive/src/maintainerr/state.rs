@@ -12,7 +12,7 @@
 use super::{MaintainerrTarget, Observed};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 const PROTECTED_FILE: &str = "protected.json";
@@ -100,6 +100,19 @@ impl OwnedState {
     /// Every exclusion row id FLINCH owns. Any other row is the operator's.
     pub fn exclusion_ids(&self) -> BTreeSet<i64> {
         self.protected.values().flat_map(|entry| entry.exclusion_ids.iter().copied()).collect()
+    }
+
+    /// Cards whose FLINCH exclusion protects nothing any more: not in this
+    /// cycle's library, and Plex — listed completely (`listed`, every
+    /// ratingKey it returned) — no longer holds the item. An exclusion on an
+    /// item Plex does not have can never stop a deletion, so releasing it is
+    /// safe; anything short of that proof keeps it.
+    pub fn vanished(&self, is_card: impl Fn(&str) -> bool, listed: &HashSet<String>) -> BTreeSet<String> {
+        self.protected
+            .iter()
+            .filter(|(card_id, entry)| !is_card(card_id) && !listed.contains(entry.target.item_key()))
+            .map(|(card_id, _)| card_id.clone())
+            .collect()
     }
 
     /// Drop what Maintainerr no longer holds: rows gone from an observed key,

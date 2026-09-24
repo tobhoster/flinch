@@ -45,7 +45,11 @@
     "pending_bytes": 0,
     "handed_bytes": 0,
     "covered": null,
-    "goal_met": null
+    "goal_met": null,
+    "held_bytes": 0,
+    "held": [],
+    "library_bytes": 307850322775,
+    "untracked_bytes": 120956443817
    }
   ],
   "unmatched_roots": [
@@ -54,7 +58,9 @@
    "sonarr:/data/media/tv-b"
   ],
   "pending_bytes": 0,
-  "handed_bytes": 0
+  "handed_bytes": 0,
+  "held_bytes": 0,
+  "untracked_bytes": 120956443817
  },
  "eligible_bytes": 2605970320,
  "last_error": null,
@@ -87,7 +93,9 @@
   "operator_keeps": 5,
   "unresolved": 2,
   "deferred": 0,
-  "problems": []
+  "problems": [],
+  "released_gone": 0,
+  "warnings": []
  },
  "inflow": {
   "premium": 19,
@@ -280,5 +288,370 @@
     }
    }
   }
- }
+ },
+ "outside_deletions": [
+  {
+   "id": "radarr-1",
+   "title": "The Garganey Code",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": false
+  },
+  {
+   "id": "radarr-24",
+   "title": "Harrier Field",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "radarr-26",
+   "title": "Tern Island",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": true
+  },
+  {
+   "id": "radarr-30",
+   "title": "Gannet Rock Radio",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "radarr-32",
+   "title": "The Whimbrel Letters",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "radarr-36",
+   "title": "Moorhen Lock",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": true
+  },
+  {
+   "id": "radarr-38",
+   "title": "The Rail at Dusk",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": true
+  },
+  {
+   "id": "radarr-40",
+   "title": "Dipper Creek",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "radarr-41",
+   "title": "The Fulmar Watch",
+   "season_label": null,
+   "kind": "movie",
+   "at_unix": 1789920466,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-22-s1",
+   "title": "Godwit Flats",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1789920387,
+   "files": 5,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-26-s1",
+   "title": "The Long Migration",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1789920387,
+   "files": 5,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-21-s1",
+   "title": "Starling Road",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1789920386,
+   "files": 8,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-21-s2",
+   "title": "Starling Road",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1789920386,
+   "files": 8,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-21-s3",
+   "title": "Starling Road",
+   "season_label": "S3",
+   "kind": "season",
+   "at_unix": 1789920386,
+   "files": 8,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-11-s2",
+   "title": "The Bittern Tapes",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1789920385,
+   "files": 20,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-11-s3",
+   "title": "The Bittern Tapes",
+   "season_label": "S3",
+   "kind": "season",
+   "at_unix": 1789920385,
+   "files": 13,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-23-s5",
+   "title": "Linnet and the Lighthouse",
+   "season_label": "S5",
+   "kind": "season",
+   "at_unix": 1789704009,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-23-s4",
+   "title": "Linnet and the Lighthouse",
+   "season_label": "S4",
+   "kind": "season",
+   "at_unix": 1789704008,
+   "files": 13,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-23-s3",
+   "title": "Linnet and the Lighthouse",
+   "season_label": "S3",
+   "kind": "season",
+   "at_unix": 1789704007,
+   "files": 12,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-23-s2",
+   "title": "Linnet and the Lighthouse",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1789704006,
+   "files": 12,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-23-s1",
+   "title": "Linnet and the Lighthouse",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1789704005,
+   "files": 13,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-25-s4",
+   "title": "Dotterel Ridge",
+   "season_label": "S4",
+   "kind": "season",
+   "at_unix": 1789235698,
+   "files": 1,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-8-s1",
+   "title": "Waxwing Hotel",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1788321608,
+   "files": 8,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-7-s1",
+   "title": "The Grebe Affair",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1788321607,
+   "files": 12,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-7-s2",
+   "title": "The Grebe Affair",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1788321607,
+   "files": 12,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-14-s2",
+   "title": "Lapwing Downs",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1788321606,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-14-s3",
+   "title": "Lapwing Downs",
+   "season_label": "S3",
+   "kind": "season",
+   "at_unix": 1788321606,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-14-s1",
+   "title": "Lapwing Downs",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1788321605,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-1-s7",
+   "title": "Sandpiper County",
+   "season_label": "S7",
+   "kind": "season",
+   "at_unix": 1788321604,
+   "files": 6,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": true
+  },
+  {
+   "id": "sonarr-13-s2",
+   "title": "Curlew Marsh",
+   "season_label": "S2",
+   "kind": "season",
+   "at_unix": 1787760008,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-13-s3",
+   "title": "Curlew Marsh",
+   "season_label": "S3",
+   "kind": "season",
+   "at_unix": 1787760008,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-13-s1",
+   "title": "Curlew Marsh",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1787760007,
+   "files": 10,
+   "reason": "manual",
+   "monitored": true,
+   "on_disk": false
+  },
+  {
+   "id": "sonarr-5-s1",
+   "title": "Under the Rookery",
+   "season_label": "S1",
+   "kind": "season",
+   "at_unix": 1787760005,
+   "files": 1,
+   "reason": "manual",
+   "monitored": false,
+   "on_disk": false
+  }
+ ]
 }

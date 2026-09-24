@@ -18,6 +18,9 @@
 //! - Keep wins: a card in both lists is only protected.
 //! - A broken Leaving Soon collection blocks announced items; it never sends
 //!   them to the delete collection instead.
+//! - Gone: an exclusion FLINCH made for an item Plex no longer holds (see
+//!   [`OwnedState::vanished`]) protects nothing and is released. Only
+//!   FLINCH's own rows go; the operator's stay.
 
 use super::validate::{self, CollectionTitles, Handover, Misconfigured, Route};
 use super::{CollectionInfo, ExclusionRow, MaintainerrTarget, MaintainerrVersion, OwnedState};
@@ -56,6 +59,12 @@ pub struct Desired {
     /// Evictions nobody has watched: announced in Leaving Soon before they go.
     pub announced: BTreeSet<String>,
     pub collections: CollectionTitles,
+    /// Cards whose FLINCH exclusion protects nothing any more: the item left
+    /// the library and Plex (see [`OwnedState::vanished`]).
+    pub gone: BTreeSet<String>,
+    /// Maintainerr has Seerr configured, so a collection that leaves Seerr
+    /// requests behind is worth a warning.
+    pub seerr_configured: bool,
 }
 
 /// What Maintainerr holds, as read this cycle.
@@ -181,6 +190,10 @@ pub struct SyncPlan {
     /// Leaving Soon collections that took items this cycle, by id: a
     /// schedule into one is an announcement, not a deletion.
     pub leaving: BTreeSet<i64>,
+    /// Cards whose exclusions are released because their item is gone.
+    pub gone: BTreeSet<String>,
+    /// Collection settings that leave cleanup undone; nothing is blocked.
+    pub warnings: Vec<String>,
 }
 
 /// A covering row FLINCH does not own means the operator keeps the item.
@@ -216,6 +229,8 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         already_scheduled: 0,
         already_protected: 0,
         leaving: BTreeSet::new(),
+        gone: BTreeSet::new(),
+        warnings: validate::cleanup_warnings(&observed.collections, &desired.collections, desired.seerr_configured),
     };
     let routes: &[Route] = match desired.collections.route(true) {
         Route::LeavingSoon => &[Route::Delete, Route::LeavingSoon],
@@ -340,6 +355,22 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
             plan.already_protected += 1;
         } else {
             plan.actions.push(SyncAction::Protect { card_id: id, target });
+        }
+    }
+
+    // An exclusion on an item Plex no longer holds protects nothing: release
+    // FLINCH's own rows for it. A card still kept or evicted is never gone.
+    for id in desired.gone.iter().filter(|id| !keep.contains(id.as_str()) && !evicting.contains(id.as_str())) {
+        let Some(entry) = owned.protected.get(id) else { continue };
+        let Some(rows) = observed.exclusions.get(entry.target.media_id()) else { continue };
+        let releases: Vec<SyncAction> = rows
+            .iter()
+            .filter(|row| entry.exclusion_ids.contains(&row.id))
+            .map(|row| SyncAction::RemoveExclusion { card_id: id.clone(), target: entry.target.clone(), exclusion_id: row.id })
+            .collect();
+        if !releases.is_empty() {
+            plan.gone.insert(id.clone());
+            plan.actions.extend(releases);
         }
     }
 

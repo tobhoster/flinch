@@ -6,7 +6,7 @@
 
 use crate::arr::{ArrMovie, ArrSeries};
 use crate::capacity::{
-    decide_capacity, App, CapacityDecision, CapacitySnapshot, CapacityStatus, Latch, LibraryVolumes, Watermarks,
+    decide_capacity, App, CapacityDecision, CapacitySnapshot, CapacityStatus, Latch, LibraryVolumes, OnDisk, Watermarks,
 };
 use crate::daemon::RuntimeSettings;
 use crate::plan::{ReclaimGoal, VolumeGoals, VolumeOutcome};
@@ -50,9 +50,9 @@ pub struct Governance {
     pub located: HashMap<String, String>,
     /// The operator's watermarks were outside 0 < release ≤ ceiling ≤ 1.
     pub invalid_watermarks: bool,
-    /// Evicted bytes still held by recycle bins, per volume (see
-    /// [`crate::capacity::EvictionLedger`]); credited against each goal.
-    pub pending: BTreeMap<String, u64>,
+    /// Library bytes and still-credited evictions per volume (see
+    /// [`crate::capacity::EvictionLedger`]): credits come off each goal.
+    pub on_disk: OnDisk,
 }
 
 /// Measure, decide, and set the plan's goal. May arm the never-played rule on
@@ -68,19 +68,20 @@ pub fn govern(
     evictable: impl Fn(&str) -> bool,
     settings: &RuntimeSettings,
     latch: &Latch,
-    pending: BTreeMap<String, u64>,
+    on_disk: OnDisk,
     policy: &mut ArchivePolicy,
 ) -> Governance {
     let marks = Watermarks::new(settings.capacity_ceiling, settings.capacity_release);
     let snapshot = marks.and_then(|marks| CapacitySnapshot::of(&library.volumes, marks));
-    let decision = decide_capacity(policy, snapshot.as_ref(), latch, settings.capacity_arm_never_played, &pending);
+    let decision =
+        decide_capacity(policy, snapshot.as_ref(), latch, settings.capacity_arm_never_played, &on_disk.credit_totals());
     let volume_of: HashMap<String, String> = located
         .iter()
         .filter(|(id, _)| evictable(id))
         .map(|(id, volume)| (id.clone(), volume.clone()))
         .collect();
     let goal = ReclaimGoal::PerVolume(VolumeGoals { goals: decision.goals.clone(), volume_of, handed: HashSet::new() });
-    Governance { invalid_watermarks: marks.is_none(), library, snapshot, decision, goal, located, pending }
+    Governance { invalid_watermarks: marks.is_none(), library, snapshot, decision, goal, located, on_disk }
 }
 
 impl Governance {
@@ -119,6 +120,9 @@ impl Governance {
         };
         let percent = |fraction: f64| (fraction * 100.0).round();
         match self.decision.goals.get(volume) {
+            Some(0) if self.on_disk.credit.get(volume).is_some_and(|credit| credit.held > 0) => format!(
+                "Eligible — held while {volume} waits for space handed over earlier that the disk has not released"
+            ),
             Some(0) => format!(
                 "Eligible — held while {volume}'s recycle bin releases space already evicted"
             ),
@@ -148,7 +152,7 @@ impl Governance {
                 *total = total.saturating_add(bytes);
             }
         }
-        Some(CapacityStatus::new(snapshot, &self.decision, outcomes, &self.library.unmatched_roots, &self.pending, &per_volume))
+        Some(CapacityStatus::new(snapshot, &self.decision, outcomes, &self.library.unmatched_roots, &self.on_disk, &per_volume))
     }
 }
 

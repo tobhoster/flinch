@@ -1,21 +1,24 @@
 //! The hand-off to Maintainerr, once per cycle: everything FLINCH keeps — the
 //! reserve included — becomes an exclusion, evictions past the grace window
 //! join a collection (least regret first, within the caps): Leaving Soon when
-//! nobody finished them, their kind's delete collection otherwise. Every
+//! nobody finished them, their kind's delete collection otherwise. FLINCH's
+//! exclusions on items gone from the library and Plex are released. Every
 //! verified add or take-back is booked in the eviction ledger.
 
 use super::sink::Sink;
 use super::state_dir;
-use flinch_archive::capacity::{App, EvictionLedger};
+use flinch_archive::capacity::{App, EvictionLedger, HandedOver};
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::{self as mx, MaintainerrError, OwnedState, SyncItem};
 use flinch_archive::{LibraryKind, ReconcileOutput};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// This cycle's decisions, as the hand-off needs them.
 pub(super) struct Handoff<'a> {
     /// Every card with its Plex ids, by card id.
     pub(super) items: &'a HashMap<&'a str, &'a SyncItem>,
+    /// Card id → title, booked with each hand-over for the operator.
+    pub(super) names: &'a HashMap<&'a str, &'a str>,
     pub(super) report: &'a ReconcileOutput,
     /// Evictions past the grace window, in eviction order.
     pub(super) eligible: &'a [String],
@@ -23,6 +26,11 @@ pub(super) struct Handoff<'a> {
     pub(super) caps: mx::Caps,
     pub(super) enforcing: bool,
     pub(super) now: u64,
+    /// Every ratingKey Plex listed completely this cycle; `None` proves nothing
+    /// gone, so no exclusion is released.
+    pub(super) plex_listed: Option<&'a HashSet<String>>,
+    /// Whether Maintainerr has Seerr configured; `None` when unread.
+    pub(super) seerr: Option<bool>,
 }
 
 /// Sync Maintainerr with the cycle's decisions and book the ledger. An
@@ -37,7 +45,7 @@ pub(super) async fn sync(
     ledger: &mut EvictionLedger,
     operator_keeps: usize,
 ) -> mx::SyncSummary {
-    let Handoff { items, report, eligible, titles, caps, enforcing, now } = handoff;
+    let Handoff { items, names, report, eligible, titles, caps, enforcing, now, plex_listed, seerr } = handoff;
     let observed = match observed {
         Ok(observed) => observed,
         Err(error) => return mx::SyncSummary::unavailable(&error, !enforcing, operator_keeps),
@@ -57,6 +65,8 @@ pub(super) async fn sync(
         evict: pick(eligible),
         announced: report.announced_ids.clone(),
         collections: titles.clone(),
+        gone: plex_listed.map(|listed| owned.vanished(|id| items.contains_key(id), listed)).unwrap_or_default(),
+        seerr_configured: seerr == Some(true),
     };
     let plan = mx::plan_sync(&desired, &observed, owned, &caps);
     let synced = mx::execute(api, plan, &observed, owned, now).await;
@@ -72,7 +82,8 @@ pub(super) async fn sync(
             Some(LibraryKind::Season) => App::Sonarr,
             None => continue,
         };
-        ledger.record(card_id, app, &volume, bytes, now);
+        let title = names.get(card_id).copied().unwrap_or_default();
+        ledger.record(HandedOver { id: card_id, title, app, volume: &volume, bytes }, now);
     }
     // Taken back: nothing of theirs is on its way out any more.
     for card_id in synced.unscheduled() {

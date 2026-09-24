@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/overview.png" alt="The FLINCH Overview: disk use against the 80% ceiling, the forecast model scored against Laya, and why each item is kept" width="900">
+  <img src="docs/screenshots/overview.png" alt="The FLINCH Overview: disk use against the 80% ceiling, how much of the disk isn't library media, the forecast model scored against Laya, and why each item is kept" width="900">
 </p>
 
 ---
@@ -44,9 +44,17 @@
 - **Never touches what you protect.** Favorites, your keep tag, the newest aired
   season and your own Maintainerr exclusions are off limits. Missing evidence
   means keep.
+- **Says where the space went.** Each disk shows how much of it isn't library
+  media, and any space an eviction should have freed that something still holds.
+- **Keeps Maintainerr tidy.** It releases its own exclusions for items that are
+  gone, and lists deletions it did not make and which will download again.
 
 FLINCH decides *what* goes. [Maintainerr](https://github.com/Maintainerr/Maintainerr)
 does the deleting, on its own schedule.
+
+<p align="center">
+  <img src="docs/screenshots/cleanup.png" alt="The Maintainerr sync and the deletions FLINCH did not make: what Radarr and Sonarr removed without it, and which titles will download again" width="500">
+</p>
 
 ## 🧠 How it works
 
@@ -152,11 +160,15 @@ settings, running as a CronJob, and keeping your own values out of git.
   *delete*.
 - **Two floors.** An item must clear both the model's floor and yours
   (P(safe) ≥ 0.75 by default) before it can even be a candidate.
-- **Deletes only through Maintainerr.** FLINCH never deletes a file itself.
-  Every Maintainerr write is read back; a failed one is retried, never assumed.
+- **Deletes only through Maintainerr.** FLINCH never deletes a file itself and
+  never writes to Radarr or Sonarr. Every Maintainerr write is read back; a
+  failed one is retried, never assumed.
 - **Per disk, never pooled.** Freeing the TV disk never counts toward a full
   movie disk, and bytes still in a recycle bin are credited, so nothing is
   deleted twice for the same gap.
+- **Space that never frees is reported, not chased.** Bytes a seeding torrent
+  or a snapshot still holds after an eviction are reported and stay credited
+  for up to 14 days, so FLINCH evicts nothing more for them.
 
 The web UI has no login. Keep it on your LAN or behind your proxy's auth; see
 [Security](deploy/README.md#security).
@@ -180,10 +192,10 @@ The web UI has no login. Keep it on your LAN or behind your proxy's auth; see
 
 ## 🚧 Status
 
-- **485 tests pass**, with table-driven cases and property tests on everything
+- **516 tests pass**, with table-driven cases and property tests on everything
   that decides a deletion: eviction order, watermark latching, recycle-bin
-  credit, identity joins, Maintainerr sync, Leaving Soon routing and the
-  forecast's no-leakage rules.
+  credit and the freed-bytes check, identity joins, Maintainerr sync and
+  exclusion releases, Leaving Soon routing and the forecast's no-leakage rules.
 - **Running on one homelab** with enforcement on since 2026-09-22. All 34
   keep-exclusions FLINCH wrote are found in Maintainerr every cycle, and the
   daily fit has adopted the recalibrated model (out-of-fold AUC 0.84, Brier

@@ -93,7 +93,15 @@ export const GLOSSARY = {
   },
   pending: {
     term: 'Waiting for the recycle bin',
-    body: 'Evicted files the *arr recycle bin still holds. They count toward the goal, so FLINCH does not evict more to cover space that is already on its way out.',
+    body: 'Evicted files the *arr recycle bin still holds. They count toward the goal, so FLINCH does not evict more to cover space that is already on its way out. When the window passes, FLINCH checks the disk really dropped by the item’s size; if it has not, the space becomes held.',
+  },
+  untracked: {
+    term: 'Not library media',
+    body: 'Used space that is neither library media nor an eviction FLINCH still counts as on its way out: downloads, recycle bins of other deletions, files no app tracks. FLINCH cannot free it by evicting, so look there first when a disk fills up.',
+  },
+  held: {
+    term: 'Held space',
+    body: 'After an eviction’s recycle-bin window FLINCH checks the disk dropped by the item’s size, and keeps counting it during a 2-day grace. If no drop shows by then, the space is held: something else still holds the bytes, typically a torrent seeding the same hardlinked file or a filesystem snapshot. FLINCH keeps counting held space toward the goal, so it evicts nothing more for it, for up to 14 days after it was marked held or until the drop shows.',
   },
   evidence_complete: {
     term: 'Complete watch evidence',
@@ -115,6 +123,14 @@ export const GLOSSARY = {
     term: 'Your own exclusions',
     body: 'Items you excluded in Maintainerr yourself are kept like favorites. FLINCH never schedules them and never removes an exclusion it did not create.',
   },
+  released_gone: {
+    term: 'Released for gone items',
+    body: 'FLINCH releases the exclusions it created for an item only when it is proven gone: Radarr or Sonarr has no file for it this run and a complete Plex listing no longer has it. An exclusion on an item Plex no longer has can never stop a deletion; anything short of that proof keeps it. Your own exclusions are never touched.',
+  },
+  outside_deletions: {
+    term: 'Deleted outside FLINCH',
+    body: 'Movies and seasons Radarr or Sonarr removed in the last 30 days that FLINCH did not hand to Maintainerr, from their history (read once a day). A removal is FLINCH’s when it handed the item over no later than that; hand-overs are remembered for 120 days. Monitored means the *arr still wants it, so with nothing on disk it will be downloaded again.',
+  },
   quality_tier: {
     term: 'Quality tier (advice)',
     body: 'Recyclarr defines a premium and a compact profile; FLINCH advises which one an item deserves from the same calibrated evidence (P(safe) at least 85% → compact, below 40% → premium, guards and keeps always premium). It never changes profiles on its own.',
@@ -124,9 +140,9 @@ export const GLOSSARY = {
 /** Card layout: heading, then the glossary keys in reading order. */
 export const GLOSSARY_SECTIONS = [
   ['Scoring', ['p_safe', 'model', 'taste', 'score_floor', 'temperature']],
-  ['Freeing space', ['eligible', 'watermarks', 'eviction_order', 'pending', 'grace_runs', 'never_played', 'dry_run']],
+  ['Freeing space', ['eligible', 'watermarks', 'eviction_order', 'pending', 'held', 'untracked', 'grace_runs', 'never_played', 'dry_run']],
   ['Evidence', ['evidence', 'evidence_complete']],
-  ['Maintainerr', ['maintainerr', 'leaving_soon', 'unresolved', 'operator_keeps']],
+  ['Maintainerr', ['maintainerr', 'leaving_soon', 'unresolved', 'operator_keeps', 'released_gone', 'outside_deletions']],
   ['Quality', ['quality_tier']],
   ['Why items are held', ['held_reserve', 'not_governed', 'held_no_evidence', 'held_evidence', 'held_yours', 'held_newest', 'held_no_date', 'held_floor', 'held_empty', 'held_excluded']],
 ];

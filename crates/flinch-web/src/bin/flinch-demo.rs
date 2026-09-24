@@ -34,6 +34,9 @@ const STATUS_TIMES: &[&str] = &[
 const ITEM_TIMES: &[&str] = &["/last_aired_epoch", "/handed_at", "/leaves_at"];
 const SPAN_TIMES: &[&str] = &["/from", "/to"];
 const HISTORY_TIMES: &[&str] = &["/ran_at_unix"];
+/// Into each `outside_deletions` entry, and each held eviction of each volume.
+const OUTSIDE_TIMES: &[&str] = &["/at_unix"];
+const HELD_TIMES: &[&str] = &["/held_since", "/until"];
 
 struct Snapshot {
     status: Value,
@@ -66,6 +69,15 @@ fn build(now: i64) -> Result<Snapshot> {
     let ran_at = snapshot.status["ran_at_unix"].as_i64().context("embedded status.json has no ran_at_unix")?;
     let delta = now - RUN_AGE_S - ran_at;
     shift(&mut snapshot.status, STATUS_TIMES, delta);
+    for deletion in snapshot.status.get_mut("outside_deletions").and_then(Value::as_array_mut).into_iter().flatten() {
+        shift(deletion, OUTSIDE_TIMES, delta);
+    }
+    let volumes = snapshot.status.pointer_mut("/capacity/volumes").and_then(Value::as_array_mut);
+    for volume in volumes.into_iter().flatten() {
+        for held in volume.get_mut("held").and_then(Value::as_array_mut).into_iter().flatten() {
+            shift(held, HELD_TIMES, delta);
+        }
+    }
     for item in snapshot.items.as_array_mut().into_iter().flatten() {
         shift(item, ITEM_TIMES, delta);
         for span in item.get_mut("on_disk").and_then(Value::as_array_mut).into_iter().flatten() {

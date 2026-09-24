@@ -234,6 +234,11 @@ pub struct SyncSummary {
     /// Verified this cycle.
     pub exclusions_added: usize,
     pub exclusions_removed: usize,
+    /// Cards whose FLINCH exclusions on items Plex no longer holds were
+    /// released: they protected nothing. Their rows count in
+    /// `exclusions_removed`.
+    #[serde(default)]
+    pub released_gone: usize,
     pub scheduled: usize,
     pub scheduled_bytes: u64,
     /// Of `scheduled`: verified adds into Leaving Soon — announced, not yet
@@ -258,6 +263,10 @@ pub struct SyncSummary {
     pub deferred: usize,
     /// Version gate, misconfigured collections and blocked items, in words.
     pub problems: Vec<String>,
+    /// Collection settings that leave cleanup undone after a deletion, in
+    /// words. Nothing is blocked by them.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 impl SyncSummary {
@@ -277,6 +286,7 @@ impl SyncSummary {
             operator_keeps: plan.operator_keeps.len(),
             unresolved: plan.unresolved.len(),
             deferred: plan.deferred.len(),
+            warnings: plan.warnings.clone(),
             ..Self::default()
         };
         if matches!(plan.handover, Handover::Refused { .. }) {
@@ -284,6 +294,7 @@ impl SyncSummary {
         }
         summary.problems.extend(plan.misconfigured.iter().map(ToString::to_string));
         summary.problems.extend(plan.blocked.iter().map(|(card_id, reason)| format!("{card_id}: {reason}")));
+        let mut released_gone: BTreeSet<&str> = BTreeSet::new();
         for (action, outcome) in report.results() {
             if let (Outcome::Done | Outcome::DryRun, SyncAction::Schedule { collection_id, bytes, .. }) = (outcome, action) {
                 if plan.leaving.contains(collection_id) {
@@ -293,7 +304,12 @@ impl SyncSummary {
             }
             match (outcome, action) {
                 (Outcome::Done, SyncAction::Protect { .. }) => summary.exclusions_added += 1,
-                (Outcome::Done, SyncAction::RemoveExclusion { .. }) => summary.exclusions_removed += 1,
+                (Outcome::Done, SyncAction::RemoveExclusion { card_id, .. }) => {
+                    summary.exclusions_removed += 1;
+                    if plan.gone.contains(card_id) {
+                        released_gone.insert(card_id.as_str());
+                    }
+                }
                 (Outcome::Done, SyncAction::Schedule { bytes, .. }) => {
                     summary.scheduled += 1;
                     summary.scheduled_bytes = summary.scheduled_bytes.saturating_add(*bytes);
@@ -304,6 +320,7 @@ impl SyncSummary {
                 (Outcome::Skipped, _) => summary.skipped += 1,
             }
         }
+        summary.released_gone = released_gone.len();
         summary
     }
 }

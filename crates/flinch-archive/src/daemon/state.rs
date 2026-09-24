@@ -178,6 +178,10 @@ pub struct StatusSnapshot {
     /// model scored against FLINCH on the same household panel.
     #[serde(default)]
     pub benchmark: Option<crate::fit::bench::Benchmark>,
+    /// Files Radarr or Sonarr removed lately that FLINCH did not hand over,
+    /// newest first, with whether each will download again.
+    #[serde(default)]
+    pub outside_deletions: Vec<crate::outside::OutsideDeletion>,
 }
 
 /// Tier advice across the library, for the status page.

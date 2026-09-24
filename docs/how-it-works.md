@@ -35,8 +35,26 @@ wrong thing:
 - **The recycle bin is credited.** Radarr/Sonarr delete into a recycle bin on the
   same disk, so freed space shows up late. FLINCH keeps a ledger of what it
   handed over and credits those bytes against the goal until the bin's window
-  (read live from each app) passes — otherwise every cycle in that window would
-  evict a second batch for the same gap.
+  (read live from each app) passes and the disk shows them freed — otherwise
+  every cycle in that window would evict a second batch for the same gap.
+- **Freed space is checked, not assumed.** After an eviction's recycle-bin
+  window, FLINCH checks that the disk dropped by the item's size, and keeps
+  crediting the bytes for a 2-day grace. If no drop shows by then, the eviction
+  is *held*: something else still holds the bytes, typically a torrent seeding
+  the same hardlinked file, or a filesystem snapshot. Held bytes stay credited
+  against the goal, so nothing more is evicted for them, and are reported, for
+  up to 14 days after they were marked held or until the drop shows (then the
+  credit ends). An eligible item on such a disk says why it waits: "held while
+  /movies waits for space handed over earlier that the disk has not released".
+  Downloads in flight can hide a drop for a while: the error is then a held
+  report and less eviction, never more. Imports can fake one: the credit then
+  ends at the window, as before.
+- **Space that isn't library media is named.** Every disk line in the log and
+  the Storage card say how much of the disk is neither library media nor an
+  eviction FLINCH still credits: used − library − credited evictions, never
+  below zero. Downloads, the recycle bins of other deletions and files no app
+  tracks land there. It is shown before anything is evicted, because over the
+  ceiling those leftovers are otherwise paid for with library titles.
 - **More aggressive only on measured evidence.** An unmeasured disk, malformed
   watermarks or an unreadable app evict *nothing*.
 - **"Covered" and "met" are different claims.** The status says whether the
@@ -104,6 +122,35 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
   an announced item back out and restart its window. The item table shows
   "Leaves Oct 7" once an item is handed over.
 
+## Deletions FLINCH did not make
+
+Files also leave through other doors: someone deletes a title in Radarr or
+Sonarr, a script or Maintainerr's own rules use their API, or a file vanishes
+from disk behind the app's back. The Overview lists those removals, so a gap
+in the library has a name, and says which will download again.
+
+- **From the *arr history.** FLINCH reads Radarr and Sonarr history once a day,
+  so a removal can show up to a day late. The list covers the last 30 days,
+  newest first, at most 50 entries. Each says whether it was deleted through
+  the app (its UI, or anything holding its API key: a person, a script,
+  Maintainerr's own rules), went missing from disk, or left some other way,
+  and how many files left (a season counts each episode).
+- **FLINCH's own are left out.** A removal counts as FLINCH's when FLINCH
+  handed the item to Maintainerr no later than the removal. Hand-overs are
+  remembered while FLINCH tracks the eviction and for 120 days after the
+  hand-over, unless FLINCH took the item back.
+- **Monitored with nothing on disk will download again.** Each entry says
+  whether the app still monitors the item (for a season: the show and the
+  season both) and whether a file is back. Monitored with nothing on disk
+  means Radarr or Sonarr will fetch it again. Turn on "Unmonitor Deleted
+  Movies" in Radarr and "Unmonitor Deleted Episodes" in Sonarr (Settings →
+  Media Management) so a file deleted outside FLINCH is not downloaded again.
+- **Only deletions that left the entry behind.** Items the app no longer has
+  are left out, and a movie removed from Radarr entirely takes its history
+  with it, so it cannot be listed.
+- **A report, nothing more.** FLINCH changes nothing in Radarr or Sonarr
+  because of it.
+
 ## Integrations, by identity — never by title
 
 Titles are not identity ("Superman" is two films; a localized Plex title matches
@@ -111,10 +158,10 @@ nothing). Every join goes through catalogue ids:
 
 | System | FLINCH reads | FLINCH writes |
 | --- | --- | --- |
-| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, tags, root folders with their free space, disks, recycle-bin settings | nothing today (see Recyclarr) |
+| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, each season's monitored flag, tags, root folders with their free space, disks, recycle-bin settings; import and removal history, once a day | nothing today (see Recyclarr) |
 | **Plex** | every library, paged, with `includeGuids`; each show's seasons with their episode counts (`/children`, because the section's own season listing leaves the counts out); full history; accounts; labels and collections named like the keep tag; episode GUIDs of a show whose season counts disagree | nothing |
 | **Tautulli** | full history, paged, per user; each user's and library's `keep_history` switch | nothing |
-| **Maintainerr** | version, collections with their windows and Plex visibility, memberships, exclusions | exclusions for kept items, collection adds for evictions (Leaving Soon or delete) — by Plex ratingKey |
+| **Maintainerr** | version, whether Seerr is configured, collections with their *arr action, windows, Plex visibility and "Force delete Seerr request", memberships, exclusions | exclusions for kept items, collection adds for evictions (Leaving Soon or delete), release of its own exclusions for items proven gone — by Plex ratingKey |
 
 - **Plex ↔ *arr** join by GUID (`tmdb://`, `tvdb://`, `imdb://`). A season joins
   when Plex's episode count equals Sonarr's file count; when they differ, it
@@ -139,6 +186,28 @@ nothing). Every join goes through catalogue ids:
   movies and seasons to their own collections within per-run caps, and verifies
   every write by reading it back. With enforcement off it reads the live state
   and prints every write it would send.
+- **Exclusions for gone items are released.** FLINCH releases the exclusions
+  it created for an item only once it is proven gone: no file in this cycle's
+  complete Radarr/Sonarr read, *and* absent from a complete Plex listing
+  (every movie, show and season ratingKey Plex returned). An exclusion on an
+  item Plex no longer holds can never stop a deletion, so releasing it is
+  safe; anything short of that proof keeps it. Exclusions the operator made
+  are never touched.
+- **Season collections need an action Maintainerr runs.** A season collection
+  must use *arr action 0, 2 or 5 ("Unmonitor and delete season", "Unmonitor
+  and delete existing episodes", or the same and delete the show if empty).
+  Maintainerr refuses "Unmonitor and delete all" (1) for seasons, so FLINCH
+  reports it as a problem and hands that collection nothing.
+- **Seerr requests are a warning, not a block.** With Seerr configured in
+  Maintainerr, a collection FLINCH hands to whose "Force delete Seerr request"
+  is off leaves the title's Seerr request behind until Seerr's availability
+  sync notices, so it cannot be requested again at once. FLINCH warns and
+  keeps handing over.
+- **All deleting stays in Maintainerr.** FLINCH never writes to Radarr or
+  Sonarr. Maintainerr removes the movie from Radarr or unmonitors and deletes
+  the season's episodes, removes the torrent with its data when seeding is
+  done, rescans Plex, and removes the Seerr request when "Force delete Seerr
+  request" is on.
 - **Secrets stay out of logs.** Plex and Tautulli take their token in the URL;
   FLINCH strips the URL from every error before printing the full cause.
 
@@ -276,9 +345,10 @@ Any other key, a wrong type, or an item with no forecast returns 400
 
 `flinch-web` serves a React UI next to a passive JSON API over the files the
 daemon publishes — no keys, no writes to the stack. It shows each disk against
-its watermarks, what is being freed and what is waiting on a recycle bin, every
-item's forecast and decision in plain words, the forecast model's standing, the
-Maintainerr sync, evidence health, and a glossary for every term.
+its watermarks, what is being freed, what is waiting on a recycle bin, what is
+held and what isn't library media, every item's forecast and decision in plain
+words, the forecast model's standing, the Maintainerr sync with its warnings,
+deletions FLINCH did not make, evidence health, and a glossary for every term.
 
 **Is it working?** The header says so on every tab: a green dot before
 "Last run …" when the last cycle succeeded on schedule, red "Overdue" when no
@@ -330,6 +400,10 @@ All of these fail closed: the affected items are kept, never deleted.
 - A file whose import the *arr history never recorded counts only from its
   current file date, and time on disk that the history proves but cannot date
   is left out.
+- The freed-bytes check reads one number per disk, not the item's own files.
+  A download in flight can hide a drop, so the eviction is reported held and
+  less is evicted; an import can fake one, so the credit ends at the window,
+  as it did before the check existed.
 - Plays from before a Plex library migration join only through Tautulli's
   `plex://` GUIDs: Plex's own history rows carry none, and legacy agent GUIDs
   never join.

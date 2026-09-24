@@ -48,6 +48,7 @@ pub(super) fn collection(id: i64, title: &str, media_type: &str, library_id: &st
         visible_on_recommended: false,
         keep_in_maintainerr_only: false,
         overlay_enabled: false,
+        force_seerr: false,
     }
 }
 

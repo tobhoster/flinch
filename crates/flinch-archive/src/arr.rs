@@ -146,6 +146,9 @@ pub struct SeasonStats {
 #[serde(rename_all = "camelCase")]
 pub struct SeriesSeason {
     pub season_number: u32,
+    /// Whether Sonarr searches for this season's missing episodes.
+    #[serde(default)]
+    pub monitored: Option<bool>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub statistics: SeasonStats,
     /// Newest file arrival in this season (from `/api/v3/episodefile`, filled

@@ -27,6 +27,7 @@ pub mod ids;
 pub mod inflow;
 pub mod score;
 pub mod persist;
+pub mod outside;
 pub mod presence;
 pub mod shadow;
 pub mod tautulli;

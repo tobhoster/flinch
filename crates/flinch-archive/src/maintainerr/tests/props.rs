@@ -1,7 +1,7 @@
 //! Invariants of the planner and executor over generated libraries: mixes of
-//! movies and seasons, resolved or not, kept, evicted or neither, with
-//! operator exclusions, FLINCH-owned exclusions or memberships, and members
-//! added by operator rules.
+//! movies and seasons, resolved or not, kept, evicted, neither or gone from
+//! the library and Plex, with operator exclusions, FLINCH-owned exclusions or
+//! memberships, and members added by operator rules.
 
 use super::super::{
     execute, observe, plan_sync, Caps, Desired, Observed, Outcome, OwnedState, ProtectedEntry, ScheduledEntry,
@@ -39,13 +39,24 @@ struct Card {
     operator_row: bool,
     owned: Owned,
     rule_member: bool,
+    /// Left the library and Plex: not a card any more, only owned state.
+    gone: bool,
 }
 
 fn card() -> impl Strategy<Value = Card> {
     let decision = prop_oneof![Just(Decision::Protect), Just(Decision::Evict), Just(Decision::Neither)];
     let owned = prop_oneof![Just(Owned::Nothing), Just(Owned::Exclusion), Just(Owned::Membership)];
-    (any::<bool>(), prop::bool::weighted(0.8), decision, 1u64..40, prop::bool::weighted(0.25), owned, prop::bool::weighted(0.2))
-        .prop_map(|(season, resolved, decision, gib, operator_row, owned, rule_member)| Card {
+    (
+        any::<bool>(),
+        prop::bool::weighted(0.8),
+        decision,
+        1u64..40,
+        prop::bool::weighted(0.25),
+        owned,
+        prop::bool::weighted(0.2),
+        prop::bool::weighted(0.3),
+    )
+        .prop_map(|(season, resolved, decision, gib, operator_row, owned, rule_member, gone)| Card {
             season,
             resolved,
             decision,
@@ -53,6 +64,7 @@ fn card() -> impl Strategy<Value = Card> {
             operator_row: operator_row && !matches!(owned, Owned::Exclusion),
             owned,
             rule_member,
+            gone: gone && matches!(decision, Decision::Neither),
         })
 }
 
@@ -67,7 +79,14 @@ struct World {
 fn world(cards: &[Card]) -> World {
     let mut fake = Fake::new(current(), valid_collections());
     let mut owned = OwnedState::default();
-    let mut desired = Desired { protect: Vec::new(), evict: Vec::new(), announced: Default::default(), collections: titles() };
+    let mut desired = Desired {
+        protect: Vec::new(),
+        evict: Vec::new(),
+        announced: Default::default(),
+        collections: titles(),
+        gone: BTreeSet::new(),
+        seerr_configured: false,
+    };
     let (mut all, mut operator_rows) = (Vec::new(), BTreeSet::new());
     for (index, spec) in cards.iter().enumerate() {
         let id = format!("card-{index}");
@@ -96,6 +115,10 @@ fn world(cards: &[Card]) -> World {
         }
         if spec.rule_member {
             fake.members.entry(collection).or_default().insert(target.item_key().to_string());
+        }
+        if spec.gone {
+            desired.gone.insert(id);
+            continue;
         }
         let card = item(&id, kind, spec.resolved.then_some(plex), spec.gib * GIB);
         match spec.decision {

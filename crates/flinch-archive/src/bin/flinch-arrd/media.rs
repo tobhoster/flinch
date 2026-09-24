@@ -31,6 +31,9 @@ pub(super) struct PlexFetch {
     /// ratingKeys the operator marked to keep: items labelled with the keep
     /// tag, and members of a collection with that title.
     pub keep_keys: HashSet<String>,
+    /// Every movie, show and season ratingKey the sections listed: what Plex
+    /// holds, as proof an item is gone only when `items_complete`.
+    pub listed: HashSet<String>,
 }
 
 struct PlexClient<'a> {
@@ -210,7 +213,17 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
         if history_complete { "" } else { " (INCOMPLETE)" },
         if multi_account { "several accounts" } else { "one account" },
     );
-    Ok(PlexFetch { library: PlexLibrary::new(&movies, &shows, &seasons), history, items_complete, history_complete, multi_account, keep_keys })
+    let listed: HashSet<String> =
+        movies.iter().chain(&shows).chain(&seasons).map(|row| row.rating_key.clone()).filter(|key| !key.is_empty()).collect();
+    Ok(PlexFetch {
+        library: PlexLibrary::new(&movies, &shows, &seasons),
+        history,
+        items_complete,
+        history_complete,
+        multi_account,
+        keep_keys,
+        listed,
+    })
 }
 
 /// A show's episodes with their TVDB ids (`allLeaves`), for confirming a season

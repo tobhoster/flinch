@@ -10,6 +10,7 @@
 //! `movieFolderImported` is "not used yet" (Radarr `History.cs` line 47) and
 //! Sonarr never writes `seriesFolderImported`; both read as imports anyway.
 
+use crate::outside::{Removal, RemovalReason};
 use crate::presence::{self, Change, FileEvent};
 use serde::Deserialize;
 
@@ -109,5 +110,21 @@ impl HistoryRecord {
             (None, None) => return None,
         };
         Some((card, FileEvent { at, record: self.id, episode, change }))
+    }
+
+    /// The file this record removed: a deletion or a disappearance, not a
+    /// swap for a newer file (an upgrade, or Radarr's manual override).
+    pub fn removal(&self) -> Option<Removal> {
+        let (card, event) = self.file_event()?;
+        if event.change != Change::Removed {
+            return None;
+        }
+        let reason = match self.data.as_ref().and_then(|data| data.reason) {
+            Some(DeleteReason::Manual) => RemovalReason::Manual,
+            Some(DeleteReason::MissingFromDisk) => RemovalReason::MissingFromDisk,
+            Some(DeleteReason::NoLinkedEpisodes | DeleteReason::Upgrade | DeleteReason::ManualOverride | DeleteReason::Other)
+            | None => RemovalReason::Other,
+        };
+        Some(Removal { card, at: event.at, reason })
     }
 }

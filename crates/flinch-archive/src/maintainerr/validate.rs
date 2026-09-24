@@ -63,7 +63,7 @@ pub enum CollectionProblem {
     WrongType { found: String },
     Inactive,
     /// The collection's *arr action frees nothing (unmonitor only, or nothing),
-    /// or it is an action a movie cannot take.
+    /// or it is an action Maintainerr cannot run for the kind.
     ArrAction { found: i64 },
     /// A Leaving Soon collection that acts on Maintainerr's next run.
     NoWarningWindow,
@@ -100,9 +100,13 @@ impl fmt::Display for Misconfigured {
             ),
             (CollectionProblem::WrongType { found }, _) => write!(f, " holds {found} items, not {kind}s"),
             (CollectionProblem::Inactive, _) => write!(f, " is inactive"),
-            (CollectionProblem::ArrAction { found }, _) => match keeps_files(*found) {
-                Some(action) => write!(f, " has the *arr action \"{action}\", which frees nothing: pick one that deletes files"),
-                None => write!(f, " has arrAction {found}, which frees nothing for a {kind}; allowed: {:?}", allowed_arr_actions(self.kind)),
+            (CollectionProblem::ArrAction { found }, _) => match (keeps_files(*found), self.kind, *found) {
+                (Some(action), _, _) => write!(f, " has the *arr action \"{action}\", which frees nothing: pick one that deletes files"),
+                (None, LibraryKind::Season, 1) => write!(
+                    f,
+                    " has the *arr action \"Unmonitor and delete all\", which Maintainerr refuses for seasons, so nothing would ever leave: pick \"Unmonitor and delete existing episodes\""
+                ),
+                (None, _, _) => write!(f, " has arrAction {found}, which frees nothing for a {kind}; allowed: {:?}", allowed_arr_actions(self.kind)),
             },
             (CollectionProblem::NoWarningWindow, _) => {
                 write!(f, " acts on Maintainerr's next run: set \"Take action after days\" (14 is a good start) so the household can react")
@@ -122,13 +126,15 @@ fn kind_name(kind: LibraryKind) -> &'static str {
     }
 }
 
-/// ServarrAction values that delete files: delete (0), unmonitor and delete
-/// all (1), and for seasons also unmonitor and delete existing (2) and delete
-/// the show when it empties (5).
+/// ServarrAction values that delete files and that Maintainerr runs for the
+/// kind: for movies delete (0) and unmonitor and delete all (1); for seasons
+/// delete (0), unmonitor and delete existing (2) and delete the show when it
+/// empties (5). Maintainerr 3.29 refuses unmonitor and delete all (1) for a
+/// season ("not supported for type: season"), so its members would never leave.
 fn allowed_arr_actions(kind: LibraryKind) -> &'static [i64] {
     match kind {
         LibraryKind::Movie => &[0, 1],
-        LibraryKind::Season => &[0, 1, 2, 5],
+        LibraryKind::Season => &[0, 2, 5],
     }
 }
 
@@ -238,6 +244,30 @@ pub fn destinations(collections: &[CollectionInfo], titles: &CollectionTitles) -
                 .find(|kind| collection.media_type.trim().eq_ignore_ascii_case(kind_name(*kind)))?;
             let route = [Route::LeavingSoon, Route::Delete].into_iter().find(|route| titles.names(kind, *route, collection))?;
             Some((collection.id, Destination { route, window_days: collection.delete_after_days }))
+        })
+        .collect()
+}
+
+/// Advice on the collections FLINCH hands items to: settings that do not
+/// block a hand-over but leave cleanup undone after Maintainerr deletes. With
+/// Seerr configured in Maintainerr and "Force delete Seerr request" off, the
+/// request stays until Seerr's availability sync notices, and the title cannot
+/// be requested again until then.
+pub(super) fn cleanup_warnings(collections: &[CollectionInfo], titles: &CollectionTitles, seerr_configured: bool) -> Vec<String> {
+    if !seerr_configured {
+        return Vec::new();
+    }
+    let handed_to = destinations(collections, titles);
+    collections
+        .iter()
+        .filter(|collection| handed_to.contains_key(&collection.id) && !collection.force_seerr)
+        .map(|collection| {
+            format!(
+                "{} collection {:?} (id {}) leaves Seerr requests behind: turn on \"Force delete Seerr request\" so a removed title can be requested again at once",
+                collection.media_type.trim().to_ascii_lowercase(),
+                collection.title,
+                collection.id
+            )
         })
         .collect()
 }

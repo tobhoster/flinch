@@ -9,6 +9,9 @@ invented bird-themed name, stable per library id (a show keeps one name
 across its seasons). Posters, *arr slugs and Plex GUIDs are dropped; Plex
 ratingKeys stay, since they number items on one server and name nothing.
 Everything else (sizes, days, decisions, forecasts, the run history) is kept.
+Titles in status.json — deletions FLINCH did not make, held evictions — get
+the same names by id; an entry whose item is not in items.json is dropped,
+since there is no name to give it.
 
 The script then checks every string in the output against the real titles,
 slugs, GUIDs and poster URLs it saw, case-insensitively, and exits non-zero if
@@ -93,7 +96,7 @@ def strings(value):
             yield from strings(entry)
 
 
-def secrets_of(items):
+def secrets_of(items, status):
     """Everything that could name or look up a real title."""
     found = set()
     for item in items:
@@ -107,7 +110,17 @@ def secrets_of(items):
         keys = item.get("play_keys") or {}
         found.update(keys.get("plex_guids") or [])
         found.update(keys.get("episode_guids") or [])
+    for entry in status_titled(status):
+        found.add(entry.get("title") or "")
     return {s for s in (raw.strip().lower() for raw in found) if checkable(s)}
+
+
+def status_titled(status):
+    """status.json entries that carry a title: deletions FLINCH did not make,
+    and held evictions per volume."""
+    yield from status.get("outside_deletions") or []
+    for volume in (status.get("capacity") or {}).get("volumes") or []:
+        yield from volume.get("held") or []
 
 
 def checkable(secret):
@@ -136,6 +149,27 @@ def anonymize_item(item, names):
     return out
 
 
+def name_for_id(card_id, names):
+    """A card id's fictional name: the movie's, or the show's for a season."""
+    match = SEASON_ID.match(card_id)
+    return names.get(match.group(1) if match else card_id)
+
+
+def anonymize_status(status, names):
+    out = json.loads(json.dumps(status))
+    if out.get("outside_deletions"):
+        renamed = []
+        for entry in out["outside_deletions"]:
+            name = name_for_id(entry["id"], names)
+            if name:
+                renamed.append({**entry, "title": name})
+        out["outside_deletions"] = renamed
+    for volume in (out.get("capacity") or {}).get("volumes") or []:
+        for held in volume.get("held") or []:
+            held["title"] = name_for_id(held["id"], names) or ""
+    return out
+
+
 def main():
     if len(sys.argv) != 2:
         fail("usage: python3 crates/flinch-web/demo/anonymize.py <state-dir>")
@@ -146,9 +180,9 @@ def main():
 
     names = fictional_names(items)
     anonymized = [anonymize_item(item, names) for item in items]
-    outputs = {"status.json": status, "items.json": anonymized, "history.json": history}
+    outputs = {"status.json": anonymize_status(status, names), "items.json": anonymized, "history.json": history}
 
-    secrets = secrets_of(items)
+    secrets = secrets_of(items, status)
     leaks = sorted(
         {(file, secret) for file, data in outputs.items() for text in strings(data) for secret in secrets if secret in text.lower()}
     )

@@ -8,6 +8,7 @@ use super::{
     current, item, leaving, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS,
 };
 use crate::card::LibraryKind;
+use rstest::rstest;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What Maintainerr would answer for these items, given all of its rows.
@@ -28,7 +29,14 @@ fn observed(items: &[&SyncItem], rows: &[ExclusionRow], members: &[(i64, &str)])
 
 fn desired(protect: &[&SyncItem], evict: &[&SyncItem]) -> Desired {
     let owned = |items: &[&SyncItem]| items.iter().map(|item| (*item).clone()).collect();
-    Desired { protect: owned(protect), evict: owned(evict), announced: BTreeSet::new(), collections: titles() }
+    Desired {
+        protect: owned(protect),
+        evict: owned(evict),
+        announced: BTreeSet::new(),
+        collections: titles(),
+        gone: BTreeSet::new(),
+        seerr_configured: false,
+    }
 }
 
 fn film(card: &str, rating_key: &str, gib: u64) -> SyncItem {
@@ -293,4 +301,65 @@ fn an_item_whose_route_changes_leaves_its_old_collection_only_once_the_new_one_t
     let full = plan_sync(&moved, &seen, &owned, &Caps::new(0, 0));
     assert!(full.actions.is_empty(), "{:?}", full.actions);
     assert_eq!(full.deferred, ["radarr-1"]);
+}
+
+/// FLINCH's own exclusion for `card`, already in Maintainerr as row `id`.
+fn owning(card: &str, target: super::super::MaintainerrTarget, id: i64) -> OwnedState {
+    let mut owned = OwnedState::default();
+    owned.protected.insert(card.into(), ProtectedEntry { target, exclusion_ids: vec![id] });
+    owned
+}
+
+#[test]
+fn an_exclusion_on_an_item_gone_from_plex_is_released_but_never_the_operators_row() {
+    let owned = owning("sonarr-9-s1", season("900", "901"), 7);
+    let mut seen = observed(&[], &[], &[]);
+    // FLINCH's row for the season, and the operator's own row for another season of the show.
+    seen.exclusions.insert("900".into(), vec![row(7, "901", "900"), row(3, "902", "900")]);
+    let mut wanted = desired(&[], &[]);
+    wanted.gone.insert("sonarr-9-s1".into());
+
+    let plan = plan_sync(&wanted, &seen, &owned, &OPEN);
+
+    assert_eq!(
+        plan.actions,
+        [SyncAction::RemoveExclusion { card_id: "sonarr-9-s1".into(), target: season("900", "901"), exclusion_id: 7 }]
+    );
+    assert_eq!(plan.gone, BTreeSet::from(["sonarr-9-s1".to_string()]));
+}
+
+#[test]
+fn a_card_still_kept_is_never_released_as_gone() {
+    let kept = film("radarr-1", "100", 5);
+    let owned = owning("radarr-1", movie("100"), 7);
+    let mut wanted = desired(&[&kept], &[]);
+    wanted.gone.insert("radarr-1".into());
+
+    let plan = plan_sync(&wanted, &observed(&[&kept], &[row(7, "100", "100")], &[]), &owned, &OPEN);
+
+    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert_eq!((plan.already_protected, plan.gone.len()), (1, 0));
+}
+
+#[rstest]
+#[case::seerr_and_no_force(true, false, 2)]
+#[case::seerr_and_force(true, true, 0)]
+#[case::no_seerr(false, false, 0)]
+fn a_collection_leaving_seerr_requests_behind_is_a_warning_that_blocks_nothing(
+    #[case] seerr_configured: bool,
+    #[case] force_seerr: bool,
+    #[case] warnings: usize,
+) {
+    let evicted = film("radarr-1", "100", 5);
+    let mut seen = observed(&[&evicted], &[], &[]);
+    for collection in &mut seen.collections {
+        collection.force_seerr = force_seerr;
+    }
+    let wanted = Desired { seerr_configured, ..desired(&[], &[&evicted]) };
+
+    let plan = plan_sync(&wanted, &seen, &OwnedState::default(), &OPEN);
+
+    assert_eq!(plan.warnings.len(), warnings, "{:?}", plan.warnings);
+    assert!(plan.warnings.iter().all(|warning| warning.contains("Force delete Seerr request")));
+    assert_eq!(scheduled_into(&plan), [("radarr-1", MOVIES)], "a warning never holds an eviction back");
 }

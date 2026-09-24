@@ -24,12 +24,19 @@
 //! - **Pressure widens the permitted set; it never lowers a floor.** While
 //!   evicting, the operator may let the calibrated never-played rule contribute,
 //!   still gated by its own P(safe) floor and dwell.
+//! - **Space that never frees is reported, not chased.** Evicted bytes the
+//!   disk has not released after the recycle window stay credited as *held*
+//!   (see [`EvictionLedger`]), so a torrent seeding the same file cannot make
+//!   FLINCH evict a second batch for one gap.
 
 mod inflight;
 mod status;
 mod volumes;
 
-pub use inflight::{Eviction, EvictionLedger, STALE_ON_DISK_SECS};
+pub use inflight::{
+    Credit, Eviction, EvictionLedger, HandedOver, HeldEviction, Occupancy, HELD_CREDIT_SECS, SETTLE_GRACE_SECS,
+    STALE_ON_DISK_SECS,
+};
 pub use status::{CapacityStatus, VolumeStatus};
 pub use volumes::{App, AppDisks, LibraryVolumes, RecycleBin, RootFolder, Volume};
 
@@ -155,6 +162,34 @@ impl CapacitySnapshot {
             over_ceiling: measures.iter().any(|m| m.over_ceiling),
             volumes: measures,
         })
+    }
+}
+
+/// What FLINCH can name on each volume beyond the measurement: its library
+/// items, and the evictions a disk may still hold.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OnDisk {
+    /// Bytes of the library items on each volume.
+    pub library: BTreeMap<String, u64>,
+    /// Evicted bytes each volume still credits against its goal.
+    pub credit: BTreeMap<String, Credit>,
+    /// Held evictions per volume (see [`EvictionLedger::held`]).
+    pub held: BTreeMap<String, Vec<HeldEviction>>,
+}
+
+impl OnDisk {
+    /// Every volume's credit, pending and held together: what goals subtract.
+    pub fn credit_totals(&self) -> BTreeMap<String, u64> {
+        self.credit.iter().map(|(volume, credit)| (volume.clone(), credit.total())).collect()
+    }
+
+    /// Bytes on `volume` that are neither library media nor an eviction
+    /// FLINCH still credits: downloads, recycle bins of other deletions, and
+    /// files no app tracks.
+    pub fn untracked(&self, volume: &str, used: u64) -> u64 {
+        let library = self.library.get(volume).copied().unwrap_or(0);
+        let credit = self.credit.get(volume).map_or(0, Credit::total);
+        used.saturating_sub(library.saturating_add(credit))
     }
 }
 

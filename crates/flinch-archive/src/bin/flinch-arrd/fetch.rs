@@ -29,6 +29,8 @@ pub(super) async fn fetch_series_episodes(client: &reqwest::Client, args: &Args,
 pub(super) struct Fetched {
     pub(super) movies: Vec<ArrMovie>,
     pub(super) series: Vec<ArrSeries>,
+    /// Files both apps removed lately, from the cached history read.
+    pub(super) removals: Vec<flinch_archive::outside::Removal>,
 }
 
 /// Parse a JSON array row by row: a malformed row is skipped and counted,
@@ -146,8 +148,8 @@ pub(super) async fn fetch_inventory(client: &reqwest::Client, args: &Args, keep_
     }
     // Dwell runs from when the household got each item, not from its current
     // file: needs today's files and their dates, so it comes last.
-    super::history::attach(client, args, &mut movies, &mut series).await;
-    Ok(Fetched { movies, series })
+    let removals = super::history::attach(client, args, &mut movies, &mut series).await;
+    Ok(Fetched { movies, series, removals })
 }
 /// Does a value look like a redacted secret rather than a usable one?
 pub(super) fn looks_masked(value: &str) -> bool {
@@ -197,6 +199,12 @@ pub(super) async fn maintainerr_settings(
         .json()
         .await
         .context("maintainerr settings response was not JSON")
+}
+/// Whether Maintainerr has Seerr configured; `None` when its settings could
+/// not be read, so a missing answer never produces a warning.
+pub(super) async fn maintainerr_seerr_configured(http: &reqwest::Client, args: &Args) -> Option<bool> {
+    let settings = maintainerr_settings(http, args).await.ok()?;
+    Some(settings.get("seerr_url").and_then(|url| url.as_str()).is_some_and(|url| !url.trim().is_empty()))
 }
 /// Each app's view of its disks: every mount (`/api/v3/diskspace`) and where
 /// its library lives (`/api/v3/rootfolder`). An app that refuses is logged and

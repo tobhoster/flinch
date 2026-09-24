@@ -1,14 +1,14 @@
 //! Capacity for one cycle: measure the library volumes, advance the eviction
-//! ledger, decide per volume, and persist the latch.
+//! ledger against them, decide per volume, and persist the latch.
 
 use super::state_dir;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
-use flinch_archive::capacity::{App, AppDisks, CapacityAction, EvictionLedger, LibraryVolumes, RecycleBin};
+use flinch_archive::capacity::{App, AppDisks, CapacityAction, EvictionLedger, LibraryVolumes, Occupancy, OnDisk, RecycleBin};
 use flinch_archive::daemon::RuntimeSettings;
 use flinch_archive::govern::{self, Governance};
 use flinch_archive::ids::PlexIds;
 use flinch_archive::{ArchiveCard, ArchivePolicy};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Where the eviction ledger lives; the caller writes it after the hand-off.
 pub(super) fn ledger_path() -> std::path::PathBuf {
@@ -17,9 +17,10 @@ pub(super) fn ledger_path() -> std::path::PathBuf {
 
 /// Govern this cycle's capacity. Below the ceiling nothing is evicted; a
 /// latched volume frees down to its release mark, crediting what recycle bins
-/// still hold. May arm never-played reclaim on `policy` while evicting. Only
-/// items with Plex ids (`plex_ids`) count toward a goal: nothing else can be
-/// handed over. Returns the governance and the ledger, advanced to `now`.
+/// still hold and what the disk never released. May arm never-played reclaim
+/// on `policy` while evicting. Only items with Plex ids (`plex_ids`) count
+/// toward a goal: nothing else can be handed over. Returns the governance and
+/// the ledger, advanced to `now`.
 pub(super) fn govern(
     disks: &[AppDisks],
     (movies, series): (&[ArrMovie], &[ArrSeries]),
@@ -36,11 +37,28 @@ pub(super) fn govern(
     let volume_of = govern::volume_map(&library, movies, series);
     let latch_path = state_dir().join("capacity.json");
     let latch = flinch_archive::capacity::read_latch(&latch_path);
-    // Evictions already handed over whose bytes a recycle bin still holds are
-    // credited against the goals, so one gap is never evicted twice.
+    // Library bytes per governed volume: what the disk holds that FLINCH can name.
+    let mut library_bytes: BTreeMap<String, u64> = BTreeMap::new();
+    for card in cards {
+        if let Some(volume) = volume_of.get(&card.id) {
+            let bytes = library_bytes.entry(volume.clone()).or_insert(0);
+            *bytes = bytes.saturating_add(card.size_bytes);
+        }
+    }
+    let measured: BTreeMap<String, Occupancy> = library
+        .volumes
+        .iter()
+        .map(|volume| {
+            let named = library_bytes.get(&volume.path).copied().unwrap_or(0);
+            (volume.path.clone(), Occupancy { used: volume.used_bytes(), library: named })
+        })
+        .collect();
+    // Evictions already handed over whose bytes a recycle bin (or anything
+    // else) still holds are credited against the goals, so one gap is never
+    // evicted twice.
     let mut ledger = EvictionLedger::read(&ledger_path());
-    let on_disk: HashSet<&str> = cards.iter().map(|card| card.id.as_str()).collect();
-    ledger.observe(|id| on_disk.contains(id), |app| library.recycle_secs(app), now);
+    let present: HashSet<&str> = cards.iter().map(|card| card.id.as_str()).collect();
+    ledger.observe(|id| present.contains(id), |app| library.recycle_secs(app), &measured, now);
     for app in [App::Radarr, App::Sonarr] {
         if library.recycle_bin(app) == RecycleBin::NeverEmptied {
             eprintln!(
@@ -49,8 +67,8 @@ pub(super) fn govern(
             );
         }
     }
-    let governance =
-        govern::govern(library, volume_of, |id| plex_ids.contains_key(id), settings, &latch, ledger.pending_bytes(), policy);
+    let on_disk = OnDisk { library: library_bytes, credit: ledger.credits(), held: ledger.held() };
+    let governance = govern::govern(library, volume_of, |id| plex_ids.contains_key(id), settings, &latch, on_disk, policy);
     if let Err(error) = flinch_archive::capacity::write_latch(&latch_path, &governance.decision.latch) {
         eprintln!("[flinch-arrd] capacity.json write failed: {error}");
     }
@@ -74,11 +92,15 @@ fn log(governance: &Governance) {
             Some(goal) => format!("evicting {:.1} GiB to reach {:.0}%", gib(*goal), snapshot.watermarks.release() * 100.0),
             None => format!("idle under the {:.0}% ceiling", snapshot.watermarks.ceiling() * 100.0),
         };
+        let untracked = governance.on_disk.untracked(&volume.path, volume.used_bytes);
+        let held = governance.on_disk.credit.get(&volume.path).map_or(0, |credit| credit.held);
+        let held = if held > 0 { format!(" · {:.1} GiB evicted but never freed (held)", gib(held)) } else { String::new() };
         println!(
-            "[flinch-arrd] capacity {}: {:.1}% of {:.1} GiB — {state}",
+            "[flinch-arrd] capacity {}: {:.1}% of {:.1} GiB — {state} · {:.1} GiB here isn't library media{held}",
             volume.path,
             volume.utilization * 100.0,
-            gib(volume.total_bytes)
+            gib(volume.total_bytes),
+            gib(untracked)
         );
     }
     if let CapacityAction::Evict { armed_never_played: true, .. } = governance.decision.action {

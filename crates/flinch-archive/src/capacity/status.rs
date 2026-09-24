@@ -3,7 +3,7 @@
 //! kept apart on purpose: whether the plan *covers* a goal (the eligible set is
 //! big enough) and whether the goal is *met* (FLINCH has handed that much over).
 
-use super::{sum, App, CapacityAction, CapacityDecision, CapacitySnapshot};
+use super::{sum, App, CapacityAction, CapacityDecision, CapacitySnapshot, HeldEviction, OnDisk};
 use crate::plan::VolumeOutcome;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,9 +23,24 @@ pub struct VolumeStatus {
     pub reclaimed_bytes: u64,
     /// Everything eligible on this volume: the reserve eviction can draw on.
     pub eligible_bytes: u64,
-    /// Evicted bytes the recycle bin may still hold on this volume.
+    /// Evicted bytes the recycle bin may still hold on this volume: inside the
+    /// bin's window, or the grace after it while the disk shows the drop.
     #[serde(default)]
     pub pending_bytes: u64,
+    /// Evicted bytes past that grace the disk never released: something else
+    /// holds them. Still credited, so nothing more is evicted for them.
+    #[serde(default)]
+    pub held_bytes: u64,
+    /// Those evictions, oldest first.
+    #[serde(default)]
+    pub held: Vec<HeldEviction>,
+    /// Bytes of the library items on this volume.
+    #[serde(default)]
+    pub library_bytes: u64,
+    /// Used bytes that are neither library media nor a credited eviction:
+    /// downloads, recycle bins of other deletions, files no app tracks.
+    #[serde(default)]
+    pub untracked_bytes: u64,
     /// Bytes verified in a FLINCH deletion collection and still on disk:
     /// handed to Maintainerr, waiting for its schedule.
     #[serde(default)]
@@ -77,6 +92,14 @@ pub struct CapacityStatus {
     /// Evicted bytes the recycle bins may still hold, credited against goals.
     #[serde(default)]
     pub pending_bytes: u64,
+    /// Evicted bytes no disk released after its recycle window, across
+    /// volumes. Credited against goals too.
+    #[serde(default)]
+    pub held_bytes: u64,
+    /// Used bytes that are neither library media nor a credited eviction,
+    /// across volumes.
+    #[serde(default)]
+    pub untracked_bytes: u64,
     /// Bytes handed to Maintainerr and still on disk, across volumes.
     #[serde(default)]
     pub handed_bytes: u64,
@@ -88,7 +111,7 @@ impl CapacityStatus {
         decision: &CapacityDecision,
         outcomes: &[VolumeOutcome],
         unmatched_roots: &[(App, String)],
-        pending: &BTreeMap<String, u64>,
+        on_disk: &OnDisk,
         handed: &BTreeMap<String, u64>,
     ) -> Self {
         let (goal_bytes, armed_never_played) = match decision.action {
@@ -104,6 +127,7 @@ impl CapacityStatus {
                 let reclaimed_bytes = outcome.map_or(0, |o| o.reclaimed_bytes);
                 let handed_bytes = handed.get(&m.path).copied().unwrap_or(0);
                 let goal = decision.goals.get(&m.path).copied().unwrap_or(0);
+                let credit = on_disk.credit.get(&m.path).copied().unwrap_or_default();
                 VolumeStatus {
                     path: m.path.clone(),
                     total_bytes: m.total_bytes,
@@ -115,7 +139,11 @@ impl CapacityStatus {
                     goal_bytes: goal,
                     reclaimed_bytes,
                     eligible_bytes: outcome.map_or(0, |o| o.eligible_bytes),
-                    pending_bytes: pending.get(&m.path).copied().unwrap_or(0),
+                    pending_bytes: credit.pending,
+                    held_bytes: credit.held,
+                    held: on_disk.held.get(&m.path).cloned().unwrap_or_default(),
+                    library_bytes: on_disk.library.get(&m.path).copied().unwrap_or(0),
+                    untracked_bytes: on_disk.untracked(&m.path, m.used_bytes),
                     handed_bytes,
                     covered: latched.then_some(reclaimed_bytes >= goal),
                     goal_met: latched.then_some(handed_bytes >= goal),
@@ -127,7 +155,9 @@ impl CapacityStatus {
             (!evicting.is_empty()).then(|| evicting.iter().all(|v| flag(v) == Some(true)))
         };
         let (latched, covered, goal_met) = (!evicting.is_empty(), every(|v| v.covered), every(|v| v.goal_met));
-        let handed_bytes = sum(volumes.iter().map(|v| v.handed_bytes));
+        let total = |bytes: fn(&VolumeStatus) -> u64| sum(volumes.iter().map(bytes));
+        let (handed_bytes, pending_bytes, held_bytes, untracked_bytes) =
+            (total(|v| v.handed_bytes), total(|v| v.pending_bytes), total(|v| v.held_bytes), total(|v| v.untracked_bytes));
         Self {
             total_bytes: snapshot.total_bytes,
             used_bytes: snapshot.used_bytes,
@@ -145,7 +175,9 @@ impl CapacityStatus {
             goal_met,
             armed_never_played,
             volumes,
-            pending_bytes: sum(pending.values().copied()),
+            pending_bytes,
+            held_bytes,
+            untracked_bytes,
             handed_bytes,
             unmatched_roots: unmatched_roots
                 .iter()

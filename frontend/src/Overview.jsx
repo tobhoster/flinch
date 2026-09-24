@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import RecentRuns from './Progress.jsx';
 import Capacity from './Capacity.jsx';
 import MaintainerrSync from './Maintainerr.jsx';
+import OutsideDeletions from './OutsideDeletions.jsx';
 import ModelCard from './ModelCard.jsx';
 import { GiB, SectionTitle, ago } from './ui.jsx';
 import { Explain, GlossaryCard } from './Explain.jsx';
@@ -168,6 +169,7 @@ export default function Overview({ status, items, history, loading }) {
         <div className="min-w-0 space-y-6">
           <RecentRuns history={history} />
           <MaintainerrSync sync={s.sync} />
+          <OutsideDeletions items={s.outside_deletions} />
           {(s.inflow?.compact > 0 || s.inflow?.premium > 0) && (
             <p className="text-fg-muted">
               Quality tiers (advice): <span className="num text-fg">{s.inflow.compact}</span> compact

@@ -112,6 +112,7 @@ fn handover_needs_maintainerr_3_10(#[case] raw: &str, #[case] allowed: bool) {
 #[case::movie_cannot_delete_existing_only("movie", true, 2, LibraryKind::Movie, Err(CollectionProblem::ArrAction { found: 2 }))]
 #[case::season_delete_existing("season", true, 2, LibraryKind::Season, Ok(()))]
 #[case::season_delete_show_if_empty("season", true, 5, LibraryKind::Season, Ok(()))]
+#[case::season_unmonitor_delete_all_maintainerr_refuses("season", true, 1, LibraryKind::Season, Err(CollectionProblem::ArrAction { found: 1 }))]
 #[case::unmonitor_frees_nothing("season", true, 3, LibraryKind::Season, Err(CollectionProblem::ArrAction { found: 3 }))]
 #[case::do_nothing_frees_nothing("movie", true, 4, LibraryKind::Movie, Err(CollectionProblem::ArrAction { found: 4 }))]
 #[case::inactive("movie", false, 0, LibraryKind::Movie, Err(CollectionProblem::Inactive))]

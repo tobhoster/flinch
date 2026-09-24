@@ -7,6 +7,7 @@ use flinch_archive::daemon::{self, HistoryPoint, InflowCounts};
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::SyncSummary;
 use flinch_archive::watch::EvidenceHealth;
+use flinch_archive::outside::OutsideDeletion;
 use flinch_archive::{ItemSnapshot, ReconcileOutput, StatusSnapshot};
 
 /// The run's own facts, published beside the items.
@@ -24,10 +25,12 @@ pub(super) struct Run<'a> {
     /// What arming never-played reclaim would add: items and GiB.
     pub(super) shadow: (u64, f32),
     pub(super) health: EvidenceHealth,
+    /// Files something other than FLINCH removed lately.
+    pub(super) outside: Vec<OutsideDeletion>,
 }
 
 pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
-    let Run { report, sync, governance, handed, enforcing, interval_s, model, shadow: (shadow_items, shadow_gib), health } = run;
+    let Run { report, sync, governance, handed, enforcing, interval_s, model, shadow: (shadow_items, shadow_gib), health, outside } = run;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let dir = state_dir();
     let status = StatusSnapshot {
@@ -56,6 +59,7 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         sync,
         fit: flinch_archive::fit::adopt::read_status(&dir),
         benchmark: flinch_archive::fit::bench::read_benchmark(&dir),
+        outside_deletions: outside,
     };
     daemon::write_snapshots(&dir.join("status.json"), &dir.join("items.json"), &status, items)?;
     daemon::append_history(

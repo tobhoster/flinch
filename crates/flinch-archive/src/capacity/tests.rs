@@ -257,7 +257,7 @@ fn a_goal_is_claimed_only_while_evicting_and_met_only_once_handed_over(
     let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
     let outcomes = [outcome("/media", used_gb.saturating_sub(75), reclaimed_gb, 40)];
     let handed = BTreeMap::from([("/media".to_string(), handed_gb * GB)]);
-    let status = CapacityStatus::new(&snap, &decision, &outcomes, &[], &BTreeMap::new(), &handed);
+    let status = CapacityStatus::new(&snap, &decision, &outcomes, &[], &OnDisk::default(), &handed);
     assert_eq!((status.covered, status.goal_met), (covered, met));
     assert_eq!((status.volumes[0].covered, status.volumes[0].goal_met), (covered, met));
     assert_eq!(status.latched, met.is_some());
@@ -269,8 +269,31 @@ fn a_goal_is_claimed_only_while_evicting_and_met_only_once_handed_over(
 fn status_names_every_ungoverned_root() {
     let snap = measured(&[vol("/media", 100, 50)]);
     let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
-    let status = CapacityStatus::new(&snap, &decision, &[], &[(App::Sonarr, "/anime".to_string())], &BTreeMap::new(), &BTreeMap::new());
+    let status = CapacityStatus::new(&snap, &decision, &[], &[(App::Sonarr, "/anime".to_string())], &OnDisk::default(), &BTreeMap::new());
     assert_eq!(status.unmatched_roots, ["sonarr:/anime"]);
+}
+
+#[rstest]
+#[case::downloads_and_leftovers(90, 50, 5, 3, 32)]
+#[case::nothing_but_library(50, 50, 0, 0, 0)]
+#[case::credit_beyond_the_measurement_is_never_negative(40, 38, 5, 0, 0)]
+fn untracked_is_what_the_disk_holds_beyond_library_media_and_credited_evictions(
+    #[case] used_gb: u64,
+    #[case] library_gb: u64,
+    #[case] pending_gb: u64,
+    #[case] held_gb: u64,
+    #[case] untracked_gb: u64,
+) {
+    let snap = measured(&[vol("/media", 100, used_gb)]);
+    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
+    let on_disk = OnDisk {
+        library: BTreeMap::from([("/media".to_string(), library_gb * GB)]),
+        credit: BTreeMap::from([("/media".to_string(), Credit { pending: pending_gb * GB, held: held_gb * GB })]),
+        held: BTreeMap::new(),
+    };
+    let status = CapacityStatus::new(&snap, &decision, &[], &[], &on_disk, &BTreeMap::new());
+    assert_eq!((status.untracked_bytes, status.volumes[0].untracked_bytes), (untracked_gb * GB, untracked_gb * GB));
+    assert_eq!((status.pending_bytes, status.held_bytes), (pending_gb * GB, held_gb * GB));
 }
 
 #[test]

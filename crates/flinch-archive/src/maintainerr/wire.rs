@@ -110,6 +110,10 @@ pub struct CollectionInfo {
     /// Maintainerr draws its poster overlay (the leave date) on members.
     #[serde(default)]
     pub overlay_enabled: bool,
+    /// "Force delete Seerr request": Maintainerr removes the title's Seerr
+    /// request when it deletes, instead of waiting for Seerr's own sync.
+    #[serde(default)]
+    pub force_seerr: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -29,6 +29,9 @@ pub(super) struct Evidence {
     /// Items the operator marked to keep in Plex: a label or collection named
     /// like the keep tag, on the movie, the show, or the season.
     pub(super) plex_keeps: BTreeSet<String>,
+    /// Every ratingKey Plex listed this cycle; `None` unless Plex was read and
+    /// listed completely — the only proof an item is gone from Plex.
+    pub(super) plex_listed: Option<HashSet<String>>,
 }
 
 pub(super) async fn gather(
@@ -148,7 +151,7 @@ pub(super) async fn gather(
     // gates absence evidence and never-played reclaim (TT-01, XC-03).
     let plex_configured = !plex_url.is_empty() && !plex_token.is_empty();
     let tautulli_configured = !tautulli_url.is_empty() && !tautulli_key.is_empty();
-    let plex = if plex_configured {
+    let mut plex = if plex_configured {
         match fetch_plex(http, &plex_url, &plex_token, cycle_now, &settings.keep_tag).await {
             Ok(fetched) => Some(fetched),
             Err(error) => {
@@ -230,6 +233,7 @@ pub(super) async fn gather(
         // Unknown (Plex down) is treated as shared: admin-only zeros prove nothing.
         multi_account: plex.as_ref().map_or(true, |fetched| fetched.multi_account),
     };
+    let plex_listed = plex.as_mut().filter(|fetched| fetched.items_complete).map(|fetched| std::mem::take(&mut fetched.listed));
     let plex_history_rows: Vec<flinch_archive::plex::PlexMetadata> = plex.map(|fetched| fetched.history).unwrap_or_default();
     let tautulli_rows: Vec<flinch_archive::tautulli::TautulliRow> = tautulli.map(|fetched| fetched.rows).unwrap_or_default();
     println!(
@@ -318,6 +322,7 @@ pub(super) async fn gather(
         plex_ids,
         play_keys,
         plex_keeps,
+        plex_listed,
     })
 }
 

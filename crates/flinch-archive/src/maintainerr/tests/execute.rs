@@ -15,7 +15,14 @@ fn fake() -> Fake {
 }
 
 fn desired(protect: &[SyncItem], evict: &[SyncItem]) -> Desired {
-    Desired { protect: protect.to_vec(), evict: evict.to_vec(), announced: Default::default(), collections: titles() }
+    Desired {
+        protect: protect.to_vec(),
+        evict: evict.to_vec(),
+        announced: Default::default(),
+        collections: titles(),
+        gone: Default::default(),
+        seerr_configured: false,
+    }
 }
 
 /// One daemon cycle: observe, plan, execute.
@@ -55,6 +62,26 @@ async fn a_protection_owns_exactly_the_rows_its_post_created() {
     let second = cycle(&mut maintainerr, &want, &mut owned).await;
     assert!(second.plan.actions.is_empty(), "an owned exclusion is not re-sent");
     assert_eq!(second.plan.already_protected, 1);
+}
+
+#[tokio::test]
+async fn an_item_gone_from_plex_loses_flinchs_exclusion_and_the_operators_stays() {
+    let mut maintainerr = fake();
+    // The operator excluded another season of the same show.
+    maintainerr.rows.push(row(50, "202", "200"));
+    let mut owned = OwnedState::default();
+    cycle(&mut maintainerr, &desired(&[a_season()], &[]), &mut owned).await;
+    assert!(owned.is_protected("sonarr-2-s1"));
+
+    // The season left the library and Plex.
+    let gone = Desired { gone: ["sonarr-2-s1".to_string()].into(), ..desired(&[], &[]) };
+    let report = cycle(&mut maintainerr, &gone, &mut owned).await;
+
+    assert!(report.outcomes.iter().all(|o| *o == Outcome::Done), "{:?}", outcomes(&report));
+    assert!(!owned.is_protected("sonarr-2-s1"), "nothing of FLINCH's is left for it");
+    assert_eq!(maintainerr.rows.iter().map(|r| r.id).collect::<Vec<_>>(), [50]);
+    let summary = SyncSummary::new(&report, false);
+    assert_eq!((summary.released_gone, summary.exclusions_removed), (1, 2), "one season: its row and its episode's row");
 }
 
 #[rstest]

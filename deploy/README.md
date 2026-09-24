@@ -172,10 +172,13 @@ missing watch state fails closed; a Maintainerr **201 with `{"code":0,
 "result":"Failed - no metadata"}` is a failure**, never a silent success;
 nothing is handed to a Maintainerr older than 3.10, or to a collection that is
 inactive, of the wrong type, bound to another Plex library, or whose *arr
-action frees nothing; with enforcement off, every write is only printed. An
-item nobody finished goes only to a Leaving Soon collection that is active,
-shown in Plex and has a window of at least one day; while none validates, it
-waits instead of going to a delete collection.
+action frees nothing or is one Maintainerr refuses for its type; with
+enforcement off, every write is only printed. An item nobody finished goes
+only to a Leaving Soon collection that is active, shown in Plex and has a
+window of at least one day; while none validates, it waits instead of going
+to a delete collection. FLINCH releases only exclusions it created, and only
+for an item proven gone: no file in Radarr/Sonarr and absent from a complete
+Plex listing.
 
 ## Maintainerr setup
 
@@ -186,19 +189,37 @@ names are in Settings > Maintainerr collections.
    default) and Seasons (`Watched Seasons Cleanup`), manual-membership
    collections with a delete action. If they also keep their own rules,
    Maintainerr will delete what those rules select regardless of the 80%
-   ceiling.
+   ceiling. A season collection needs "Unmonitor and delete existing episodes"
+   ("Unmonitor and delete season", or deleting the show if empty, work too).
+   Never "Unmonitor and delete all": Maintainerr refuses it for seasons, so
+   nothing would ever leave. FLINCH reports it and hands that collection
+   nothing.
 2. Create the Leaving Soon collections (`Leaving Soon` by default): one
    Maintainerr rule group per library with that same title, of media type
    *movie* for the movie library and *season* for TV. Turn **Use rules** off:
    FLINCH adds the items, and with a delete action anything the group's own
    rules selected would be deleted by Maintainerr on its own. Give each an
-   *arr action that deletes files ("Delete", "Unmonitor and delete season"),
-   "Take action after days" set to the household's warning window (14 is a
-   good start), "Show on Plex home" on and "Keep in Maintainerr only" off. A
-   collection with the action "Do nothing" never deletes: Maintainerr skips it.
-   Turn on the overlay if the leave date should show on the poster. Until both
-   validate, the status names what is wrong and unwatched evictions wait. A
-   blank title sends them straight to the delete collections instead.
+   *arr action that deletes files ("Delete" for movies, one of the season
+   actions above for TV), "Take action after days" set to the household's
+   warning window (14 is a good start), "Show on Plex home" on and "Keep in
+   Maintainerr only" off. A collection with the action "Do nothing" never
+   deletes: Maintainerr skips it. Turn on the overlay if the leave date should
+   show on the poster. Until both validate, the status names what is wrong and
+   unwatched evictions wait. A blank title sends them straight to the delete
+   collections instead.
+3. If Seerr is configured in Maintainerr, turn on **Force delete Seerr
+   request** on every collection FLINCH uses. Otherwise a removed title's
+   Seerr request stays until Seerr's availability sync notices, and it cannot
+   be requested again at once. FLINCH warns about each such collection but
+   still hands items to it.
+
+## Radarr and Sonarr setup
+
+FLINCH never writes to Radarr or Sonarr. One setting in each keeps a file
+deleted outside FLINCH from being downloaded again: turn on **Unmonitor
+Deleted Movies** in Radarr and **Unmonitor Deleted Episodes** in Sonarr
+(Settings > Media Management). FLINCH lists such deletions on the Overview,
+with whether each one will download again.
 
 ## Turn on enforcement
 
@@ -206,7 +227,8 @@ Before you do:
 
 1. Run at least one cycle with enforcement off and read the log: every write
    FLINCH would send is printed, with the Plex ratingKey it targets.
-2. Finish the [Maintainerr setup](#maintainerr-setup).
+2. Finish the [Maintainerr setup](#maintainerr-setup) and the
+   [Radarr and Sonarr setup](#radarr-and-sonarr-setup).
 3. If Tautulli is connected, turn **Keep History** on for every user and for
    every library FLINCH manages (Tautulli > Users / Libraries > edit). Where it
    is off, the log says `tautulli keeps no history for …` and never-played
@@ -240,7 +262,7 @@ or corrupt file reads as "nothing yet".
 | `settings.json` | settings from the UI | defaults; an unparseable file keeps the last good settings in force |
 | `status.json`, `items.json`, `history.json` | what the UI shows | rebuilt next cycle |
 | `capacity.json` | which disks are latched (evicting toward the release mark) | a disk between 75% and 80% stops evicting until it crosses 80% again |
-| `evictions.json` | bytes handed to Maintainerr that a recycle bin may still hold | one recycle-bin window without credit |
+| `evictions.json` | bytes handed to Maintainerr that a recycle bin may still hold or that are held, and each hand-over for 120 days (to tell FLINCH's deletions from others) | evictions in flight or held go uncredited, and FLINCH's own recent deletions may be listed as ones it did not make |
 | `protected.json`, `scheduled.json` | exclusions and collection members FLINCH created | FLINCH forgets it owns them and leaves them alone |
 | `candidates.json` | grace-run streaks | every candidate re-earns its grace window |
 | `operator-keeps.json` | the cards your own Maintainerr exclusions keep, as last read | rewritten by the next cycle that reads Maintainerr; an outage before then plans without them (nothing is synced during it) |
@@ -249,7 +271,7 @@ or corrupt file reads as "nothing yet".
 | `weights.json` | the adopted model, present only while it beats the priors out of fold | the priors run until a model earns adoption again |
 | `benchmark.json` | the last `flinch-fit --against … --write`: an external model scored against FLINCH on the same panel | the Forecast model card shows no comparison until the next run |
 | `episode-guids.json` | episode `plex://` GUIDs of resolved shows, for plays recorded before a library migration (refreshed at most daily, only while such plays exist) | re-read from Plex on the next cycle that needs it |
-| `arr-history.json` | when each title was on disk, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
+| `arr-history.json` | when each title was on disk, and the files removed in the last 30 days, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
 
 `protected.json` and `scheduled.json` record only the exclusions and
 collection members FLINCH created and verified by reading them back, so runs

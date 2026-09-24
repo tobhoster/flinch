@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::arr::history::HistoryRecord;
+use crate::outside::RemovalReason;
 use rstest::rstest;
 
 const DAY: u64 = 86_400;
@@ -105,6 +106,28 @@ fn radarr_and_sonarr_records_map_to_their_cards() {
             Some(("sonarr-4-s2".to_string(), Some(42), Change::Imported)),
             None, // no episode: the season is unknown
             None, // a rename moves no file in or out
+        ]
+    );
+}
+
+#[test]
+fn only_a_file_that_left_is_a_removal() {
+    let rows = r#"[
+        {"id":1,"movieId":3,"date":"2026-09-20T16:07:46Z","eventType":"movieFileDeleted","data":{"reason":"Manual"}},
+        {"id":2,"movieId":3,"date":"2026-09-20T16:07:46Z","eventType":"movieFileDeleted","data":{"reason":"Upgrade"}},
+        {"id":3,"seriesId":4,"episodeId":41,"episode":{"seasonNumber":2},"date":"2026-08-17T02:20:40Z","eventType":"episodeFileDeleted","data":{"reason":"MissingFromDisk"}},
+        {"id":4,"movieId":3,"date":"2026-08-29T06:06:01Z","eventType":"downloadFolderImported","data":{}}
+    ]"#;
+    let records: Vec<HistoryRecord> = serde_json::from_str(rows).expect("records parse");
+    let removals: Vec<Option<(String, RemovalReason)>> =
+        records.iter().map(|record| record.removal().map(|removal| (removal.card, removal.reason))).collect();
+    assert_eq!(
+        removals,
+        [
+            Some(("radarr-3".to_string(), RemovalReason::Manual)),
+            None, // an upgrade swaps the file: nothing left
+            Some(("sonarr-4-s2".to_string(), RemovalReason::MissingFromDisk)),
+            None,
         ]
     );
 }

@@ -1,13 +1,16 @@
 //! When each item was on disk, from *arr history: `/api/v3/history` read once
-//! a day, reduced to presence spans per card ([`flinch_archive::presence`]) and
-//! cached in `arr-history.json`. Every other cycle reads the cache. A failed
-//! read keeps the cached spans: presence is never worth failing a cycle over.
+//! a day, reduced to presence spans per card ([`flinch_archive::presence`])
+//! and to the files removed lately ([`flinch_archive::outside`]), and cached
+//! in `arr-history.json`. Every other cycle reads the cache. A failed read
+//! keeps the cached spans: presence is never worth failing a cycle over.
 
 use super::fetch::fetch_json;
 use super::Args;
 use anyhow::{Context, Result};
 use flinch_archive::arr::history::{HistoryPage, HistoryRecord};
 use flinch_archive::arr::{ArrMovie, ArrSeries};
+use flinch_archive::capacity::EvictionLedger;
+use flinch_archive::outside::{self, OutsideDeletion, Removal};
 use flinch_archive::presence::{self, FileEvent, Span};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -36,6 +39,10 @@ struct AppHistory {
     records: usize,
     /// Card id → presence spans, for cards with files at the read.
     items: BTreeMap<String, Vec<Span>>,
+    /// Files removed within [`outside::WINDOW_SECS`] of the read. `None` in a
+    /// cache written before removals were kept: it is read again.
+    #[serde(default)]
+    removals: Option<Vec<Removal>>,
 }
 
 #[derive(Clone, Copy)]
@@ -86,14 +93,22 @@ impl App {
 }
 
 /// Fill `on_disk` on every movie and season, reading the history again when
-/// the cached read is a day old. Never fails the cycle.
-pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [ArrMovie], series: &mut [ArrSeries]) {
+/// the cached read is a day old, and return the files both apps removed
+/// lately. Never fails the cycle.
+pub(super) async fn attach(
+    client: &reqwest::Client,
+    args: &Args,
+    movies: &mut [ArrMovie],
+    series: &mut [ArrSeries],
+) -> Vec<Removal> {
     let path = super::state_dir().join("arr-history.json");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
     let mut cache = read_cache(&path);
     let mut refreshed = Vec::new();
     for app in [App::Radarr, App::Sonarr] {
-        let fresh = app.slot(&mut cache).as_ref().is_some_and(|history| history.refreshed_at <= now && now - history.refreshed_at < REFRESH_SECS);
+        let fresh = app.slot(&mut cache).as_ref().is_some_and(|history| {
+            history.refreshed_at <= now && now - history.refreshed_at < REFRESH_SECS && history.removals.is_some()
+        });
         if fresh {
             continue;
         }
@@ -121,6 +136,27 @@ pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [
             season.on_disk = spans(&cache.sonarr, format!("sonarr-{}-s{}", show.id, season.season_number));
         }
     }
+    [cache.radarr, cache.sonarr].into_iter().flatten().flat_map(|history| history.removals.unwrap_or_default()).collect()
+}
+
+/// The items whose files something other than FLINCH removed lately, logged
+/// when any is still monitored with nothing on disk: it will download again.
+pub(super) fn outside(
+    removals: &[Removal],
+    ledger: &EvictionLedger,
+    (movies, series): (&[ArrMovie], &[ArrSeries]),
+    now: u64,
+) -> Vec<OutsideDeletion> {
+    let listed = outside::outside_deletions(removals, &ledger.handoffs, movies, series, now);
+    let returning = listed.iter().filter(|item| item.monitored == Some(true) && !item.on_disk).count();
+    if !listed.is_empty() {
+        println!(
+            "[flinch-arrd] deleted outside FLINCH in the last {} days: {} item(s), {returning} still monitored with nothing on disk",
+            outside::WINDOW_SECS / 86_400,
+            listed.len()
+        );
+    }
+    listed
 }
 
 /// Every import and file-deletion record, newest first, paged. Records a page
@@ -199,7 +235,8 @@ fn spans_for(app: App, records: &[HistoryRecord], movies: &[ArrMovie], series: &
         records.len(),
         items.len()
     );
-    (AppHistory { refreshed_at: now, records: records.len(), items }, summary)
+    let removals = records.iter().filter_map(HistoryRecord::removal).filter(|removal| now.saturating_sub(removal.at) <= outside::WINDOW_SECS).collect();
+    (AppHistory { refreshed_at: now, records: records.len(), items, removals: Some(removals) }, summary)
 }
 
 /// A missing cache is a first run; an unreadable one is read again from the *arrs.

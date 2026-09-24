@@ -3,6 +3,7 @@
 use super::super::{OwnedState, ProtectedEntry, ScheduledEntry};
 use super::{movie, season, SEASONS};
 use rstest::rstest;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 fn scratch(name: &str) -> PathBuf {
@@ -42,4 +43,24 @@ fn an_unusable_protected_file_owns_nothing(#[case] name: &str, #[case] content: 
 
     assert_eq!(OwnedState::read(&dir), OwnedState::default());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[rstest]
+#[case::still_a_card(true, &["812", "4511"], &[])]
+#[case::still_in_plex(false, &["812", "4511"], &[])]
+#[case::gone_from_both(false, &[], &["radarr-7", "sonarr-12-s3"])]
+#[case::season_gone_while_its_show_stays(false, &["812", "4500"], &["sonarr-12-s3"])]
+fn an_exclusion_protects_nothing_only_once_its_item_left_the_library_and_plex(
+    #[case] is_card: bool,
+    #[case] listed: &[&str],
+    #[case] vanished: &[&str],
+) {
+    let mut owned = OwnedState::default();
+    owned.protected.insert("radarr-7".into(), ProtectedEntry { target: movie("812"), exclusion_ids: vec![3] });
+    owned.protected.insert("sonarr-12-s3".into(), ProtectedEntry { target: season("4500", "4511"), exclusion_ids: vec![4, 5] });
+    let listed: HashSet<String> = listed.iter().map(|key| key.to_string()).collect();
+
+    let found: Vec<String> = owned.vanished(|_| is_card, &listed).into_iter().collect();
+
+    assert_eq!(found, vanished);
 }

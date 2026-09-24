@@ -178,7 +178,7 @@ async fn cycle(
     let max_items = settings.max_items;
     let max_gib = settings.max_gib;
     let enforce = settings.enforce || args.enforce;
-    let Fetched { movies, series } = fetch_inventory(&http, args, &settings.keep_tag).await?;
+    let Fetched { movies, series, removals } = fetch_inventory(&http, args, &settings.keep_tag).await?;
     let disks = fetch_disks(&http, args).await;
 
     // Cards first: the same set decides and displays, and Plex watch state
@@ -200,6 +200,7 @@ async fn cycle(
         plex_ids,
         play_keys,
         plex_keeps,
+        plex_listed,
     } = evidence::gather(args, http, settings, &movies, &series, &cards, cycle_now).await?;
 
     // --- Maintainerr, read first: an operator's exclusion is a hard keep guard
@@ -356,17 +357,21 @@ async fn cycle(
     // --- Maintainerr sync: keeps become exclusions, evictions past the grace
     // window become collection members, least regret first. ---
     let by_id: HashMap<&str, &SyncItem> = sync_items.iter().map(|item| (item.card_id.as_str(), item)).collect();
+    let names: HashMap<&str, &str> = cards.iter().map(|card| (card.id.as_str(), card.title.as_str())).collect();
     let handoff = handoff::Handoff {
         items: &by_id,
+        names: &names,
         report: &report,
         eligible: &eligible,
         titles: &titles,
         caps: mx::Caps::new(max_items, max_gib),
         enforcing,
         now,
+        plex_listed: plex_listed.as_ref(),
+        seerr: fetch::maintainerr_seerr_configured(http, args).await,
     };
     let sync = handoff::sync(handoff, observed, &mut api, &mut owned, &governance, &mut ledger, operator_keeps.len()).await;
-    for problem in &sync.problems {
+    for problem in sync.problems.iter().chain(&sync.warnings) {
         eprintln!("[flinch-arrd] maintainerr: {problem}");
     }
 
@@ -402,6 +407,7 @@ async fn cycle(
             model: model_label,
             shadow: (shadow_count as u64, shadow_gib),
             health,
+            outside: history::outside(&removals, &ledger, (&movies, &series), now),
         },
         &items,
     )
