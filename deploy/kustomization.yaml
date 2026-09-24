@@ -1,0 +1,43 @@
+# FLINCH on Kubernetes: the daemon (flinch-arrd), the UI (flinch-web) and the
+# state volume they share. Install with `kubectl apply -k deploy/`; the steps
+# before that are in deploy/README.md.
+#
+# To keep your own values out of git, leave this file as it is and put them in
+# a deploy/local/ overlay (gitignored) that starts with `resources: ["../base"]`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The knob: the namespace Radarr, Sonarr and Maintainerr run in. Create the
+# Secret flinch-secrets in this namespace before installing.
+namespace: media
+
+resources:
+  - base
+
+# The image you built and pushed.
+images:
+  - name: flinch
+    newName: registry.example.com/flinch
+    newTag: latest
+
+# The daemon reaches http://radarr:7878, http://sonarr:8989 and
+# http://maintainerr:6246 (services in the same namespace), and the UI is
+# published at flinch.example.com. To change either, uncomment and edit:
+#
+# patches:
+#   - patch: |
+#       apiVersion: apps/v1
+#       kind: Deployment
+#       metadata: { name: flinch-arrd }
+#       spec:
+#         template:
+#           spec:
+#             containers:
+#               - name: flinch-arrd
+#                 env:
+#                   - { name: RADARR_URL, value: "http://radarr.other-namespace.svc.cluster.local:7878" }
+#                   - { name: SONARR_URL, value: "http://sonarr.other-namespace.svc.cluster.local:8989" }
+#                   - { name: MAINTAINERR_URL, value: "http://maintainerr.other-namespace.svc.cluster.local:6246" }
+#   - target: { kind: Ingress, name: flinch-web }
+#     patch: |
+#       - { op: replace, path: /spec/rules/0/host, value: flinch.your-domain.example }

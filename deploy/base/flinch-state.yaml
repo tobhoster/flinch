@@ -1,0 +1,29 @@
+# The state volume and the watch-state ConfigMap, shared by both pods. The
+# daemon writes the state and the web pod reads it (and writes settings.json
+# when you save Settings), so both mount this ONE claim.
+#
+# The claim must support ReadWriteMany (NFS, Longhorn, CephFS, ...): the two
+# pods may land on different nodes. With a ReadWriteOnce storage class, set
+# accessModes to [ReadWriteOnce] and pin both pods to the same node (for
+# example with a nodeSelector), or the second pod fails with Multi-Attach.
+#
+# No storageClassName: the cluster's default class is used. Every state file
+# is replaced atomically (temp file + rename), which is safe on NFS-backed
+# ReadWriteMany volumes too.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: flinch-state-rwx }
+spec:
+  accessModes: [ReadWriteMany]
+  # The state is a handful of JSON files; 1Gi leaves plenty of room.
+  resources: { requests: { storage: 1Gi } }
+---
+# An optional media-server watch export the daemon merges
+# (examples/watch-state.json is the shape). Empty means no export: Plex and
+# Tautulli supply the evidence, and anything without evidence is held.
+# Re-applying the manifests resets it to empty.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: flinch-watch-state }
+data:
+  watch-state.json: "{}"

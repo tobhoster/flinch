@@ -1,0 +1,61 @@
+# flinch-web, the UI on port 7911. It reads the state the daemon writes on the
+# shared flinch-state-rwx claim (flinch-state.yaml), and writes settings.json
+# there when you save Settings.
+#
+# It has no login. Anyone who reaches it can change Settings, including
+# Enforcement, and it holds the Plex token. Keep it on your LAN or behind your
+# ingress's authentication.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: flinch-web }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: flinch-web } }
+  template:
+    metadata: { labels: { app: flinch-web } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000 }
+      containers:
+        - name: flinch-web
+          # Mapped to your registry by `images:` in deploy/kustomization.yaml.
+          image: flinch
+          # `latest` is a mutable tag: without Always, a node that already holds
+          # the tag silently keeps serving the previous build.
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/flinch-web"]
+          env:
+            - { name: FLINCH_STATE_DIR, value: "/state" }
+            - { name: FLINCH_WEB_PORT, value: "7911" }
+          ports: [{ containerPort: 7911 }]
+          volumeMounts: [{ name: state, mountPath: /state }]
+          readinessProbe: { httpGet: { path: /healthz, port: 7911 }, initialDelaySeconds: 3, periodSeconds: 10 }
+          resources: { requests: { cpu: 50m, memory: 24Mi }, limits: { cpu: 200m, memory: 64Mi } }
+      volumes: [{ name: state, persistentVolumeClaim: { claimName: flinch-state-rwx } }]
+---
+# Uses the cluster's default IngressClass. For HTTPS, add your class and a
+# certificate, for example with cert-manager:
+#
+#   metadata:
+#     annotations: { cert-manager.io/cluster-issuer: letsencrypt }
+#   spec:
+#     ingressClassName: nginx
+#     tls: [{ hosts: [flinch.example.com], secretName: flinch-web-tls }]
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flinch-web
+  labels: { app: flinch-web }
+spec:
+  rules:
+    - host: flinch.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: flinch-web, port: { number: 7911 } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: flinch-web }
+spec: { selector: { app: flinch-web }, ports: [{ port: 7911, targetPort: 7911 }] }
