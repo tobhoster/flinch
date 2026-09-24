@@ -1,0 +1,9 @@
+# Optional: publish flinch-web through your ingress controller. Turn it on with
+# `components: ["ingress"]` in deploy/kustomization.yaml (or
+# `components: ["../ingress"]` in an overlay), then set the host and the
+# certificate: see "Reach the UI" in deploy/README.md.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - flinch-web-ingress.yaml

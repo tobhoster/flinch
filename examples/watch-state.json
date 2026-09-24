@@ -1,0 +1,5 @@
+{
+  "radarr-7":  { "id": "radarr-7",  "last_watched_epoch": 1750000000, "progress": 1.0, "rewatch_score": 0.3 },
+  "sonarr-11-s1": { "id": "sonarr-11-s1", "last_watched_epoch": 1730000000, "progress": 1.0 },
+  "sonarr-11-s2": { "id": "sonarr-11-s2", "last_watched_epoch": 1780000000, "progress": 0.0 }
+}

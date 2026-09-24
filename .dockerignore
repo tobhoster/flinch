@@ -1,0 +1,11 @@
+# The image builds from source: send only what deploy/Dockerfile copies.
+# Everything here is either rebuilt in the image or must never leave this
+# machine (live state, local cluster overlays, model artifacts).
+.git
+target
+state
+artifacts
+deploy/local
+frontend/node_modules
+frontend/dist
+**/*.safetensors

@@ -1,0 +1,40 @@
+name: Bug report
+description: FLINCH did something it should not have, or did not do something it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste API keys, the Plex token or your FLINCH_WEB_TOKEN.** Remove them from logs and settings first.
+        A security problem goes to a [private report](https://github.com/tobhoster/flinch/security/advisories/new), not here.
+  - type: input
+    id: version
+    attributes:
+      label: FLINCH version
+      description: The image tag you run (for example 0.1.0), or the commit you built.
+    validations:
+      required: true
+  - type: dropdown
+    id: enforcement
+    attributes:
+      label: Enforcement
+      options: ["Off (dry run)", "On"]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Daemon log
+      description: "`kubectl logs deploy/flinch-arrd` around the problem, secrets removed."
+      render: text
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your stack
+      description: Versions of Radarr, Sonarr, Plex, Maintainerr and Tautulli (if used).

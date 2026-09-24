@@ -1,0 +1,16 @@
+name: Idea
+description: Something FLINCH should do, or do differently.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong or takes effort today, in your library.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: Anything that can change what gets deleted should say how it stays safe when evidence is missing.

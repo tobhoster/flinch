@@ -1,0 +1,28 @@
+# Monthly, grouped version updates. Security updates come as soon as an
+# advisory lands, whatever this schedule says.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: monthly }
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  # Base images in deploy/Dockerfile, tag and digest together.
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule: { interval: monthly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions:
+        patterns: ["*"]

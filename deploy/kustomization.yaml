@@ -1,0 +1,50 @@
+# FLINCH on Kubernetes: the daemon (flinch-arrd), the UI (flinch-web) and the
+# state volume they share. Install with `kubectl apply -k deploy/`; the steps
+# before that are in deploy/README.md.
+#
+# To keep your own values out of git, leave this file as it is and put them in
+# a deploy/local/ overlay (gitignored) that starts with `resources: ["../base"]`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The knob: the namespace Radarr, Sonarr and Maintainerr run in. Create the
+# Secret flinch-secrets in this namespace before installing.
+namespace: media
+
+resources:
+  - base
+
+# Publish the UI through your ingress controller (HTTPS). Without it, reach the
+# UI with `kubectl -n media port-forward svc/flinch-web 7911:7911`.
+# components:
+#   - ingress
+
+# The published image. Pin the release you install; to build your own, point
+# newName/newTag at your registry instead (deploy/README.md, "Build your own").
+images:
+  - name: flinch
+    newName: ghcr.io/tobhoster/flinch
+    newTag: "0.1.0"
+
+# The daemon reaches http://radarr:7878, http://sonarr:8989 and
+# http://maintainerr:6246 (services in the same namespace), and the ingress
+# component publishes the UI at flinch.example.com. To change either,
+# uncomment and edit (the Ingress patch needs the component above):
+# patches:
+#   - patch: |
+#       apiVersion: apps/v1
+#       kind: Deployment
+#       metadata: { name: flinch-arrd }
+#       spec:
+#         template:
+#           spec:
+#             containers:
+#               - name: flinch-arrd
+#                 env:
+#                   - { name: RADARR_URL, value: "http://radarr.other-namespace.svc.cluster.local:7878" }
+#                   - { name: SONARR_URL, value: "http://sonarr.other-namespace.svc.cluster.local:8989" }
+#                   - { name: MAINTAINERR_URL, value: "http://maintainerr.other-namespace.svc.cluster.local:6246" }
+#   - target: { kind: Ingress, name: flinch-web }
+#     patch: |
+#       - { op: replace, path: /spec/rules/0/host, value: flinch.your-domain.example }
+#       - { op: replace, path: /spec/tls/0/hosts/0, value: flinch.your-domain.example }

@@ -1,0 +1,9 @@
+# The FLINCH manifests, without namespace or registry. deploy/kustomization.yaml
+# sets those; your own overlay can instead start from `resources: ["../base"]`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - flinch-state.yaml
+  - flinch-arrd.yaml
+  - flinch-web.yaml

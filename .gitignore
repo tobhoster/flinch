@@ -1,0 +1,12 @@
+/target
+/artifacts
+/state
+*.safetensors
+/frontend/node_modules
+/frontend/dist
+# Your own cluster's values (image, hosts, namespace, secrets) as a kustomize
+# overlay on deploy/. See deploy/README.md.
+/deploy/local/
+
+# Python bytecode from running the demo anonymizer
+__pycache__/

@@ -1,0 +1,28 @@
+# The UI through your ingress controller, HTTPS only: the browser sends the
+# FLINCH token with every request, so plain HTTP would put it on the wire.
+#
+# Uses the cluster's default IngressClass. Replace the host, and give the
+# certificate a source, for example cert-manager:
+#
+#   metadata:
+#     annotations: { cert-manager.io/cluster-issuer: letsencrypt }
+#   spec:
+#     ingressClassName: nginx
+#
+# FLINCH's token is the only login. For single sign-on in front of it, add
+# your proxy's forward-auth annotation (Authelia, Authentik, oauth2-proxy). Do
+# not publish it to the internet: it can schedule deletions.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flinch-web
+  labels: { app: flinch-web }
+spec:
+  tls: [{ hosts: [flinch.example.com], secretName: flinch-web-tls }]
+  rules:
+    - host: flinch.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: flinch-web, port: { number: 7911 } } }

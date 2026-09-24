@@ -1,0 +1,55 @@
+# flinch-web, the UI on port 7911. It reads the state the daemon writes on the
+# shared flinch-state-rwx claim (flinch-state.yaml), and writes settings.json
+# there when you save Settings.
+#
+# Every API call needs the token in FLINCH_WEB_TOKEN (Secret flinch-secrets);
+# the browser asks for it once. Without one the UI says how to set it and the
+# API refuses everything. There is no Ingress here: reach the UI with
+# `kubectl port-forward`, or add the deploy/ingress component (HTTPS).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: flinch-web }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: flinch-web } }
+  template:
+    metadata: { labels: { app: flinch-web } }
+    spec:
+      # It never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: flinch-web
+          # Mapped to the published image by `images:` in deploy/kustomization.yaml.
+          image: flinch
+          # A moved tag (`latest`, or your own) is never served stale: every
+          # start checks the registry.
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/flinch-web"]
+          env:
+            - { name: FLINCH_STATE_DIR, value: "/state" }
+            - { name: FLINCH_WEB_PORT, value: "7911" }
+            # Optional only so a missing key shows up in the UI, with how to fix
+            # it, rather than as a pod stuck in CreateContainerConfigError.
+            - name: FLINCH_WEB_TOKEN
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_TOKEN, optional: true } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          ports: [{ containerPort: 7911 }]
+          volumeMounts: [{ name: state, mountPath: /state }]
+          readinessProbe: { httpGet: { path: /healthz, port: 7911 }, initialDelaySeconds: 3, periodSeconds: 10 }
+          resources: { requests: { cpu: 50m, memory: 24Mi }, limits: { cpu: 200m, memory: 64Mi } }
+      volumes: [{ name: state, persistentVolumeClaim: { claimName: flinch-state-rwx } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: flinch-web }
+spec: { selector: { app: flinch-web }, ports: [{ port: 7911, targetPort: 7911 }] }

@@ -1,0 +1,95 @@
+# flinch-arrd, the daemon that classifies. It loops: inventory from Radarr and
+# Sonarr, watch evidence from Plex and Tautulli, a plan, then the Maintainerr
+# sync. The scan interval in Settings (state/settings.json) schedules the
+# cycles, so a change there takes effect on the next cycle, no redeploy.
+#
+# Watch evidence comes from Plex (item-level state, which also resolves each
+# title to the Plex ratingKey Maintainerr needs) and Tautulli (plays, plus
+# absence once its coverage is known). Maintainerr supplies the exclusion API
+# and the collections; Sonarr and Radarr supply the inventory.
+#
+# The state lives on the ReadWriteMany claim from flinch-state.yaml, shared
+# with flinch-web. The daemon has no Service or Ingress: it only calls out.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: flinch-arrd, labels: { app: flinch-arrd } }
+spec:
+  replicas: 1
+  # One classifier at a time: two loops would both write the snapshot and both
+  # read protected.json, and the grace window would count double.
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: flinch-arrd } }
+  template:
+    metadata: { labels: { app: flinch-arrd } }
+    spec:
+      restartPolicy: Always
+      # It never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: flinch-arrd
+          # Mapped to the published image by `images:` in deploy/kustomization.yaml.
+          image: flinch
+          # A moved tag (`latest`, or your own) is never run stale: every start
+          # checks the registry.
+          imagePullPolicy: Always
+          # No --once: this is the loop.
+          command: ["/usr/local/bin/flinch-arrd"]
+          env:
+            # Same-namespace service names. Apps elsewhere: see the patches
+            # example in deploy/kustomization.yaml.
+            - { name: RADARR_URL, value: "http://radarr:7878" }
+            - { name: SONARR_URL, value: "http://sonarr:8989" }
+            - { name: MAINTAINERR_URL, value: "http://maintainerr:6246" }
+            - { name: FLINCH_WATCH_STATE, value: "/cfg/watch-state.json" }
+            - { name: FLINCH_STATE_DIR, value: "/state" }
+            # Enforcement is a setting (Settings > Safety > Enforcement), off by
+            # default, so a fresh install only plans and logs. Do not add
+            # FLINCH_ENFORCE here: it turns enforcement on whatever the
+            # setting says.
+            - name: RADARR_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: RADARR_API_KEY } }
+            - name: SONARR_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: SONARR_API_KEY } }
+            # Maintainerr checks no key today; FLINCH sends one when it is set.
+            - name: MAINTAINERR_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: MAINTAINERR_API_KEY, optional: true } }
+            # Tautulli keeps every stream with user attribution and never trims,
+            # which is where plays Plex no longer reports still live. Without
+            # these, FLINCH reads Tautulli's address from Maintainerr, but
+            # Maintainerr's API hands out a masked key, so set them here.
+            - name: FLINCH_TAUTULLI_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TAUTULLI_URL, optional: true } }
+            - name: FLINCH_TAUTULLI_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TAUTULLI_API_KEY, optional: true } }
+            # Plex can also be set in Settings > Plex, which wins over these.
+            # With neither, FLINCH cannot address items in Maintainerr and
+            # every item is held.
+            - name: FLINCH_PLEX_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_URL, optional: true } }
+            - name: FLINCH_PLEX_TOKEN
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_TOKEN, optional: true } }
+          # Everything it writes goes to /state or /data; the image stays as built.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: watch, mountPath: /cfg, readOnly: true }
+            - { name: state, mountPath: /state }
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: watch
+          configMap: { name: flinch-watch-state }
+        - name: state
+          persistentVolumeClaim: { claimName: flinch-state-rwx }
+        - name: data
+          emptyDir: {}
