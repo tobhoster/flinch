@@ -128,6 +128,13 @@ pub enum MaintainerrError {
         #[source]
         source: reqwest::Error,
     },
+    /// A body that could not be read whole: cut off, or over the size limit.
+    #[error("{endpoint}: {source}")]
+    Body {
+        endpoint: &'static str,
+        #[source]
+        source: crate::body::BodyError,
+    },
 }
 
 /// Everything FLINCH reads from or writes to Maintainerr, and nothing more.

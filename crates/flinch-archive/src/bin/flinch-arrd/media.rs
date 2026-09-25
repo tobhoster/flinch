@@ -6,6 +6,7 @@
 
 use super::fetch::refuse_redirect;
 use anyhow::Context;
+use flinch_archive::body;
 use flinch_archive::plex::{EpisodeGuids, PlexContainer, PlexEnvelope, PlexEpisodes, PlexLibrary, PlexMetadata};
 use flinch_archive::tautulli::{self, TautulliRow};
 use std::collections::{BTreeSet, HashSet};
@@ -57,7 +58,7 @@ impl PlexClient<'_> {
             .context("plex request failed")?;
         let status = response.status();
         refuse_redirect(status).context("plex")?;
-        let body = response.text().await.context("plex body read failed")?;
+        let body = body::read_text(response).await.context("plex body read failed")?;
         serde_json::from_str::<PlexEnvelope>(&body).map(|envelope| envelope.container).map_err(|error| {
             anyhow::anyhow!("plex {status} body did not parse: {error}; first bytes: {:.140}", body.chars().take(140).collect::<String>())
         })
@@ -309,7 +310,7 @@ pub(super) async fn fetch_tautulli_history(http: &reqwest::Client, base: &str, k
             let response = http.get(&url).send().await.map_err(reqwest::Error::without_url).context("tautulli request failed")?;
             let status = response.status();
             refuse_redirect(status).context("tautulli")?;
-            let body = response.text().await.map_err(reqwest::Error::without_url).context("tautulli body read failed")?;
+            let body = body::read_text(response).await.context("tautulli body read failed")?;
             tautulli::parse_history_page(&body).ok_or_else(|| {
                 // Silence here cost an afternoon: say what came back instead.
                 anyhow::anyhow!("tautulli {status} did not answer a history page; first bytes: {:.160}", body.chars().take(160).collect::<String>())
@@ -366,7 +367,7 @@ async fn fetch_keep_history(http: &reqwest::Client, base: &str, key: &str) -> an
         let response = http.get(&url).send().await.map_err(reqwest::Error::without_url)?;
         refuse_redirect(response.status())?;
         let response = response.error_for_status().map_err(reqwest::Error::without_url)?;
-        anyhow::Ok(response.text().await.map_err(reqwest::Error::without_url)?)
+        anyhow::Ok(body::read_text(response).await?)
     };
     let (users, libraries) = tokio::join!(get("get_users"), get("get_libraries_table&length=1000"));
     let (users, libraries) = (users.context("get_users")?, libraries.context("get_libraries_table")?);

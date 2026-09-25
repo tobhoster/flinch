@@ -38,6 +38,7 @@ fn verdict(result: Result<(), MaintainerrError>) -> String {
         Err(MaintainerrError::Http { status, message, .. }) => format!("http {status}: {message}"),
         Err(MaintainerrError::Parse { .. }) => "parse".to_string(),
         Err(MaintainerrError::Transport { .. }) => "transport".to_string(),
+        Err(MaintainerrError::Body { .. }) => "body".to_string(),
     }
 }
 

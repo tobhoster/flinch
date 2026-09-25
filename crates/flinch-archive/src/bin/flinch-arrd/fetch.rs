@@ -3,6 +3,7 @@
 
 use super::Args;
 use anyhow::{Context, Result};
+use flinch_archive::body;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
 use flinch_archive::plex::SonarrEpisodes;
 
@@ -19,10 +20,11 @@ pub(super) async fn fetch_json(client: &reqwest::Client, url: &str, api_key: &st
     if !status.is_success() {
         // The body carries the reason ("database is locked"); a bare status
         // code sends the operator to the wrong app's logs.
-        let body = response.text().await.unwrap_or_default();
+        let body = body::read_text(response).await.unwrap_or_default();
         anyhow::bail!("{url}: HTTP {status}: {}", body.chars().take(200).collect::<String>().trim());
     }
-    response.json().await.context("arr response was not JSON")
+    let body = body::read(response).await.context("arr response unreadable")?;
+    serde_json::from_slice(&body).context("arr response was not JSON")
 }
 
 /// Every episode of one series (`/api/v3/episode`), for confirming a season
@@ -202,12 +204,9 @@ pub(super) async fn maintainerr_settings(
         .await
         .context("maintainerr settings request failed")?;
     refuse_redirect(response.status()).context("maintainerr settings")?;
-    response
-        .error_for_status()
-        .context("maintainerr refused the settings request")?
-        .json()
-        .await
-        .context("maintainerr settings response was not JSON")
+    let response = response.error_for_status().context("maintainerr refused the settings request")?;
+    let body = body::read(response).await.context("maintainerr settings response unreadable")?;
+    serde_json::from_slice(&body).context("maintainerr settings response was not JSON")
 }
 /// Whether Maintainerr has Seerr configured; `None` when its settings could
 /// not be read, so a missing answer never produces a warning.

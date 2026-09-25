@@ -131,6 +131,8 @@ pub enum SystemOneError {
     Transport(#[source] reqwest::Error),
     #[error("HTTP {status}: {body}")]
     Status { status: u16, body: String },
+    #[error("answer unreadable: {0}")]
+    Body(#[source] crate::body::BodyError),
     #[error("answer did not parse: {0}")]
     Shape(#[source] serde_json::Error),
 }
@@ -151,7 +153,7 @@ pub async fn ask(
     }
     let response = builder.send().await.map_err(|error| SystemOneError::Transport(error.without_url()))?;
     let status = response.status();
-    let body = response.text().await.map_err(|error| SystemOneError::Transport(error.without_url()))?;
+    let body = crate::body::read_text(response).await.map_err(SystemOneError::Body)?;
     if !status.is_success() {
         return Err(SystemOneError::Status { status: status.as_u16(), body: body.chars().take(300).collect() });
     }

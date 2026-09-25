@@ -54,7 +54,7 @@ impl HttpMaintainerr {
 async fn send(endpoint: &'static str, request: RequestBuilder) -> Result<(u16, String), MaintainerrError> {
     let response = request.send().await.map_err(|source| MaintainerrError::Transport { endpoint, source })?;
     let status = response.status().as_u16();
-    let body = response.text().await.map_err(|source| MaintainerrError::Transport { endpoint, source })?;
+    let body = crate::body::read_text(response).await.map_err(|source| MaintainerrError::Body { endpoint, source })?;
     Ok((status, body))
 }
 

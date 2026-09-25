@@ -12,6 +12,7 @@
 //!   above 0.95. Below that: keep.
 
 pub mod arr;
+pub mod body;
 pub mod calibration;
 pub mod capacity;
 pub mod card;
