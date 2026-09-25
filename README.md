@@ -15,6 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/tobhoster/flinch/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tobhoster/flinch/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tobhoster/flinch/actions/workflows/security.yml"><img alt="Security" src="https://github.com/tobhoster/flinch/actions/workflows/security.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f28c28"></a>
   <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-1b2a4a?logo=rust">
   <img alt="Runs on any CPU" src="https://img.shields.io/badge/runs%20on-any%20CPU-1b2a4a">
@@ -199,11 +200,14 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
 
 ## 🚧 Status
 
-- **582 tests pass**, with table-driven cases and property tests on everything
+- **587 tests pass**, with table-driven cases and property tests on everything
   that decides a deletion: eviction order, watermark latching, recycle-bin
   credit and the freed-bytes check, identity joins, Maintainerr sync and
   exclusion releases, Leaving Soon routing and the forecast's no-leakage rules,
-  plus the API's token check and the settings bounds.
+  plus the API's token check, the settings bounds and the response-size limit.
+- **Checked on every change**: nothing merges into `main` without the tests,
+  CodeQL and the Security workflow (secrets, dependency advisories and
+  licenses, workflow linting, and a scan and smoke test of the image).
 - **Running on one homelab** with enforcement on since 2026-09-22. All 34
   keep-exclusions FLINCH wrote are found in Maintainerr every cycle, and the
   daily fit has adopted the recalibrated model (out-of-fold AUC 0.84, Brier
@@ -218,6 +222,7 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
 ## 🧑‍💻 Development
 
 ```bash
+cargo fmt --all                            # the style in rustfmt.toml
 cargo test --workspace --locked            # the whole suite
 cd frontend && npm ci && npm run build     # the UI, into frontend/dist
 cd ..

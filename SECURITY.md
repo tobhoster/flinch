@@ -39,3 +39,19 @@ Only the latest release gets fixes.
 
 Out of scope: someone who can already read the Secret or the state volume, run
 code in the pods, or reach Maintainerr and the *arr apps directly.
+
+## Checked on every change
+
+Nothing reaches `main` without a pull request that passes the tests, CodeQL,
+and the [Security workflow](.github/workflows/security.yml), which also runs
+every week:
+
+- gitleaks over the whole history;
+- cargo-deny: RustSec advisories, licenses and sources of every crate;
+- npm audit of the UI's packages, and their registry signatures;
+- actionlint and zizmor over the workflows, whose actions are pinned by SHA;
+- Trivy over the image, the Dockerfile and the manifests, then the image run
+  as the manifests run it, checking the token and the security headers.
+
+Release tags cannot be moved or deleted, and each release image carries a
+build provenance attestation and an SBOM.
