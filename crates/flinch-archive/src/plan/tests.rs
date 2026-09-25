@@ -120,8 +120,7 @@ fn eviction_takes_the_least_expected_regret_per_byte_first() {
 #[case::a_nan_score_never_clears(Some(f32::NAN), false)]
 fn the_score_floor_gates_what_the_policy_permits(#[case] p_safe: Option<f32>, #[case] planned: bool) {
     let card = sized("x", 10);
-    let verdicts: HashMap<String, ScoreVerdict> =
-        p_safe.map(|p| (card.id.clone(), verdict(p))).into_iter().collect();
+    let verdicts: HashMap<String, ScoreVerdict> = p_safe.map(|p| (card.id.clone(), verdict(p))).into_iter().collect();
     let policy = ArchivePolicy { score_floor: 0.80, ..ArchivePolicy::default() };
     let plan = build_plan(&[card], &Baseline::new(policy), &policy, 0.95, &verdicts, &ReclaimGoal::AllSafe);
     assert_eq!(!plan.entries.is_empty(), planned);

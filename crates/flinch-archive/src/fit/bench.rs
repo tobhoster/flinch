@@ -167,7 +167,12 @@ pub fn describe(difference: &Difference) -> String {
             format!("{word} [{low:+.3}, {high:+.3}]")
         }
     };
-    format!("Brier {} · log-loss {} · AUC {}", verdict(difference.brier, true), verdict(difference.log_loss, true), verdict(difference.auc, false))
+    format!(
+        "Brier {} · log-loss {} · AUC {}",
+        verdict(difference.brier, true),
+        verdict(difference.log_loss, true),
+        verdict(difference.auc, false)
+    )
 }
 
 /// A head-to-head against a live System One server, as `benchmark.json`.
@@ -227,11 +232,8 @@ pub fn head_to_head(dataset: &[Example], predictions: &Predictions, now_unix: u6
 
 /// Match prediction lines to panel rows: `(panel index, p)` per joined row.
 fn join(dataset: &[Example], predictions: &Predictions) -> (Vec<(usize, f32)>, JoinReport) {
-    let index: HashMap<(&str, i64), usize> = dataset
-        .iter()
-        .enumerate()
-        .map(|(row, example)| ((example.item_id.as_str(), cut_key(example.cut_days)), row))
-        .collect();
+    let index: HashMap<(&str, i64), usize> =
+        dataset.iter().enumerate().map(|(row, example)| ((example.item_id.as_str(), cut_key(example.cut_days)), row)).collect();
     let mut answered = vec![false; dataset.len()];
     let mut joined = Vec::new();
     let mut report = JoinReport {

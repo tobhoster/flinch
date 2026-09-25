@@ -104,9 +104,7 @@ impl RuntimeSettings {
             return Err(SettingsError::Invalid("the storage ceiling (capacity_ceiling) must be between 1% and 100%"));
         }
         if !within(self.capacity_release, 0.01, 0.99) || self.capacity_release > self.capacity_ceiling {
-            return Err(SettingsError::Invalid(
-                "the release mark (capacity_release) must be between 1% and 99% and not above the ceiling",
-            ));
+            return Err(SettingsError::Invalid("the release mark (capacity_release) must be between 1% and 99% and not above the ceiling"));
         }
         if self.interval_s < 300 {
             return Err(SettingsError::Invalid("the scan interval (interval_s) must be at least 300 seconds"));

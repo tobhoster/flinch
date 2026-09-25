@@ -51,7 +51,13 @@ fn pairwise_auc(scores: &[f32], labels: &[f32]) -> f32 {
     for (positive, _) in scores.iter().zip(labels).filter(|(_, label)| **label >= 0.5) {
         for (negative, _) in scores.iter().zip(labels).filter(|(_, label)| **label < 0.5) {
             pairs += 1.0;
-            wins += if positive > negative { 1.0 } else if positive == negative { 0.5 } else { 0.0 };
+            wins += if positive > negative {
+                1.0
+            } else if positive == negative {
+                0.5
+            } else {
+                0.0
+            };
         }
     }
     if pairs == 0.0 {
@@ -64,9 +70,8 @@ fn pairwise_auc(scores: &[f32], labels: &[f32]) -> f32 {
 /// Rows with probabilities on a 1/1000 grid, so ties are common and every
 /// transform below keeps distinct scores distinct in f32.
 fn rows() -> impl Strategy<Value = (Vec<f32>, Vec<f32>)> {
-    proptest::collection::vec((0u32..=1000, any::<bool>()), 1..200).prop_map(|rows| {
-        rows.into_iter().map(|(grid, safe)| (grid as f32 / 1000.0, if safe { 1.0 } else { 0.0 })).unzip()
-    })
+    proptest::collection::vec((0u32..=1000, any::<bool>()), 1..200)
+        .prop_map(|rows| rows.into_iter().map(|(grid, safe)| (grid as f32 / 1000.0, if safe { 1.0 } else { 0.0 })).unzip())
 }
 
 proptest! {

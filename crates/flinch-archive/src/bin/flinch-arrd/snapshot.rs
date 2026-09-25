@@ -93,9 +93,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 // saying so would send the operator hunting for plays that exist.
                 let no_evidence = watch.get(&card.id).is_none();
                 match (never_played, policy.unwatched_reclaim.enabled) {
-                    (true, _) if no_evidence => {
-                        "No watch evidence (not found in Plex or Tautulli this run), so it is held".to_string()
-                    }
+                    (true, _) if no_evidence => "No watch evidence (not found in Plex or Tautulli this run), so it is held".to_string(),
                     (true, false) if never_played_held => {
                         "Never played; never-played reclaim is held until the watch evidence is complete".to_string()
                     }
@@ -103,11 +101,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                     (true, true) => "Never played, outside the never-played reclaim terms".to_string(),
                     (false, _) if is_delete => decision.describe(),
                     (false, _) => match below_floor {
-                        Some(v) => format!(
-                            "Below the score floor: P(safe) {:.0}% < {:.0}%",
-                            v.p_safe * 100.0,
-                            policy.score_floor * 100.0
-                        ),
+                        Some(v) => format!("Below the score floor: P(safe) {:.0}% < {:.0}%", v.p_safe * 100.0, policy.score_floor * 100.0),
                         None if permitted => governance.held_reason(&card.id),
                         None => decision.describe(),
                     },
@@ -133,9 +127,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             forecast: None,
             reasons: Vec::new(),
             hard_guard: None,
-            title_slug: movie
-                .and_then(|m| m.title_slug.clone())
-                .or_else(|| show.and_then(|s| s.title_slug.clone())),
+            title_slug: movie.and_then(|m| m.title_slug.clone()).or_else(|| show.and_then(|s| s.title_slug.clone())),
             volume: governance.volume_for(&card.id),
             series_status: show.and_then(|s| s.status.clone()),
             last_aired_epoch: show.and_then(|s| s.last_aired_epoch()),
@@ -165,11 +157,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             let mut row = card_row(card, movie, show);
             row.p_safe = Some(score.p_safe);
             row.forecast = Some(score.forecast);
-            row.reasons = score
-                .top_reasons(3)
-                .iter()
-                .map(|signal| signal.detail.clone())
-                .collect();
+            row.reasons = score.top_reasons(3).iter().map(|signal| signal.detail.clone()).collect();
             row.hard_guard = score.hard_guard.map(|guard| guard.to_string());
             row.inflow = flinch_archive::inflow::advise(card, score);
             row
@@ -179,10 +167,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
     // Movies and seasons with NO files never became cards; they still belong
     // in the library view — including their watch evidence, which is exactly
     // what the operator checks ("I did watch that").
-    let snapshot_now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let snapshot_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     for movie in movies {
         if movie.to_card().is_none() {
             let id = format!("radarr-{}", movie.id);
@@ -225,11 +210,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
         }
     }
     for series_item in series {
-        let on_disk: std::collections::HashSet<u32> = series_item
-            .to_cards()
-            .iter()
-            .filter_map(|c| c.season_index)
-            .collect();
+        let on_disk: std::collections::HashSet<u32> = series_item.to_cards().iter().filter_map(|c| c.season_index).collect();
         for season in &series_item.seasons {
             if on_disk.contains(&season.season_number) {
                 continue;

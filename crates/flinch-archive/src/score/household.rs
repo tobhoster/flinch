@@ -98,11 +98,7 @@ mod tests {
     #[case::an_unplayed_season_sees_a_finished_sibling(&[("s1", 1.0)], "s2", Siblings { played: true, completed: true })]
     #[case::a_partial_sibling_is_played_not_completed(&[("s1", 0.4)], "s2", Siblings { played: true, completed: false })]
     #[case::its_own_partial_play_is_not_a_sibling(&[("s2", 0.4)], "s2", Siblings { played: false, completed: false })]
-    fn sibling_evidence_never_counts_the_item_itself(
-        #[case] progress: &[(&str, f32)],
-        #[case] item: &str,
-        #[case] expected: Siblings,
-    ) {
+    fn sibling_evidence_never_counts_the_item_itself(#[case] progress: &[(&str, f32)], #[case] item: &str, #[case] expected: Siblings) {
         let cards = vec![season("s1", "Show"), season("s2", "Show"), season("x1", "Other")];
         let watch = watched(progress);
         let activity = ShowActivity::new(&cards, &watch);

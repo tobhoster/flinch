@@ -1,8 +1,8 @@
 use super::*;
 use crate::arr::{SeasonStats, SeriesSeason};
 use crate::capacity::{AppDisks, CapacityAction, Credit, RecycleBin, RootFolder, Volume};
-use std::collections::BTreeMap;
 use rstest::rstest;
+use std::collections::BTreeMap;
 
 const GB: u64 = 1_000_000_000;
 
@@ -62,11 +62,8 @@ fn settings(ceiling: f32, release: f32) -> RuntimeSettings {
 
 fn governed(used_gb: u64, ceiling: f32, release: f32) -> (Governance, ArchivePolicy) {
     let library = library(used_gb);
-    let volume_of = volume_map(
-        &library,
-        &[movie(1, Some("/media/movies/One (2001)")), movie(2, None)],
-        &[show(7, Some("/media/tv/Seven"), &[1, 2])],
-    );
+    let volume_of =
+        volume_map(&library, &[movie(1, Some("/media/movies/One (2001)")), movie(2, None)], &[show(7, Some("/media/tv/Seven"), &[1, 2])]);
     let mut policy = ArchivePolicy::default();
     let governance = govern(library, volume_of, |_| true, &settings(ceiling, release), &Latch::default(), OnDisk::default(), &mut policy);
     (governance, policy)
@@ -105,7 +102,15 @@ fn malformed_watermarks_govern_nothing_and_say_so(#[case] ceiling: f32, #[case] 
 #[test]
 fn no_library_volume_is_unmeasured() {
     let mut policy = ArchivePolicy::default();
-    let governance = govern(LibraryVolumes::default(), HashMap::new(), |_| true, &RuntimeSettings::default(), &Latch::default(), OnDisk::default(), &mut policy);
+    let governance = govern(
+        LibraryVolumes::default(),
+        HashMap::new(),
+        |_| true,
+        &RuntimeSettings::default(),
+        &Latch::default(),
+        OnDisk::default(),
+        &mut policy,
+    );
     assert_eq!(governance.decision.action, CapacityAction::Unmeasured);
     assert!(!governance.invalid_watermarks);
 }

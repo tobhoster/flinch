@@ -76,8 +76,7 @@ impl SonarrEpisodes {
 /// Whether Plex's season `season` is Sonarr's season `season` (see the module
 /// docs).
 pub fn same_season(season: u32, plex: &PlexEpisodes, sonarr: &SonarrEpisodes) -> bool {
-    let (Some(held), Some(numbered), Some(files)) =
-        (plex.0.get(&season), sonarr.numbered.get(&season), sonarr.with_files.get(&season))
+    let (Some(held), Some(numbered), Some(files)) = (plex.0.get(&season), sonarr.numbered.get(&season), sonarr.with_files.get(&season))
     else {
         return false;
     };

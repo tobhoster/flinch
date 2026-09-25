@@ -27,11 +27,7 @@ pub struct ArrDiskSpace {
 
 impl From<&ArrDiskSpace> for crate::capacity::Volume {
     fn from(entry: &ArrDiskSpace) -> Self {
-        crate::capacity::Volume {
-            path: entry.path.clone(),
-            total_bytes: entry.total_space,
-            free_bytes: entry.free_space,
-        }
+        crate::capacity::Volume { path: entry.path.clone(), total_bytes: entry.total_space, free_bytes: entry.free_space }
     }
 }
 
@@ -263,27 +259,16 @@ pub struct ArrMediaManagement {
 
 /// Poster preference: upstream CDN first (browser-loadable), then arr-local.
 pub fn poster_url(images: &[ArrImage]) -> Option<String> {
-    images
-        .iter()
-        .find(|i| i.cover_type == "poster")
-        .and_then(|i| i.remote_url.clone().or_else(|| i.url.clone()))
+    images.iter().find(|i| i.cover_type == "poster").and_then(|i| i.remote_url.clone().or_else(|| i.url.clone()))
 }
 
 impl ArrMovie {
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
-        crate::ids::ExternalIds {
-            tmdb: known_number(self.tmdb_id),
-            tvdb: None,
-            imdb: known_text(self.imdb_id.as_deref()),
-        }
+        crate::ids::ExternalIds { tmdb: known_number(self.tmdb_id), tvdb: None, imdb: known_text(self.imdb_id.as_deref()) }
     }
 
     pub fn quality(&self) -> Option<String> {
-        self.movie_file
-            .as_ref()
-            .and_then(|f| f.quality.as_ref())
-            .map(|q| q.quality.name.clone())
-            .filter(|name| !name.is_empty())
+        self.movie_file.as_ref().and_then(|f| f.quality.as_ref()).map(|q| q.quality.name.clone()).filter(|name| !name.is_empty())
     }
 
     pub fn to_card(&self) -> Option<ArchiveCard> {
@@ -333,11 +318,8 @@ impl ArrSeries {
         // "Newest" counts only seasons that ARE on disk. An announced future
         // season with no files must not shield the latest download from the
         // archive reflex — the household cannot be mid-binge on nothing.
-        let on_disk: Vec<&SeriesSeason> = self
-            .seasons
-            .iter()
-            .filter(|s| s.statistics.episode_file_count > 0 || s.statistics.size_on_disk > 0)
-            .collect();
+        let on_disk: Vec<&SeriesSeason> =
+            self.seasons.iter().filter(|s| s.statistics.episode_file_count > 0 || s.statistics.size_on_disk > 0).collect();
         let newest: Option<u32> = on_disk.iter().map(|s| s.season_number).max();
         for season in on_disk {
             let stats = &season.statistics;

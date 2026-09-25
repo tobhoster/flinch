@@ -50,9 +50,8 @@ pub(super) async fn sync(
         Ok(observed) => observed,
         Err(error) => return mx::SyncSummary::unavailable(&error, !enforcing, operator_keeps),
     };
-    let pick = |ids: &[String]| -> Vec<SyncItem> {
-        ids.iter().filter_map(|id| items.get(id.as_str()).map(|item| (*item).clone())).collect()
-    };
+    let pick =
+        |ids: &[String]| -> Vec<SyncItem> { ids.iter().filter_map(|id| items.get(id.as_str()).map(|item| (*item).clone())).collect() };
     // Protect everything FLINCH keeps — the reserve included. Below the ceiling
     // nothing may be deleted (watermark governance), but the operator's own
     // Maintainerr rules (e.g. "Watched … Cleanup") would still take exactly the

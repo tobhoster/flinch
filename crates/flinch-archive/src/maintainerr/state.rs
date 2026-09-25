@@ -119,9 +119,8 @@ impl OwnedState {
     /// and memberships gone from an observed collection (deleted by its
     /// schedule, or removed by the operator). Anything unobserved stays.
     pub(super) fn prune(&mut self, observed: &Observed) {
-        self.scheduled.retain(|_, entry| {
-            observed.members.get(&entry.collection_id).is_none_or(|members| members.contains(entry.target.item_key()))
-        });
+        self.scheduled
+            .retain(|_, entry| observed.members.get(&entry.collection_id).is_none_or(|members| members.contains(entry.target.item_key())));
         self.protected.retain(|_, entry| {
             if let Some(rows) = observed.exclusions.get(entry.target.media_id()) {
                 entry.exclusion_ids.retain(|id| rows.iter().any(|row| row.id == *id));

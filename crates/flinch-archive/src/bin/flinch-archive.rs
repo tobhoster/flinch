@@ -75,19 +75,18 @@ fn main() -> Result<()> {
             let goal = match (used_gb, total_gb) {
                 (Some(used), Some(total)) => {
                     use flinch_archive::capacity::{decide_capacity, CapacityAction, CapacitySnapshot, Latch, Volume, Watermarks};
-                    let marks = Watermarks::new(ceiling_pct / 100.0, release_pct / 100.0).with_context(|| {
-                        format!("watermarks need 0 < release ({release_pct}%) <= ceiling ({ceiling_pct}%) <= 100")
-                    })?;
+                    let marks = Watermarks::new(ceiling_pct / 100.0, release_pct / 100.0)
+                        .with_context(|| format!("watermarks need 0 < release ({release_pct}%) <= ceiling ({ceiling_pct}%) <= 100"))?;
                     let total_bytes = total.saturating_mul(GIB);
-                    let disk = Volume {
-                        path: "disk".to_string(),
-                        total_bytes,
-                        free_bytes: total_bytes.saturating_sub(used.saturating_mul(GIB)),
-                    };
+                    let disk =
+                        Volume { path: "disk".to_string(), total_bytes, free_bytes: total_bytes.saturating_sub(used.saturating_mul(GIB)) };
                     let snapshot = CapacitySnapshot::of(&[disk], marks).context("a described disk is always measured")?;
                     // A one-shot plan has no previous run, so only the ceiling can latch.
                     let decision = decide_capacity(&mut policy, Some(&snapshot), &Latch::default(), false, &Default::default());
-                    println!("capacity {:.1}% of {total} GiB — ceiling {ceiling_pct}%, release {release_pct}%", snapshot.utilization * 100.0);
+                    println!(
+                        "capacity {:.1}% of {total} GiB — ceiling {ceiling_pct}%, release {release_pct}%",
+                        snapshot.utilization * 100.0
+                    );
                     match decision.action {
                         CapacityAction::Evict { goal_bytes, .. } => {
                             println!("over the ceiling: free {:.1} GiB to reach the release mark", gib(goal_bytes));
@@ -103,10 +102,16 @@ fn main() -> Result<()> {
                 _ => ReclaimGoal::AllSafe,
             };
             let model = Baseline::new(policy);
-            let result = flinch_archive::plan::build_plan(&cards_value, &model, &policy, delete_floor, &std::collections::HashMap::new(), &goal);
+            let result =
+                flinch_archive::plan::build_plan(&cards_value, &model, &policy, delete_floor, &std::collections::HashMap::new(), &goal);
 
-            println!("{} items scanned, {} candidates, {:.1} GiB planned ({:.1} GiB eligible)",
-                cards_value.len(), result.entries.len(), gib(result.reclaimed_bytes), gib(result.eligible_bytes));
+            println!(
+                "{} items scanned, {} candidates, {:.1} GiB planned ({:.1} GiB eligible)",
+                cards_value.len(),
+                result.entries.len(),
+                gib(result.reclaimed_bytes),
+                gib(result.eligible_bytes)
+            );
             if let Some(quality) = &result.quality {
                 // The baseline is the labeler, so its Brier is exactly 0 by
                 // construction. The number that matters is sharpness, and the
@@ -117,12 +122,14 @@ fn main() -> Result<()> {
                     quality.sharpness, quality.brier, quality.ece);
             }
             if let Some(goal_bytes) = result.goal_bytes.filter(|bytes| *bytes > 0) {
-                println!("goal {:.1} GiB: {}", gib(goal_bytes),
-                    if result.goal_met { "met" } else { "NOT met — raise retention or inspect keep-lists" });
+                println!(
+                    "goal {:.1} GiB: {}",
+                    gib(goal_bytes),
+                    if result.goal_met { "met" } else { "NOT met — raise retention or inspect keep-lists" }
+                );
             }
             for entry in &result.entries {
-                println!("  DELETE {:-10.2} GiB  {:<40}  p={:.2}",
-                    gib(entry.size_bytes), entry.title, entry.delete_probability);
+                println!("  DELETE {:-10.2} GiB  {:<40}  p={:.2}", gib(entry.size_bytes), entry.title, entry.delete_probability);
             }
 
             if let Some(path) = plan {

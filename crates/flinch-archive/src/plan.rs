@@ -186,11 +186,7 @@ fn regret_per_byte(p_safe: f32, bytes: u64) -> f64 {
 /// regret the larger item (fewer delete operations); then the id, so the order
 /// is total and reproducible. A non-finite regret (a NaN score) sorts last.
 fn eviction_order(a: &Candidate, b: &Candidate) -> Ordering {
-    b.handed
-        .cmp(&a.handed)
-        .then(a.regret.total_cmp(&b.regret))
-        .then(b.bytes.cmp(&a.bytes))
-        .then_with(|| a.card.id.cmp(&b.card.id))
+    b.handed.cmp(&a.handed).then(a.regret.total_cmp(&b.regret)).then(b.bytes.cmp(&a.bytes)).then_with(|| a.card.id.cmp(&b.card.id))
 }
 
 /// Build the delete plan.
@@ -226,9 +222,7 @@ pub fn build_plan(
         .filter_map(|(card, reason, probability)| {
             let bytes = reclaims_bytes(reason);
             let verdict = verdicts.get(&card.id);
-            let permitted = bytes > 0
-                && *probability >= delete_floor
-                && verdict.map_or(true, |v| v.p_safe >= policy.score_floor);
+            let permitted = bytes > 0 && *probability >= delete_floor && verdict.map_or(true, |v| v.p_safe >= policy.score_floor);
             permitted.then(|| Candidate {
                 card,
                 reason,
@@ -249,9 +243,9 @@ pub fn build_plan(
         let take = match goal {
             ReclaimGoal::AllSafe => true,
             ReclaimGoal::Bytes(target) => reclaimed < *target,
-            ReclaimGoal::PerVolume(goals) => candidate.volume.is_some_and(|volume| {
-                reclaimed_on.get(volume).copied().unwrap_or(0) < goals.goal(volume)
-            }),
+            ReclaimGoal::PerVolume(goals) => {
+                candidate.volume.is_some_and(|volume| reclaimed_on.get(volume).copied().unwrap_or(0) < goals.goal(volume))
+            }
         };
         if !take {
             continue;
@@ -272,9 +266,7 @@ pub fn build_plan(
 
     let (goal_bytes, goal_met, eligible_bytes, volumes) = match goal {
         ReclaimGoal::AllSafe => (None, true, total_bytes(eligible.iter()), Vec::new()),
-        ReclaimGoal::Bytes(target) => {
-            (Some(*target), reclaimed >= *target, total_bytes(eligible.iter()), Vec::new())
-        }
+        ReclaimGoal::Bytes(target) => (Some(*target), reclaimed >= *target, total_bytes(eligible.iter()), Vec::new()),
         ReclaimGoal::PerVolume(goals) => {
             let volumes = volume_outcomes(goals, &eligible, &reclaimed_on);
             let met = volumes.iter().all(|v| v.reclaimed_bytes >= v.goal_bytes);
@@ -284,15 +276,7 @@ pub fn build_plan(
         }
     };
 
-    Plan {
-        entries,
-        reclaimed_bytes: reclaimed,
-        goal_bytes,
-        goal_met,
-        eligible_bytes,
-        volumes,
-        quality: quality_of(&decided),
-    }
+    Plan { entries, reclaimed_bytes: reclaimed, goal_bytes, goal_met, eligible_bytes, volumes, quality: quality_of(&decided) }
 }
 
 fn total_bytes<'a>(candidates: impl Iterator<Item = &'a Candidate<'a>>) -> u64 {
@@ -301,11 +285,7 @@ fn total_bytes<'a>(candidates: impl Iterator<Item = &'a Candidate<'a>>) -> u64 {
 
 /// One row per volume that has a goal or holds an eligible item, so an idle
 /// run still reports each volume's reserve.
-fn volume_outcomes(
-    goals: &VolumeGoals,
-    eligible: &[Candidate],
-    reclaimed_on: &BTreeMap<&str, u64>,
-) -> Vec<VolumeOutcome> {
+fn volume_outcomes(goals: &VolumeGoals, eligible: &[Candidate], reclaimed_on: &BTreeMap<&str, u64>) -> Vec<VolumeOutcome> {
     let mut rows: BTreeMap<&str, VolumeOutcome> = BTreeMap::new();
     let row = |volume: &str| -> VolumeOutcome {
         VolumeOutcome {

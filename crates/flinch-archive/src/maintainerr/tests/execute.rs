@@ -2,8 +2,7 @@
 //! failure retention, ordering between a card's steps, and dry-run.
 
 use super::super::{
-    execute, observe, plan_sync, Caps, Desired, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncItem,
-    SyncReport, SyncSummary,
+    execute, observe, plan_sync, Caps, Desired, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncItem, SyncReport, SyncSummary,
 };
 use super::fake::{Fake, Fault, Op};
 use super::{current, item, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS};

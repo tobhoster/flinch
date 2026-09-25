@@ -38,11 +38,7 @@ fn measured(volumes: &[Volume]) -> CapacitySnapshot {
 #[case::nan_ceiling(f32::NAN, 0.75, false)]
 #[case::nan_release(0.80, f32::NAN, false)]
 #[case::infinite(f32::INFINITY, 0.75, false)]
-fn watermarks_need_zero_below_release_at_or_below_ceiling_at_or_below_one(
-    #[case] ceiling: f32,
-    #[case] release: f32,
-    #[case] valid: bool,
-) {
+fn watermarks_need_zero_below_release_at_or_below_ceiling_at_or_below_one(#[case] ceiling: f32, #[case] release: f32, #[case] valid: bool) {
     assert_eq!(Watermarks::new(ceiling, release).is_some(), valid);
 }
 
@@ -133,10 +129,7 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     ]);
     let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(paths, ["/data"]);
-    assert_eq!(
-        library.unmatched_roots,
-        [(App::Sonarr, "/data/media/tv".to_string()), (App::Sonarr, "/data/media/anime".to_string())]
-    );
+    assert_eq!(library.unmatched_roots, [(App::Sonarr, "/data/media/tv".to_string()), (App::Sonarr, "/data/media/anime".to_string())]);
     assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Andor"), None, "never governed against `/`");
 }
 
@@ -163,11 +156,7 @@ fn measures_are_per_volume_so_a_quiet_neighbour_cannot_mask_a_full_disk() {
 #[case::exactly_at_the_ceiling_is_not_over(80, false, false)]
 #[case::latches_over_the_ceiling(85, false, true)]
 #[case::stays_latched_over_the_ceiling(85, true, true)]
-fn eviction_latches_at_the_ceiling_and_releases_at_the_mark(
-    #[case] used_gb: u64,
-    #[case] was_latched: bool,
-    #[case] evicting: bool,
-) {
+fn eviction_latches_at_the_ceiling_and_releases_at_the_mark(#[case] used_gb: u64, #[case] was_latched: bool, #[case] evicting: bool) {
     let snap = measured(&[vol("/media", 100, used_gb)]);
     let before = if was_latched { latch(&["/media"]) } else { Latch::default() };
     let mut policy = ArchivePolicy::default();
@@ -224,10 +213,8 @@ fn eviction_arms_never_played_only_when_permitted_and_never_lowers_its_floor(#[c
 #[test]
 fn an_idle_run_never_touches_the_operators_always_on_rule() {
     let snap = measured(&[vol("/media", 100, 50)]);
-    let mut policy = ArchivePolicy {
-        unwatched_reclaim: UnwatchedReclaim { enabled: true, ..UnwatchedReclaim::default() },
-        ..ArchivePolicy::default()
-    };
+    let mut policy =
+        ArchivePolicy { unwatched_reclaim: UnwatchedReclaim { enabled: true, ..UnwatchedReclaim::default() }, ..ArchivePolicy::default() };
     decide_capacity(&mut policy, Some(&snap), &Latch::default(), false, &BTreeMap::new());
     assert!(policy.unwatched_reclaim.enabled);
 }

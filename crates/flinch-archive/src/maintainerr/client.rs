@@ -31,18 +31,11 @@ impl HttpMaintainerr {
             .build()
             .map_err(|source| MaintainerrError::Transport { endpoint: "client setup", source })?;
         let api_key = api_key.trim();
-        Ok(Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: (!api_key.is_empty()).then(|| api_key.to_string()),
-            http,
-        })
+        Ok(Self { base_url: base_url.trim_end_matches('/').to_string(), api_key: (!api_key.is_empty()).then(|| api_key.to_string()), http })
     }
 
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
-        let request = self
-            .http
-            .request(method, format!("{}{path}", self.base_url))
-            .header(reqwest::header::ACCEPT, "application/json");
+        let request = self.http.request(method, format!("{}{path}", self.base_url)).header(reqwest::header::ACCEPT, "application/json");
         match &self.api_key {
             Some(key) => request.header("X-Api-Key", key),
             None => request,
@@ -82,10 +75,7 @@ impl MaintainerrApi for HttpMaintainerr {
     }
 
     async fn add_exclusion(&mut self, target: &MaintainerrTarget) -> Result<(), MaintainerrError> {
-        let request = self
-            .request(Method::POST, "/api/rules/exclusion")
-            .timeout(EXCLUSION_TIMEOUT)
-            .json(&wire::exclusion_request(target));
+        let request = self.request(Method::POST, "/api/rules/exclusion").timeout(EXCLUSION_TIMEOUT).json(&wire::exclusion_request(target));
         let (status, body) = send(wire::ADD_EXCLUSION, request).await?;
         wire::read_return_status(wire::ADD_EXCLUSION, status, &body)
     }
@@ -97,18 +87,15 @@ impl MaintainerrApi for HttpMaintainerr {
     }
 
     async fn add_to_collection(&mut self, collection_id: i64, target: &MaintainerrTarget) -> Result<(), MaintainerrError> {
-        let request = self
-            .request(Method::POST, "/api/collections/media/add")
-            .json(&wire::collection_add_request(collection_id, target));
+        let request = self.request(Method::POST, "/api/collections/media/add").json(&wire::collection_add_request(collection_id, target));
         let (status, body) = send(wire::ADD_MEMBER, request).await?;
         wire::read_accepted(wire::ADD_MEMBER, status, &body)
     }
 
     async fn remove_from_collection(&mut self, collection_id: i64, item_key: &str) -> Result<(), MaintainerrError> {
         let collection = collection_id.to_string();
-        let request = self
-            .request(Method::DELETE, "/api/collections/media")
-            .query(&[("mediaId", item_key), ("collectionId", collection.as_str())]);
+        let request =
+            self.request(Method::DELETE, "/api/collections/media").query(&[("mediaId", item_key), ("collectionId", collection.as_str())]);
         let (status, body) = send(wire::REMOVE_MEMBER, request).await?;
         wire::read_accepted(wire::REMOVE_MEMBER, status, &body)
     }

@@ -14,7 +14,11 @@ pub(crate) fn state(tmp: &Path, token: Option<&str>) -> AppState {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("status.json"), r#"{"scanned":4,"kept":3,"dry_run":true}"#).unwrap();
     fs::write(dir.join("items.json"), r#"[{"id":"radarr-1","title":"A Movie","kind":"movie","size_bytes":1000000000,"decision":"keep","reason":"guard","delete_probability":0.0,"protected":true}]"#).unwrap();
-    fs::write(dir.join("history.json"), r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#).unwrap();
+    fs::write(
+        dir.join("history.json"),
+        r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#,
+    )
+    .unwrap();
     let items = Arc::new(snapshot::Snapshot::new(dir.join("items.json")));
     AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), token: token.map(Arc::from), items }
 }
@@ -29,10 +33,7 @@ pub(crate) fn get(path: &str, authorization: Option<&str>) -> Request<Body> {
 }
 
 fn put_settings(body: String) -> Request<Body> {
-    Request::put("/api/settings")
-        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
-        .body(Body::from(body))
-        .unwrap()
+    Request::put("/api/settings").header(header::AUTHORIZATION, format!("Bearer {TOKEN}")).body(Body::from(body)).unwrap()
 }
 
 /// One request through the whole app: routing, the token check and the

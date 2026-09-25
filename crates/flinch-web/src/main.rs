@@ -180,11 +180,7 @@ async fn api_run(AxumState(st): AxumState<AppState>) -> Response {
     let path = st.dir.join("run.now");
     match std::fs::write(&path, b"1") {
         Ok(()) => (StatusCode::ACCEPTED, "queued").into_response(),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("cannot queue a run: {error}"),
-        )
-            .into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot queue a run: {error}")).into_response(),
     }
 }
 
@@ -194,13 +190,7 @@ async fn index(AxumState(st): AxumState<AppState>) -> Response {
     std::fs::File::open(st.web.join("index.html"))
         .and_then(|mut f| f.read_to_string(&mut buf))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())
-        .map(|_| {
-            (
-                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                buf,
-            )
-                .into_response()
-        })
+        .map(|_| ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], buf).into_response())
         .unwrap_or_else(|r: Response| r)
 }
 

@@ -7,7 +7,9 @@ use super::candidate::{self, ModelKind};
 use super::eval::{self, Scorecard};
 use super::load::{self, Household, LoadError};
 use super::panel::{self, Example, PanelSpec};
-use super::{default_cuts, forecasts, probabilities, FittedModel, Metrics, DEFAULT_HORIZON_DAYS, DEPLOYED_PRIOR_TEMPERATURE, OPERATING_FLOOR};
+use super::{
+    default_cuts, forecasts, probabilities, FittedModel, Metrics, DEFAULT_HORIZON_DAYS, DEPLOYED_PRIOR_TEMPERATURE, OPERATING_FLOOR,
+};
 use crate::score::ScoreWeights;
 use crate::taste::{GenreRates, ItemGenres};
 use serde::{Deserialize, Serialize};
@@ -160,12 +162,8 @@ pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, Refi
 fn refit(state_dir: &Path, now: u64) -> Result<FitStatus, RefitError> {
     let household = load::load_household(state_dir)?;
     let cuts = default_cuts();
-    let spec = PanelSpec {
-        now,
-        cuts_days: &cuts,
-        horizon_days: DEFAULT_HORIZON_DAYS,
-        tautulli_coverage_start: household.tautulli_coverage_start,
-    };
+    let spec =
+        PanelSpec { now, cuts_days: &cuts, horizon_days: DEFAULT_HORIZON_DAYS, tautulli_coverage_start: household.tautulli_coverage_start };
     let dataset = panel::build_dataset(&household.items, &spec);
     let model = fit_model(&household, &dataset, now, DEFAULT_HORIZON_DAYS, cuts.len());
     let adopted = adopt(state_dir, &model)? == Adoption::Written;
@@ -196,8 +194,7 @@ struct Audit {
 impl Audit {
     fn of(dataset: &[Example], priors: &[f32]) -> Self {
         let flagged = priors.iter().filter(|p| **p >= OPERATING_FLOOR).count();
-        let flagged_then_played =
-            dataset.iter().zip(priors).filter(|(example, p)| **p >= OPERATING_FLOOR && example.label < 0.5).count();
+        let flagged_then_played = dataset.iter().zip(priors).filter(|(example, p)| **p >= OPERATING_FLOOR && example.label < 0.5).count();
         let negative_items: HashSet<&str> =
             dataset.iter().filter(|example| example.label < 0.5).map(|example| example.item_id.as_str()).collect();
         Self { flagged, flagged_then_played, negative_items: negative_items.len() }

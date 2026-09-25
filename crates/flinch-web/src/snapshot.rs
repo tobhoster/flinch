@@ -61,8 +61,7 @@ impl Snapshot {
 }
 
 fn read(path: &Path, known: Option<Version>) -> Read {
-    let Some(version) = std::fs::metadata(path).and_then(|meta| Ok(Version { modified: meta.modified()?, len: meta.len() })).ok()
-    else {
+    let Some(version) = std::fs::metadata(path).and_then(|meta| Ok(Version { modified: meta.modified()?, len: meta.len() })).ok() else {
         return Read::Unavailable;
     };
     if known == Some(version) {

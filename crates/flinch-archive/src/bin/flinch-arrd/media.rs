@@ -197,7 +197,8 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
             _ => continue,
         }
         if !keep_tag.is_empty() {
-            let marked = plex.keep_keys(&section.key, keep_tag).await.with_context(|| format!("keep markers in plex section {}", section.key))?;
+            let marked =
+                plex.keep_keys(&section.key, keep_tag).await.with_context(|| format!("keep markers in plex section {}", section.key))?;
             keep_keys.extend(marked);
         }
     }
@@ -238,7 +239,12 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
 
 /// A show's episodes with their TVDB ids (`allLeaves`), for confirming a season
 /// whose episode count differs from Sonarr's file count.
-pub(super) async fn fetch_show_episodes(http: &reqwest::Client, base_url: &str, token: &str, show_rating_key: &str) -> anyhow::Result<PlexEpisodes> {
+pub(super) async fn fetch_show_episodes(
+    http: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    show_rating_key: &str,
+) -> anyhow::Result<PlexEpisodes> {
     let plex = PlexClient { http, base: base_url.trim_end_matches('/'), token };
     let rows = plex.listing(&format!("/library/metadata/{show_rating_key}/allLeaves?includeGuids=1")).await?;
     Ok(PlexEpisodes::from_rows(&rows))
@@ -275,9 +281,8 @@ pub(super) async fn episode_guids(http: &reqwest::Client, base_url: &str, token:
             shows.len()
         );
     }
-    let written = serde_json::to_vec(&index)
-        .map_err(std::io::Error::other)
-        .and_then(|bytes| flinch_archive::persist::replace(&path, &bytes));
+    let written =
+        serde_json::to_vec(&index).map_err(std::io::Error::other).and_then(|bytes| flinch_archive::persist::replace(&path, &bytes));
     if let Err(error) = written {
         eprintln!("[flinch-arrd] {EPISODE_GUIDS_FILE} write failed: {error}");
     }
@@ -313,7 +318,10 @@ pub(super) async fn fetch_tautulli_history(http: &reqwest::Client, base: &str, k
             let body = body::read_text(response).await.context("tautulli body read failed")?;
             tautulli::parse_history_page(&body).ok_or_else(|| {
                 // Silence here cost an afternoon: say what came back instead.
-                anyhow::anyhow!("tautulli {status} did not answer a history page; first bytes: {:.160}", body.chars().take(160).collect::<String>())
+                anyhow::anyhow!(
+                    "tautulli {status} did not answer a history page; first bytes: {:.160}",
+                    body.chars().take(160).collect::<String>()
+                )
             })
         }
         .await;

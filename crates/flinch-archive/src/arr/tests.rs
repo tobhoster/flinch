@@ -1,5 +1,5 @@
-use super::*;
 use super::dwell::now_epoch;
+use super::*;
 
 #[test]
 fn radarr_movie_maps_to_a_card_with_file_only() {
@@ -36,9 +36,21 @@ fn sonarr_series_flattens_to_one_card_per_season_and_marks_newest() {
         series_type: "standard".to_string(),
         added: Some("2023-01-01T00:00:00Z".to_string()),
         seasons: vec![
-            SeriesSeason { season_number: 1, statistics: SeasonStats { episode_file_count: 8, episode_count: 8, total_episode_count: 8, size_on_disk: 1_000_000_000 }, ..Default::default() },
-            SeriesSeason { season_number: 2, statistics: SeasonStats { episode_file_count: 8, episode_count: 8, total_episode_count: 8, size_on_disk: 1_200_000_000 }, ..Default::default() },
-            SeriesSeason { season_number: 3, statistics: SeasonStats { episode_file_count: 0, episode_count: 8, total_episode_count: 8, size_on_disk: 0 }, ..Default::default() },
+            SeriesSeason {
+                season_number: 1,
+                statistics: SeasonStats { episode_file_count: 8, episode_count: 8, total_episode_count: 8, size_on_disk: 1_000_000_000 },
+                ..Default::default()
+            },
+            SeriesSeason {
+                season_number: 2,
+                statistics: SeasonStats { episode_file_count: 8, episode_count: 8, total_episode_count: 8, size_on_disk: 1_200_000_000 },
+                ..Default::default()
+            },
+            SeriesSeason {
+                season_number: 3,
+                statistics: SeasonStats { episode_file_count: 0, episode_count: 8, total_episode_count: 8, size_on_disk: 0 },
+                ..Default::default()
+            },
         ],
         images: vec![],
         path: None,
@@ -57,7 +69,19 @@ fn sonarr_series_flattens_to_one_card_per_season_and_marks_newest() {
 
 #[test]
 fn a_future_dated_added_string_maps_to_a_huge_age_not_a_panic() {
-    let movie = ArrMovie { id: 1, title: "x".to_string(), title_slug: None, year: None, size_on_disk: 1, has_file: true, added: Some("9999-12-31".to_string()), images: vec![], movie_file: None, path: None, ..Default::default() };
+    let movie = ArrMovie {
+        id: 1,
+        title: "x".to_string(),
+        title_slug: None,
+        year: None,
+        size_on_disk: 1,
+        has_file: true,
+        added: Some("9999-12-31".to_string()),
+        images: vec![],
+        movie_file: None,
+        path: None,
+        ..Default::default()
+    };
     let card = movie.to_card().expect("card");
     assert!(card.added_days_ago.is_finite(), "chrono_lite must not panic on wild dates");
 }
@@ -73,16 +97,13 @@ fn the_null_date_sentinel_reads_as_absent_not_as_an_underflow() {
 
 #[test]
 fn null_statistics_read_as_empty_instead_of_failing_the_library() {
-    let movie: ArrMovie = serde_json::from_str(
-        r#"{"id":3,"title":"Unmeasured","year":2024,"sizeOnDisk":null,"hasFile":null}"#,
-    )
-    .expect("a null-statistics row still parses");
+    let movie: ArrMovie = serde_json::from_str(r#"{"id":3,"title":"Unmeasured","year":2024,"sizeOnDisk":null,"hasFile":null}"#)
+        .expect("a null-statistics row still parses");
     assert!(movie.to_card().is_none(), "unmeasured means no file: nothing to reclaim");
 
-    let show: ArrSeries = serde_json::from_str(
-        r#"{"id":4,"title":"New Show","seriesType":"standard","seasons":[{"seasonNumber":1,"statistics":null}]}"#,
-    )
-    .expect("a null season statistics block still parses");
+    let show: ArrSeries =
+        serde_json::from_str(r#"{"id":4,"title":"New Show","seriesType":"standard","seasons":[{"seasonNumber":1,"statistics":null}]}"#)
+            .expect("a null season statistics block still parses");
     assert!(show.to_cards().is_empty(), "no files measured, no season card");
 }
 

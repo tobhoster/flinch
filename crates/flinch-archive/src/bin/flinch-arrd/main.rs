@@ -7,9 +7,9 @@
 
 use anyhow::Result;
 use clap::Parser;
+use flinch_archive::capacity::CapacityAction;
 use flinch_archive::daemon::reconcile;
 use flinch_archive::maintainerr::{self as mx, HttpMaintainerr, OwnedState, SyncItem};
-use flinch_archive::capacity::CapacityAction;
 use flinch_archive::ArchivePolicy;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -124,10 +124,7 @@ async fn run(args: &Args) -> Result<()> {
     // Redirects are never followed: every request carries an API key or the
     // Plex token in a header, and a redirect would hand it to another host. A
     // 3xx then surfaces as an error naming the status.
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
 
     // A settings file that stops parsing must not revert every operator choice
     // to its default mid-flight: the last good copy stays in force, loudly.
@@ -181,12 +178,7 @@ async fn run(args: &Args) -> Result<()> {
 }
 
 /// One full pass: inventory → evidence → score → govern → plan → publish.
-async fn cycle(
-    args: &Args,
-    http: &reqwest::Client,
-    settings: &flinch_archive::daemon::RuntimeSettings,
-    interval_s: u64,
-) -> Result<()> {
+async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::daemon::RuntimeSettings, interval_s: u64) -> Result<()> {
     let grace_runs = settings.grace_runs;
     let max_items = settings.max_items;
     let max_gib = settings.max_gib;
@@ -199,10 +191,7 @@ async fn cycle(
     let mut cards: Vec<flinch_archive::ArchiveCard> =
         movies.iter().filter_map(|movie| movie.to_card()).chain(series.iter().flat_map(|show| show.to_cards())).collect();
 
-    let cycle_now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let cycle_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let evidence::Evidence {
         watch,
         watch_targets,
@@ -283,7 +272,17 @@ async fn cycle(
 
     let activity = flinch_archive::score::ShowActivity::new(&cards, &watch);
     let settings_for_score = &settings;
-    let scoring = model::Scoring { cards: &cards, watch: &watch, activity: &activity, play_log: &play_log, joins: &joins, ended_by_show: &ended_by_show, movies: &movies, series: &series, now: cycle_now };
+    let scoring = model::Scoring {
+        cards: &cards,
+        watch: &watch,
+        activity: &activity,
+        play_log: &play_log,
+        joins: &joins,
+        ended_by_show: &ended_by_show,
+        movies: &movies,
+        series: &series,
+        now: cycle_now,
+    };
     let (scored, model_label) = model::score_cycle(settings, &state_dir(), scoring);
 
     let verdicts: HashMap<String, flinch_archive::policy::ScoreVerdict> = cards
@@ -330,15 +329,13 @@ async fn cycle(
 
     // Capacity: measure the library volumes, decide per volume, set the goal;
     // what Maintainerr already holds is taken first, so no window restarts.
-    let (mut governance, mut ledger) =
-        storage::govern(&disks, (&movies, &series), &cards, &plex_ids, &governing, &mut policy, cycle_now);
+    let (mut governance, mut ledger) = storage::govern(&disks, (&movies, &series), &cards, &plex_ids, &governing, &mut policy, cycle_now);
     governance.take_handed_first(owned.scheduled.keys().cloned().collect());
     // Never-played reclaim the settings (or disk pressure) would run now, held
     // only because the watch evidence is incomplete: the items must say so.
     let never_played_held = !never_played_safe
         && (settings_for_score.unwatched_reclaim_enabled
-            || (settings_for_score.capacity_arm_never_played
-                && matches!(governance.decision.action, CapacityAction::Evict { .. })));
+            || (settings_for_score.capacity_arm_never_played && matches!(governance.decision.action, CapacityAction::Evict { .. })));
 
     // What arming the never-played rule would add. Computed in the library
     // (tested), by card id — never by pairing iteration orders.

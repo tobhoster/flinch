@@ -128,10 +128,7 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
 fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitItem> {
     let age_days = row.age_days?;
     let kind = if row.kind == "movie" { LibraryKind::Movie } else { LibraryKind::Season };
-    let season_index = row
-        .season_label
-        .as_deref()
-        .and_then(|label| label.trim_start_matches('S').parse::<u32>().ok());
+    let season_index = row.season_label.as_deref().and_then(|label| label.trim_start_matches('S').parse::<u32>().ok());
     let show_title = match kind {
         LibraryKind::Season => row
             .season_label

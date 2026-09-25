@@ -13,7 +13,9 @@ fn stream(json: &str) -> TautulliRow {
 }
 
 fn movie_stream(rating_key: &str, date: u64, percent: u32) -> TautulliRow {
-    stream(&format!(r#"{{"media_type":"movie","rating_key":"{rating_key}","title":"Film","date":"{date}","percent_complete":"{percent}"}}"#))
+    stream(&format!(
+        r#"{{"media_type":"movie","rating_key":"{rating_key}","title":"Film","date":"{date}","percent_complete":"{percent}"}}"#
+    ))
 }
 
 fn target(id: &str, tmdb: u32, added_days_ago: u64) -> WatchTarget {
@@ -35,7 +37,10 @@ fn target(id: &str, tmdb: u32, added_days_ago: u64) -> WatchTarget {
 /// Plex holds tmdb 1 as ratingKey "1" and tmdb 2 as ratingKey "2".
 fn resolved(targets: &[WatchTarget]) -> Resolution {
     let rows: Vec<PlexMetadata> = (1..=2)
-        .map(|id| serde_json::from_str(&format!(r#"{{"ratingKey":"{id}","title":"Film {id}","Guid":[{{"id":"tmdb://{id}"}}]}}"#)).expect("plex row"))
+        .map(|id| {
+            serde_json::from_str(&format!(r#"{{"ratingKey":"{id}","title":"Film {id}","Guid":[{{"id":"tmdb://{id}"}}]}}"#))
+                .expect("plex row")
+        })
         .collect();
     resolve(targets, &PlexLibrary::new(&rows, &[], &[]))
 }
@@ -91,7 +96,8 @@ fn a_remake_does_not_inherit_the_original_s_streams() {
     // Radarr's 2025 film resolves to ratingKey "2"; the stream is of "1978"'s "1".
     let remake = target("radarr-2025", 2, 400);
     let resolution = resolved(std::slice::from_ref(&remake));
-    let original = stream(r#"{"media_type":"movie","rating_key":"1","title":"Film","year":"1978","date":"1790000000","percent_complete":"100"}"#);
+    let original =
+        stream(r#"{"media_type":"movie","rating_key":"1","title":"Film","year":"1978","date":"1790000000","percent_complete":"100"}"#);
     assert!(plays_by_target(&[remake], &resolution, &[original]).is_empty());
 }
 
@@ -124,7 +130,11 @@ fn silence_about_a_resolved_long_held_item_is_absence() {
 #[case::arrived_too_recently(target("radarr-1", 1, 10), background(), healthy())]
 #[case::no_arrival_date(WatchTarget { added_epoch: None, ..target("radarr-1", 1, 200) }, background(), healthy())]
 #[case::tautulli_stopped_recording(target("radarr-1", 1, 200), background().into_iter().filter(|row| row.epoch().is_some_and(|epoch| epoch < NOW - 100 * DAY)).collect(), healthy())]
-fn absence_is_never_claimed_without_every_condition(#[case] target: WatchTarget, #[case] rows: Vec<TautulliRow>, #[case] health: EvidenceHealth) {
+fn absence_is_never_claimed_without_every_condition(
+    #[case] target: WatchTarget,
+    #[case] rows: Vec<TautulliRow>,
+    #[case] health: EvidenceHealth,
+) {
     let targets = [target];
     assert!(absence_by_target(&targets, &resolved(&targets), &rows, &health, NOW).is_empty());
 }
@@ -168,7 +178,11 @@ fn keep_history(users: &[(&str, u8, u8)], sections: &[(u32, u8)]) -> KeepHistory
         sections.iter().map(|(id, keep)| format!(r#"{{"section_id":"{id}","is_active":1,"keep_history":{keep}}}"#)).collect();
     KeepHistory::parse(
         &format!(r#"{{"response":{{"result":"success","data":[{}]}}}}"#, users.join(",")),
-        &format!(r#"{{"response":{{"result":"success","data":{{"recordsFiltered":{},"data":[{}]}}}}}}"#, sections.len(), sections.join(",")),
+        &format!(
+            r#"{{"response":{{"result":"success","data":{{"recordsFiltered":{},"data":[{}]}}}}}}"#,
+            sections.len(),
+            sections.join(",")
+        ),
     )
     .expect("documented shapes parse")
 }

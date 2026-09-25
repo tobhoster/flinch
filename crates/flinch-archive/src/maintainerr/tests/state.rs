@@ -17,10 +17,9 @@ fn owned_state_round_trips_in_the_plex_ids_shape() {
     let dir = scratch("round-trip");
     let mut owned = OwnedState::default();
     owned.protected.insert("radarr-7".into(), ProtectedEntry { target: movie("812"), exclusion_ids: vec![3] });
-    owned.scheduled.insert(
-        "sonarr-12-s3".into(),
-        ScheduledEntry { target: season("4500", "4511"), collection_id: SEASONS, added_at: 1_800_000_000 },
-    );
+    owned
+        .scheduled
+        .insert("sonarr-12-s3".into(), ScheduledEntry { target: season("4500", "4511"), collection_id: SEASONS, added_at: 1_800_000_000 });
 
     owned.write(&dir).unwrap();
 

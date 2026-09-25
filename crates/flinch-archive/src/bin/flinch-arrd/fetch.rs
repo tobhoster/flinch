@@ -3,8 +3,8 @@
 
 use super::Args;
 use anyhow::{Context, Result};
-use flinch_archive::body;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
+use flinch_archive::body;
 use flinch_archive::plex::SonarrEpisodes;
 
 /// Redirects are not followed (a key or token would travel with them), so one
@@ -45,8 +45,7 @@ pub(super) struct Fetched {
 /// Parse a JSON array row by row: a malformed row is skipped and counted,
 /// never allowed to fail the whole library — and with it the daemon loop.
 fn parse_rows<T: serde::de::DeserializeOwned>(app: &str, value: serde_json::Value) -> Result<Vec<T>> {
-    let rows: Vec<serde_json::Value> =
-        serde_json::from_value(value).with_context(|| format!("{app} payload is not an array"))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_value(value).with_context(|| format!("{app} payload is not an array"))?;
     let total = rows.len();
     let mut parsed = Vec::with_capacity(total);
     let mut first_error = None;
@@ -110,8 +109,7 @@ async fn season_arrivals(
         date_added: Option<String>,
     }
     let url = format!("{base}/api/v3/episodefile?seriesId={series_id}");
-    let files: Vec<EpisodeFile> =
-        serde_json::from_value(fetch_json(client, &url, key).await?).context("episodefile payload shape")?;
+    let files: Vec<EpisodeFile> = serde_json::from_value(fetch_json(client, &url, key).await?).context("episodefile payload shape")?;
     let mut newest: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
     for file in files {
         let Some(date) = file.date_added else { continue };
@@ -149,10 +147,9 @@ pub(super) async fn fetch_inventory(client: &reqwest::Client, args: &Args, keep_
                     season.files_added = newest.remove(&season.season_number);
                 }
             }
-            Err(error) => eprintln!(
-                "[flinch-arrd] sonarr: file dates for {:?} unreadable, its seasons read as fresh: {error:#}",
-                show.title
-            ),
+            Err(error) => {
+                eprintln!("[flinch-arrd] sonarr: file dates for {:?} unreadable, its seasons read as fresh: {error:#}", show.title)
+            }
         }
     }
     // Dwell runs from when the household got each item, not from its current
@@ -165,10 +162,7 @@ pub(super) fn looks_masked(value: &str) -> bool {
     value.contains("...") || value.len() < 12
 }
 /// Maintainerr's Tautulli connection, if it has one configured.
-pub(super) async fn maintainerr_tautulli_credentials(
-    http: &reqwest::Client,
-    args: &Args,
-) -> Option<(String, String)> {
+pub(super) async fn maintainerr_tautulli_credentials(http: &reqwest::Client, args: &Args) -> Option<(String, String)> {
     let settings = maintainerr_settings(http, args).await.ok()?;
     let url = settings.get("tautulli_url")?.as_str()?.to_string();
     let key = settings.get("tautulli_api_key")?.as_str()?.to_string();
@@ -191,10 +185,7 @@ pub(super) async fn maintainerr_tautulli_credentials(
 /// the Plex calls in this run and never written to the state volume.
 /// Maintainerr's own settings document — the one place both borrowed connections
 /// (Plex, Tautulli) come from, so there is a single definition of how to ask.
-pub(super) async fn maintainerr_settings(
-    http: &reqwest::Client,
-    args: &Args,
-) -> anyhow::Result<serde_json::Value> {
+pub(super) async fn maintainerr_settings(http: &reqwest::Client, args: &Args) -> anyhow::Result<serde_json::Value> {
     let url = format!("{}/api/settings", args.maintainerr_url.trim_end_matches('/'));
     let response = http
         .get(&url)
@@ -224,11 +215,8 @@ pub(super) async fn fetch_disks(client: &reqwest::Client, args: &Args) -> Vec<fl
         let base = base.trim_end_matches('/').to_string();
         let key = key.to_string();
         async move {
-            let (disk_url, root_url, media_url) = (
-                format!("{base}/api/v3/diskspace"),
-                format!("{base}/api/v3/rootfolder"),
-                format!("{base}/api/v3/config/mediamanagement"),
-            );
+            let (disk_url, root_url, media_url) =
+                (format!("{base}/api/v3/diskspace"), format!("{base}/api/v3/rootfolder"), format!("{base}/api/v3/config/mediamanagement"));
             let (disks, roots, media) = tokio::join!(
                 fetch_json(client, &disk_url, &key),
                 fetch_json(client, &root_url, &key),
@@ -238,9 +226,9 @@ pub(super) async fn fetch_disks(client: &reqwest::Client, args: &Args) -> Vec<fl
             let roots: Vec<ArrRootFolder> = serde_json::from_value(roots?).context("rootfolder payload shape")?;
             // The recycle bin only decides how long evicted bytes are credited;
             // unreadable settings fall back to the longer default, the safe side.
-            let recycle = match media.and_then(|value| {
-                serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape")
-            }) {
+            let recycle = match media
+                .and_then(|value| serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape"))
+            {
                 Ok(settings) => RecycleBin::from_settings(&settings.recycle_bin, settings.recycle_bin_cleanup_days),
                 Err(error) => {
                     eprintln!(
@@ -264,10 +252,8 @@ pub(super) async fn fetch_disks(client: &reqwest::Client, args: &Args) -> Vec<fl
             })
         }
     };
-    let (radarr, sonarr) = tokio::join!(
-        one(App::Radarr, &args.radarr_url, &args.radarr_key),
-        one(App::Sonarr, &args.sonarr_url, &args.sonarr_key),
-    );
+    let (radarr, sonarr) =
+        tokio::join!(one(App::Radarr, &args.radarr_url, &args.radarr_key), one(App::Sonarr, &args.sonarr_url, &args.sonarr_key),);
     [(App::Radarr, radarr), (App::Sonarr, sonarr)]
         .into_iter()
         .filter_map(|(app, result)| match result {

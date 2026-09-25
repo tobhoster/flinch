@@ -1,7 +1,9 @@
 //! Request bodies, response semantics and collection validation, as tables.
 
 use super::super::validate::{for_section, handover, resolve, validate_collection};
-use super::super::wire::{collection_add_request, exclusion_request, read_accepted, read_json, read_return_status, read_version, ADD_EXCLUSION, ADD_MEMBER};
+use super::super::wire::{
+    collection_add_request, exclusion_request, read_accepted, read_json, read_return_status, read_version, ADD_EXCLUSION, ADD_MEMBER,
+};
 use super::super::{
     CollectionProblem, CollectionTitles, ExclusionRow, Handover, MaintainerrError, MaintainerrTarget, MaintainerrVersion, Route,
 };
@@ -49,7 +51,11 @@ fn verdict(result: Result<(), MaintainerrError>) -> String {
     r#"{"code":0,"result":"Failed - no metadata","message":"Failed - no metadata"}"#,
     "refused 0: Failed - no metadata"
 )]
-#[case::locked(409, r#"{"statusCode":409,"message":"Collection handling is already running."}"#, "http 409: Collection handling is already running.")]
+#[case::locked(
+    409,
+    r#"{"statusCode":409,"message":"Collection handling is already running."}"#,
+    "http 409: Collection handling is already running."
+)]
 #[case::empty_body_is_not_success(201, "", "parse")]
 fn exclusion_success_needs_a_2xx_and_code_1(#[case] status: u16, #[case] body: &str, #[case] expected: &str) {
     assert_eq!(verdict(read_return_status(ADD_EXCLUSION, status, body)), expected);
@@ -62,9 +68,17 @@ fn exclusion_success_needs_a_2xx_and_code_1(#[case] status: u16, #[case] body: &
     r#"{"statusCode":400,"message":"This item cannot be applied to the selected collection","error":"Bad Request"}"#,
     "http 400: This item cannot be applied to the selected collection"
 )]
-#[case::rejected_body(400, r#"{"statusCode":400,"message":["action: Required","context: Required"]}"#, "http 400: action: Required; context: Required")]
+#[case::rejected_body(
+    400,
+    r#"{"statusCode":400,"message":["action: Required","context: Required"]}"#,
+    "http 400: action: Required; context: Required"
+)]
 #[case::no_collection(404, r#"{"statusCode":404,"message":"Collection 7 not found"}"#, "http 404: Collection 7 not found")]
-#[case::plex_refused(502, r#"{"statusCode":502,"message":"The media server refused 1 of 1 item(s)"}"#, "http 502: The media server refused 1 of 1 item(s)")]
+#[case::plex_refused(
+    502,
+    r#"{"statusCode":502,"message":"The media server refused 1 of 1 item(s)"}"#,
+    "http 502: The media server refused 1 of 1 item(s)"
+)]
 fn collection_add_success_is_a_2xx_and_failures_carry_the_message(#[case] status: u16, #[case] body: &str, #[case] expected: &str) {
     assert_eq!(verdict(read_accepted(ADD_MEMBER, status, body)), expected);
 }

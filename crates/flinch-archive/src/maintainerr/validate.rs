@@ -60,11 +60,15 @@ impl CollectionTitles {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionProblem {
     NotFound,
-    WrongType { found: String },
+    WrongType {
+        found: String,
+    },
     Inactive,
     /// The collection's *arr action frees nothing (unmonitor only, or nothing),
     /// or it is an action Maintainerr cannot run for the kind.
-    ArrAction { found: i64 },
+    ArrAction {
+        found: i64,
+    },
     /// A Leaving Soon collection that acts on Maintainerr's next run.
     NoWarningWindow,
     /// A Leaving Soon collection Plex does not show: nobody sees the warning.
@@ -181,19 +185,15 @@ pub(super) fn resolve<'a>(
     kind: LibraryKind,
     route: Route,
 ) -> Result<Vec<&'a CollectionInfo>, Vec<Misconfigured>> {
-    let named: Vec<&CollectionInfo> = collections
-        .iter()
-        .filter(|c| titles.names(kind, route, c) && (route == Route::Delete || serves(c, kind)))
-        .collect();
+    let named: Vec<&CollectionInfo> =
+        collections.iter().filter(|c| titles.names(kind, route, c) && (route == Route::Delete || serves(c, kind))).collect();
     let misconfigured =
         |collection_id, problem| Misconfigured { kind, route, title: titles.title(kind, route).to_string(), collection_id, problem };
     if named.is_empty() {
         return Err(vec![misconfigured(None, CollectionProblem::NotFound)]);
     }
-    let problems: Vec<Misconfigured> = named
-        .iter()
-        .filter_map(|c| validate_collection(c, kind, route).err().map(|problem| misconfigured(Some(c.id), problem)))
-        .collect();
+    let problems: Vec<Misconfigured> =
+        named.iter().filter_map(|c| validate_collection(c, kind, route).err().map(|problem| misconfigured(Some(c.id), problem))).collect();
     if problems.is_empty() {
         Ok(named)
     } else {
@@ -276,10 +276,14 @@ pub(super) fn cleanup_warnings(collections: &[CollectionInfo], titles: &Collecti
 /// allowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Handover {
-    Allowed { version: String },
+    Allowed {
+        version: String,
+    },
     /// Below v3.10 the collection add is not validated and takes a different
     /// body, so nothing is handed over.
-    Refused { version: String },
+    Refused {
+        version: String,
+    },
 }
 
 pub(super) fn handover(version: &MaintainerrVersion) -> Handover {

@@ -259,10 +259,7 @@ pub fn advance_streaks(state: &mut CandidateState, candidates: &[String], grace:
 /// Read candidate streak state; a missing or corrupt file resets to empty
 /// (everyone re-earns their grace window) rather than crashing a run.
 pub fn read_candidate_state(path: &std::path::Path) -> CandidateState {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
 pub fn write_candidate_state(path: &std::path::Path, state: &CandidateState) -> std::io::Result<()> {
@@ -296,10 +293,8 @@ pub const HISTORY_CAP: usize = 500;
 /// points. Missing or corrupt history resets to just this point — a chart gap
 /// is honest, a crash-looping parser is not.
 pub fn append_history(path: &std::path::Path, point: &HistoryPoint) -> std::io::Result<()> {
-    let mut history: Vec<HistoryPoint> = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default();
+    let mut history: Vec<HistoryPoint> =
+        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
     history.push(point.clone());
     if history.len() > HISTORY_CAP {
         history.drain(0..history.len() - HISTORY_CAP);
@@ -331,10 +326,7 @@ pub fn record_cycle_error(status_path: &std::path::Path, error: &str) {
     else {
         return;
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     status["last_error"] = serde_json::Value::from(error);
     status["last_error_at"] = serde_json::Value::from(now);
     if let Ok(bytes) = serde_json::to_vec(&status) {

@@ -76,11 +76,7 @@ fn every_prediction_line_is_joined_or_counted_under_its_reason() {
     assert_eq!(join.prediction_lines, 7, "the blank line is not a prediction");
     assert_eq!((join.joined, join.duplicates, join.stale, join.unjoined, join.invalid), (1, 1, 1, 1, 3));
     assert_eq!(join.invalid_lines, vec![6, 7, 8]);
-    assert_eq!(
-        join.joined + join.duplicates + join.stale + join.unjoined + join.invalid,
-        join.prediction_lines,
-        "no line may vanish"
-    );
+    assert_eq!(join.joined + join.duplicates + join.stale + join.unjoined + join.invalid, join.prediction_lines, "no line may vanish");
     assert_eq!(join.unanswered, dataset.len() - 1);
     assert_eq!(result.external.n, 1, "metrics cover the joined rows only");
     assert_eq!(result.priors.n, 1, "and every model is judged on those same rows");

@@ -109,12 +109,7 @@ pub fn brier(scores: &[f32], labels: &[f32]) -> f32 {
     if scores.is_empty() {
         return 0.0;
     }
-    scores
-        .iter()
-        .zip(labels)
-        .map(|(score, label)| (score - label).powi(2))
-        .sum::<f32>()
-        / scores.len() as f32
+    scores.iter().zip(labels).map(|(score, label)| (score - label).powi(2)).sum::<f32>() / scores.len() as f32
 }
 
 /// Expected calibration error over equal-width bins: the average gap between the
@@ -370,11 +365,7 @@ pub fn certified_floor(scores: &[f32], labels: &[f32], alpha: f64, delta: f64) -
     for step in (50..=99).rev() {
         let floor = step as f32 / 100.0;
         let flagged = scores.iter().filter(|score| **score >= floor).count();
-        let false_reclaims = scores
-            .iter()
-            .zip(labels)
-            .filter(|(score, label)| **score >= floor && **label < 0.5)
-            .count();
+        let false_reclaims = scores.iter().zip(labels).filter(|(score, label)| **score >= floor && **label < 0.5).count();
         let upper_bound = binomial_upper_bound(false_reclaims, n, delta);
         if upper_bound > alpha {
             break;

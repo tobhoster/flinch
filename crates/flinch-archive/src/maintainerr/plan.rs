@@ -113,9 +113,7 @@ impl Caps {
 
     /// Whether one more add of `bytes` fits after `handed` adds of `handed_bytes`.
     fn admits(&self, handed: usize, handed_bytes: u64, bytes: u64) -> bool {
-        handed < self.max_items
-            && self.max_bytes > 0
-            && (handed == 0 || handed_bytes.saturating_add(bytes) <= self.max_bytes)
+        handed < self.max_items && self.max_bytes > 0 && (handed == 0 || handed_bytes.saturating_add(bytes) <= self.max_bytes)
     }
 }
 
@@ -289,8 +287,7 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
             resolved.push(((kind, *route), found));
         }
     }
-    let candidates_for =
-        |kind, route| resolved.iter().find(|(key, _)| *key == (kind, route)).and_then(|(_, found)| found.as_deref());
+    let candidates_for = |kind, route| resolved.iter().find(|(key, _)| *key == (kind, route)).and_then(|(_, found)| found.as_deref());
 
     let keep: BTreeSet<&str> = desired.protect.iter().map(|item| item.card_id.as_str()).collect();
     // Every ratingKey a kept card resolves to, and which card: no eviction

@@ -4,8 +4,8 @@
 //! memberships, and members added by operator rules.
 
 use super::super::{
-    execute, observe, plan_sync, Caps, Desired, Observed, Outcome, OwnedState, ProtectedEntry, ScheduledEntry,
-    SyncAction, SyncItem, SyncPlan,
+    execute, observe, plan_sync, Caps, Desired, Observed, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncAction, SyncItem,
+    SyncPlan,
 };
 use super::fake::Fake;
 use super::{current, item, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS};
@@ -136,8 +136,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 fn plan(world: &mut World, caps: &Caps) -> (Observed, SyncPlan) {
-    let observed = block_on(observe(&mut world.fake, &world.all, &world.desired.collections, &world.owned))
-        .expect("the fake always answers");
+    let observed =
+        block_on(observe(&mut world.fake, &world.all, &world.desired.collections, &world.owned)).expect("the fake always answers");
     let plan = plan_sync(&world.desired, &observed, &world.owned, caps);
     (observed, plan)
 }

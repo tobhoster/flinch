@@ -18,10 +18,8 @@ fn plex(seasons: &[(u32, Vec<u32>)]) -> PlexEpisodes {
 
 /// Sonarr episode rows for season 1: every numbered episode, `files` with a file.
 fn sonarr(numbered: Vec<u32>, files: Vec<u32>) -> SonarrEpisodes {
-    let rows: Vec<serde_json::Value> = numbered
-        .iter()
-        .map(|id| serde_json::json!({"seasonNumber": 1, "tvdbId": id, "hasFile": files.contains(id)}))
-        .collect();
+    let rows: Vec<serde_json::Value> =
+        numbered.iter().map(|id| serde_json::json!({"seasonNumber": 1, "tvdbId": id, "hasFile": files.contains(id)})).collect();
     SonarrEpisodes::from_rows(&rows)
 }
 
