@@ -113,7 +113,7 @@ renamed and every size, date and id randomized:
 
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo -e FLINCH_WEB_TOKEN=demo \
-  ghcr.io/tobhoster/flinch:0.1.0 sh -c 'flinch-demo && flinch-web'
+  ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
 ```
 
 Then open <http://localhost:7911> and unlock it with `demo`.
