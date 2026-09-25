@@ -1,0 +1,154 @@
+name: Security
+
+# The checks that keep FLINCH safe to publish. They run on every pull request
+# (required to merge), on every push to main, and weekly, because new
+# advisories and CVEs land without any commit here:
+#
+#   secrets    gitleaks over the whole git history
+#   rust-deps  cargo-deny: RustSec advisories, licenses, sources (deny.toml)
+#   npm-deps   npm audit, and the registry signatures of every UI package
+#   workflows  actionlint and zizmor over .github/workflows
+#   image      build the image, scan it and the manifests with Trivy, then run
+#              it as deploy/base does and check the token and the headers
+#
+# Tools that run as containers are pinned by digest: the images Dependabot
+# does not track (gitleaks, actionlint, Trivy) move by hand. Trivy's digest
+# was checked against Aqua's signature (cosign) before pinning; its GitHub
+# Action is not used (its tags were hijacked in March 2026, CVE-2026-33634),
+# and no job here holds a secret or a write token.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan every commit
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            "$GITLEAKS_IMAGE" git /repo --no-banner --redact --verbose
+
+  rust-deps:
+    name: Rust dependencies (cargo-deny)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.98"
+      # A prebuilt, checksum-verified cargo-deny.
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check
+
+  npm-deps:
+    name: npm dependencies (audit)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      # What ships in the UI bundle: any known advisory fails.
+      - name: Audit what ships
+        run: npm audit --omit=dev --audit-level=low
+      # The build tools (Vite and its plugins): high and critical fail.
+      - name: Audit the build tools
+        run: npm audit --audit-level=high
+      # Every package came from the registry as its maintainers published it.
+      - name: Verify registry signatures
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit signatures
+
+  workflows:
+    name: Workflows (actionlint, zizmor)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo "$ACTIONLINT_IMAGE" -color
+      # Online audits (impostor commits, known-vulnerable actions) use this
+      # job's read-only token.
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+
+  image:
+    name: Image (build, scan, smoke test)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Reads the layer cache image.yml writes on main; writes none.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: flinch:ci
+          cache-from: type=gha,scope=linux/amd64
+      # Trivy reads a saved copy: it never gets the Docker socket.
+      - name: Vulnerabilities and secrets in the image
+        run: |
+          mkdir -p "$RUNNER_TEMP/image"
+          docker save flinch:ci -o "$RUNNER_TEMP/image/flinch.tar"
+          docker run --rm -v "$RUNNER_TEMP/image:/scan:ro" -v "$GITHUB_WORKSPACE/.trivyignore:/trivyignore:ro" \
+            "$TRIVY_IMAGE" image --input /scan/flinch.tar --scanners vuln,secret \
+            --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /trivyignore --exit-code 1
+      - name: Misconfigurations in the Dockerfile and manifests
+        run: |
+          mkdir -p "$RUNNER_TEMP/config"
+          cp deploy/Dockerfile deploy/ingress/flinch-web-ingress.yaml "$RUNNER_TEMP/config/"
+          kubectl kustomize deploy > "$RUNNER_TEMP/config/flinch.yaml"
+          docker run --rm -v "$RUNNER_TEMP/config:/scan:ro" -v "$GITHUB_WORKSPACE/.trivyignore:/trivyignore:ro" \
+            "$TRIVY_IMAGE" config /scan \
+            --severity MEDIUM,HIGH,CRITICAL --ignorefile /trivyignore --exit-code 1
+      - name: Run it as the manifests do
+        run: .github/scripts/smoke-image.sh flinch:ci

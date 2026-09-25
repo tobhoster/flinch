@@ -1,0 +1,43 @@
+# cargo-deny: what the Rust dependency tree may contain. CI runs
+# `cargo deny check` on every pull request and weekly (.github/workflows/security.yml).
+
+[advisories]
+# Every RustSec advisory fails the check: vulnerabilities, unsound code and
+# unmaintained crates, direct or transitive. To accept one, list its id in
+# `ignore` with the reason it cannot reach FLINCH.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Only what the tree uses today, all permissive. A new license fails the check
+# so it gets read before it ships. For OR expressions one allowed alternative
+# is enough; AND expressions need every part.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    # webpki-roots: the Mozilla root certificates reqwest trusts.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# The workspace's own crates (publish = false) are MIT and never published.
+ignore = true
+
+[bans]
+# Two versions of one crate cost build time, not safety: reported, not failed.
+multiple-versions = "warn"
+wildcards = "deny"
+# flinch-web depends on flinch-archive by path; that is not a wildcard.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only: no git dependencies and no other registries.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

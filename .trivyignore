@@ -1,0 +1,8 @@
+# Trivy findings accepted on purpose (.github/workflows/security.yml fails on
+# anything else from MEDIUM up). Each entry says why it cannot be fixed or
+# does not apply.
+
+# "Restrict container images to trusted registries": Trivy's default list
+# does not include ghcr.io, where this project's own image is published by
+# its CI with provenance and an SBOM.
+KSV-0125

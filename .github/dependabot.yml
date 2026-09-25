@@ -1,10 +1,12 @@
-# Monthly, grouped version updates. Security updates come as soon as an
-# advisory lands, whatever this schedule says.
+# Monthly, grouped version updates, each at least 7 days old: a release that
+# turns out to be malicious is usually pulled within days. Security updates
+# come as soon as an advisory lands, whatever this file says.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     groups:
       cargo:
         patterns: ["*"]
@@ -12,6 +14,7 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     groups:
       npm:
         patterns: ["*"]
@@ -20,6 +23,7 @@ updates:
   - package-ecosystem: docker
     directory: /deploy
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     ignore:
       # Only even-numbered Node releases become LTS; move majors by hand.
       - dependency-name: node
@@ -27,6 +31,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     groups:
       actions:
         patterns: ["*"]
