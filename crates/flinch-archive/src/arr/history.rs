@@ -88,9 +88,7 @@ impl HistoryRecord {
     /// `None` when it moved no file or cannot be placed or dated.
     pub fn file_event(&self) -> Option<(String, FileEvent)> {
         let change = match self.event_type {
-            EventType::DownloadFolderImported | EventType::MovieFolderImported | EventType::SeriesFolderImported => {
-                Change::Imported
-            }
+            EventType::DownloadFolderImported | EventType::MovieFolderImported | EventType::SeriesFolderImported => Change::Imported,
             EventType::MovieFileDeleted | EventType::EpisodeFileDeleted => match self.data.as_ref().and_then(|data| data.reason) {
                 // The old file goes as the new one lands (`UpgradeMediaFileService`),
                 // or a re-import takes over its record (`ManualOverride`).
@@ -122,8 +120,9 @@ impl HistoryRecord {
         let reason = match self.data.as_ref().and_then(|data| data.reason) {
             Some(DeleteReason::Manual) => RemovalReason::Manual,
             Some(DeleteReason::MissingFromDisk) => RemovalReason::MissingFromDisk,
-            Some(DeleteReason::NoLinkedEpisodes | DeleteReason::Upgrade | DeleteReason::ManualOverride | DeleteReason::Other)
-            | None => RemovalReason::Other,
+            Some(DeleteReason::NoLinkedEpisodes | DeleteReason::Upgrade | DeleteReason::ManualOverride | DeleteReason::Other) | None => {
+                RemovalReason::Other
+            }
         };
         Some(Removal { card, at: event.at, reason })
     }

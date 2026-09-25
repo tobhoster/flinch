@@ -151,9 +151,8 @@ impl CapacityStatus {
             })
             .collect();
         let evicting: Vec<&VolumeStatus> = volumes.iter().filter(|v| v.latched).collect();
-        let every = |flag: fn(&VolumeStatus) -> Option<bool>| {
-            (!evicting.is_empty()).then(|| evicting.iter().all(|v| flag(v) == Some(true)))
-        };
+        let every =
+            |flag: fn(&VolumeStatus) -> Option<bool>| (!evicting.is_empty()).then(|| evicting.iter().all(|v| flag(v) == Some(true)));
         let (latched, covered, goal_met) = (!evicting.is_empty(), every(|v| v.covered), every(|v| v.goal_met));
         let total = |bytes: fn(&VolumeStatus) -> u64| sum(volumes.iter().map(bytes));
         let (handed_bytes, pending_bytes, held_bytes, untracked_bytes) =
@@ -179,10 +178,7 @@ impl CapacityStatus {
             held_bytes,
             untracked_bytes,
             handed_bytes,
-            unmatched_roots: unmatched_roots
-                .iter()
-                .map(|(app, root)| format!("{}:{root}", app.label()))
-                .collect(),
+            unmatched_roots: unmatched_roots.iter().map(|(app, root)| format!("{}:{root}", app.label())).collect(),
         }
     }
 }

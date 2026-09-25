@@ -43,9 +43,7 @@ pub(super) async fn gather(
     cards: &[ArchiveCard],
     cycle_now: u64,
 ) -> Result<Evidence> {
-    let watch_path = args.watch_state.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("--watch-state or FLINCH_WATCH_STATE is required")
-    })?;
+    let watch_path = args.watch_state.as_ref().ok_or_else(|| anyhow::anyhow!("--watch-state or FLINCH_WATCH_STATE is required"))?;
     let watch_text = std::fs::read_to_string(watch_path)?;
     let mut watch: HashMap<String, WatchEntry> =
         serde_json::from_str(&watch_text).with_context(|| format!("parsing {}", watch_path.display()))?;
@@ -102,8 +100,7 @@ pub(super) async fn gather(
         }));
     }
     for series_item in series {
-        let on_disk: std::collections::HashSet<u32> =
-            series_item.to_cards().iter().filter_map(|c| c.season_index).collect();
+        let on_disk: std::collections::HashSet<u32> = series_item.to_cards().iter().filter_map(|c| c.season_index).collect();
         for season in series_item.seasons.iter().filter(|season| !on_disk.contains(&season.season_number)) {
             watch_targets.push(with_identity(flinch_archive::plex::WatchTarget {
                 id: format!("sonarr-{}-s{}", series_item.id, season.season_number),
@@ -136,15 +133,11 @@ pub(super) async fn gather(
     }
     // Tautulli: borrowed from Maintainerr's configuration, the same courtesy
     // as the Plex token — the operator configured it once.
-    let (tautulli_url, tautulli_key) = match (
-        std::env::var("FLINCH_TAUTULLI_URL").unwrap_or_default(),
-        std::env::var("FLINCH_TAUTULLI_KEY").unwrap_or_default(),
-    ) {
-        (url, key) if !url.is_empty() && !key.is_empty() => (url, key),
-        _ => maintainerr_tautulli_credentials(http, args)
-            .await
-            .unwrap_or_default(),
-    };
+    let (tautulli_url, tautulli_key) =
+        match (std::env::var("FLINCH_TAUTULLI_URL").unwrap_or_default(), std::env::var("FLINCH_TAUTULLI_KEY").unwrap_or_default()) {
+            (url, key) if !url.is_empty() && !key.is_empty() => (url, key),
+            _ => maintainerr_tautulli_credentials(http, args).await.unwrap_or_default(),
+        };
     let tautulli_url = with_scheme(&tautulli_url);
 
     // Fetch both sources, resolve identity by GUID, then derive evidence. A
@@ -214,8 +207,7 @@ pub(super) async fn gather(
     }
     // TT-01: Tautulli's silence counts only where it keeps every stream: every
     // active user's, in every library section a resolved target lives in.
-    let target_sections: std::collections::BTreeSet<u32> =
-        resolution.plex_ids().values().filter_map(|ids| ids.section_id).collect();
+    let target_sections: std::collections::BTreeSet<u32> = resolution.plex_ids().values().filter_map(|ids| ids.section_id).collect();
     let keep_history = tautulli.as_ref().and_then(|fetched| fetched.keep_history.as_ref());
     let tautulli_keeps_all = keep_history.is_some_and(|keep| keep.covers(target_sections.iter().copied()));
     if let Some(keep) = keep_history.filter(|_| !tautulli_keeps_all) {
@@ -248,7 +240,9 @@ pub(super) async fn gather(
     if plex_configured && !plex_history_rows.is_empty() {
         // Persist the raw plays: the only outcome record this system has, and
         // fitting needs them after the fact.
-        if let Err(error) = flinch_archive::persist::replace(state_dir().join("playback.json").as_path(), &serde_json::to_vec(&plex_history_rows)?) {
+        if let Err(error) =
+            flinch_archive::persist::replace(state_dir().join("playback.json").as_path(), &serde_json::to_vec(&plex_history_rows)?)
+        {
             eprintln!("[flinch-arrd] playback.json write failed: {error}");
         }
     }
@@ -289,15 +283,16 @@ pub(super) async fn gather(
         // Every absence gate lives in absence_by_target: GUID-resolved target,
         // no stream of any completeness, complete Tautulli, Plex read this
         // cycle, a known arrival after coverage began.
-        let absence =
-            flinch_archive::tautulli::absence_by_target(&watch_targets, &resolution, &tautulli_rows, &health, cycle_now);
+        let absence = flinch_archive::tautulli::absence_by_target(&watch_targets, &resolution, &tautulli_rows, &health, cycle_now);
         println!(
             "[flinch-arrd] tautulli: {} stream(s) · {} target(s) played · {} resolved target(s) never streamed",
             tautulli_rows.len(),
             plays.len(),
             absence.len()
         );
-        if let Err(error) = flinch_archive::persist::replace(state_dir().join("tautulli.json").as_path(), &serde_json::to_vec(&tautulli_rows)?) {
+        if let Err(error) =
+            flinch_archive::persist::replace(state_dir().join("tautulli.json").as_path(), &serde_json::to_vec(&tautulli_rows)?)
+        {
             eprintln!("[flinch-arrd] tautulli.json write failed: {error}");
         }
         let mut from_tautulli = plays;
@@ -333,7 +328,11 @@ pub(super) async fn gather(
 /// request, so a Settings value typed as host:port silently cost all evidence.
 fn with_scheme(url: &str) -> String {
     let url = url.trim();
-    if url.is_empty() || url.contains("://") { url.to_string() } else { format!("http://{url}") }
+    if url.is_empty() || url.contains("://") {
+        url.to_string()
+    } else {
+        format!("http://{url}")
+    }
 }
 
 /// The Plex connection one cycle uses.
@@ -428,11 +427,7 @@ mod tests {
     #[case::settings_url_without_its_token(("plex-ui:32400", " "), ENV, pair("http://plex-env:32400", "env-token", true))]
     #[case::settings_token_without_a_url(("", "ui-token"), ENV, pair("http://plex-env:32400", "env-token", false))]
     #[case::settings_url_without_token_and_no_env(("plex-ui:32400", ""), ("", ""), pair("", "", true))]
-    fn the_plex_url_and_token_come_from_one_source(
-        #[case] settings: (&str, &str),
-        #[case] env: (&str, &str),
-        #[case] used: PlexPair,
-    ) {
+    fn the_plex_url_and_token_come_from_one_source(#[case] settings: (&str, &str), #[case] env: (&str, &str), #[case] used: PlexPair) {
         assert_eq!(plex_pair(settings, env), used);
     }
 }

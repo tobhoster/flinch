@@ -45,9 +45,12 @@ fn a_play_under_a_replaced_rating_key_joins_its_movie_only_by_plex_guid(
     #[case] twin_in_library: bool,
     #[case] joins: bool,
 ) {
-    let mut rows = vec![meta(&format!(r#"{{"ratingKey":"100","title":"Heat","year":1995,"guid":"{HEAT_GUID}","Guid":[{{"id":"tmdb://949"}}]}}"#))];
+    let mut rows =
+        vec![meta(&format!(r#"{{"ratingKey":"100","title":"Heat","year":1995,"guid":"{HEAT_GUID}","Guid":[{{"id":"tmdb://949"}}]}}"#))];
     if twin_in_library {
-        rows.push(meta(&format!(r#"{{"ratingKey":"200","title":"Heat","year":1986,"guid":"{HEAT_GUID}","Guid":[{{"id":"tmdb://26306"}}]}}"#)));
+        rows.push(meta(&format!(
+            r#"{{"ratingKey":"200","title":"Heat","year":1986,"guid":"{HEAT_GUID}","Guid":[{{"id":"tmdb://26306"}}]}}"#
+        )));
     }
     let library = PlexLibrary::new(&rows, &[], &[]);
     let heat = target("radarr-1", LibraryKind::Movie, "Heat", 1995, None, ExternalIds { tmdb: Some(949), ..ExternalIds::default() });
@@ -77,7 +80,8 @@ fn an_episode_play_under_replaced_rating_keys_joins_the_season_plex_files_it_und
     let shows = [meta(r#"{"ratingKey":"70","librarySectionID":2,"title":"Andor","year":2022,"Guid":[{"id":"tvdb://393189"}]}"#)];
     let seasons = [meta(r#"{"ratingKey":"71","parentRatingKey":"70","index":1,"leafCount":2,"librarySectionID":2}"#)];
     let library = PlexLibrary::new(&[], &shows, &seasons);
-    let season_one = target("sonarr-7-s1", LibraryKind::Season, "Andor", 2022, Some(1), ExternalIds { tvdb: Some(393_189), ..ExternalIds::default() });
+    let season_one =
+        target("sonarr-7-s1", LibraryKind::Season, "Andor", 2022, Some(1), ExternalIds { tvdb: Some(393_189), ..ExternalIds::default() });
     let targets = std::slice::from_ref(&season_one);
     let mut resolution = resolve(targets, &library);
 

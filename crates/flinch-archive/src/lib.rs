@@ -12,29 +12,30 @@
 //!   above 0.95. Below that: keep.
 
 pub mod arr;
+pub mod body;
 pub mod calibration;
 pub mod capacity;
 pub mod card;
 pub mod daemon;
 pub use daemon::{reconcile, ItemSnapshot, ReconcileOutput, StatusSnapshot};
-pub mod maintainerr;
-pub mod watch;
-pub mod golden;
 pub mod fit;
-pub mod plan;
+pub mod golden;
 pub mod govern;
 pub mod ids;
 pub mod inflow;
-pub mod score;
-pub mod persist;
+pub mod maintainerr;
 pub mod outside;
-pub mod presence;
-pub mod shadow;
-pub mod tautulli;
-pub mod systemone;
-pub mod taste;
+pub mod persist;
+pub mod plan;
 pub mod plex;
 pub mod policy;
+pub mod presence;
+pub mod score;
+pub mod shadow;
+pub mod systemone;
+pub mod taste;
+pub mod tautulli;
+pub mod watch;
 
 pub use card::{ArchiveCard, LibraryKind, Recency, SeasonState, SeriesType};
 pub use maintainerr::{HttpMaintainerr, MaintainerrApi, MaintainerrError, MaintainerrTarget};

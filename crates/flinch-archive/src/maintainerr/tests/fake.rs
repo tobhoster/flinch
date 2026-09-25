@@ -5,9 +5,7 @@
 //! children's; a collection refuses an item of the wrong kind. Failures are
 //! scripted per operation.
 
-use super::super::{
-    CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion,
-};
+use super::super::{CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion};
 use crate::card::LibraryKind;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -70,9 +68,7 @@ impl Fake {
         match self.faults.get_mut(&op).and_then(VecDeque::pop_front) {
             None => Ok(true),
             Some(Fault::Lie) => Ok(false),
-            Some(Fault::Status(status)) => {
-                Err(MaintainerrError::Http { endpoint: "fake", status, message: "scripted".to_string() })
-            }
+            Some(Fault::Status(status)) => Err(MaintainerrError::Http { endpoint: "fake", status, message: "scripted".to_string() }),
             Some(Fault::Refused) => {
                 Err(MaintainerrError::Refused { endpoint: "fake", code: 0, message: "Failed - no metadata".to_string() })
             }
@@ -115,12 +111,7 @@ impl MaintainerrApi for Fake {
     }
 
     async fn exclusions(&mut self, media_id: &str) -> Result<Vec<ExclusionRow>, MaintainerrError> {
-        Ok(self
-            .rows
-            .iter()
-            .filter(|r| r.media_server_id == media_id || r.parent.as_deref() == Some(media_id))
-            .cloned()
-            .collect())
+        Ok(self.rows.iter().filter(|r| r.media_server_id == media_id || r.parent.as_deref() == Some(media_id)).cloned().collect())
     }
 
     async fn add_exclusion(&mut self, target: &MaintainerrTarget) -> Result<(), MaintainerrError> {

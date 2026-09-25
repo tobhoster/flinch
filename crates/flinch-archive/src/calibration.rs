@@ -105,10 +105,7 @@ pub fn expected_calibration_error(observations: &[Observation], bin_count: usize
 }
 
 /// Equal-mass reliability buckets, ordered by ascending predicted probability.
-pub fn reliability_bins(
-    observations: &[Observation],
-    bin_count: usize,
-) -> Option<Vec<ReliabilityBin>> {
+pub fn reliability_bins(observations: &[Observation], bin_count: usize) -> Option<Vec<ReliabilityBin>> {
     if observations.is_empty() || bin_count == 0 {
         return None;
     }
@@ -160,16 +157,8 @@ pub fn calibration_report(observations: &[Observation], bin_count: usize) -> Opt
     let ece = expected_calibration_error(observations, bin_count)?;
     let sharpness = sharpness(observations)?;
     let reliability = reliability_bins(observations, bin_count)?;
-    let base_rate =
-        observations.iter().filter(|o| o.outcome).count() as f32 / observations.len() as f32;
-    Some(CalibrationReport {
-        samples: observations.len(),
-        brier,
-        ece,
-        sharpness,
-        base_rate,
-        reliability,
-    })
+    let base_rate = observations.iter().filter(|o| o.outcome).count() as f32 / observations.len() as f32;
+    Some(CalibrationReport { samples: observations.len(), brier, ece, sharpness, base_rate, reliability })
 }
 
 #[cfg(test)]
@@ -177,19 +166,13 @@ mod tests {
     use super::*;
 
     fn observations(pairs: &[(f32, bool)]) -> Vec<Observation> {
-        pairs
-            .iter()
-            .map(|&(predicted, outcome)| Observation { predicted, outcome })
-            .collect()
+        pairs.iter().map(|&(predicted, outcome)| Observation { predicted, outcome }).collect()
     }
 
     #[test]
     fn probability_rejects_non_finite_and_out_of_range() {
         for bad in [f32::NAN, f32::INFINITY, -0.001, 1.001] {
-            assert!(
-                Probability::new(bad).is_err(),
-                "{bad} must not be accepted as a probability"
-            );
+            assert!(Probability::new(bad).is_err(), "{bad} must not be accepted as a probability");
         }
         assert!(Probability::new(0.0).is_ok());
         assert!(Probability::new(1.0).is_ok());
@@ -227,17 +210,12 @@ mod tests {
         // Always predicts 0.9; only 50% actually occur.
         let pairs: Vec<(f32, bool)> = (0..100).map(|i| (0.9f32, i % 2 == 0)).collect();
         let ece = expected_calibration_error(&observations(&pairs), 10).expect("non-empty");
-        assert!(
-            (ece - 0.4).abs() < 0.02,
-            "predicting 0.9 when 0.5 occur is a 0.4 calibration gap, got {ece}"
-        );
+        assert!((ece - 0.4).abs() < 0.02, "predicting 0.9 when 0.5 occur is a 0.4 calibration gap, got {ece}");
     }
 
     #[test]
     fn reliability_bins_are_equal_mass_and_cover_every_sample() {
-        let pairs: Vec<(f32, bool)> = (0..100)
-            .map(|i| (i as f32 / 100.0, i % 3 == 0))
-            .collect();
+        let pairs: Vec<(f32, bool)> = (0..100).map(|i| (i as f32 / 100.0, i % 3 == 0)).collect();
         let bins = reliability_bins(&observations(&pairs), 10).expect("non-empty");
         assert_eq!(bins.len(), 10);
         assert_eq!(bins.iter().map(|b| b.count).sum::<usize>(), 100);

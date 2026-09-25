@@ -39,9 +39,7 @@ mod tests;
 
 pub use client::HttpMaintainerr;
 pub use execute::{execute, observe, Outcome, SyncReport, SyncSummary};
-pub use plan::{
-    operator_keeps, plan_sync, Blocked, Caps, Desired, Observed, SyncAction, SyncItem, SyncPlan,
-};
+pub use plan::{operator_keeps, plan_sync, Blocked, Caps, Desired, Observed, SyncAction, SyncItem, SyncPlan};
 pub use state::{read_operator_keeps, write_operator_keeps, OwnedState, ProtectedEntry, ScheduledEntry};
 pub use validate::{destinations, CollectionProblem, CollectionTitles, Destination, Handover, Misconfigured, Route};
 pub use wire::{CollectionInfo, ExclusionRow, MaintainerrVersion};
@@ -62,10 +60,9 @@ impl MaintainerrTarget {
         let rating_key = non_blank(&ids.rating_key)?;
         match kind {
             LibraryKind::Movie => Some(Self::Movie { rating_key }),
-            LibraryKind::Season => Some(Self::Season {
-                show_rating_key: rating_key,
-                season_rating_key: non_blank(ids.season_rating_key.as_deref()?)?,
-            }),
+            LibraryKind::Season => {
+                Some(Self::Season { show_rating_key: rating_key, season_rating_key: non_blank(ids.season_rating_key.as_deref()?)? })
+            }
         }
     }
 
@@ -128,6 +125,13 @@ pub enum MaintainerrError {
         #[source]
         source: reqwest::Error,
     },
+    /// A body that could not be read whole: cut off, or over the size limit.
+    #[error("{endpoint}: {source}")]
+    Body {
+        endpoint: &'static str,
+        #[source]
+        source: crate::body::BodyError,
+    },
 }
 
 /// Everything FLINCH reads from or writes to Maintainerr, and nothing more.
@@ -151,22 +155,13 @@ pub trait MaintainerrApi {
     fn collections(&mut self) -> impl Future<Output = Result<Vec<CollectionInfo>, MaintainerrError>> + Send;
 
     /// `GET /api/collections/media/?collectionId=`: the members' item keys.
-    fn collection_members(
-        &mut self,
-        collection_id: i64,
-    ) -> impl Future<Output = Result<Vec<String>, MaintainerrError>> + Send;
+    fn collection_members(&mut self, collection_id: i64) -> impl Future<Output = Result<Vec<String>, MaintainerrError>> + Send;
 
     /// `GET /api/rules/exclusion?mediaServerId=`.
-    fn exclusions(
-        &mut self,
-        media_id: &str,
-    ) -> impl Future<Output = Result<Vec<ExclusionRow>, MaintainerrError>> + Send;
+    fn exclusions(&mut self, media_id: &str) -> impl Future<Output = Result<Vec<ExclusionRow>, MaintainerrError>> + Send;
 
     /// `POST /api/rules/exclusion` (a global exclusion; a season carries its context).
-    fn add_exclusion(
-        &mut self,
-        target: &MaintainerrTarget,
-    ) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
+    fn add_exclusion(&mut self, target: &MaintainerrTarget) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
 
     /// `DELETE /api/rules/exclusion/{id}`: exactly one row.
     fn remove_exclusion(&mut self, exclusion_id: i64) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
@@ -181,9 +176,5 @@ pub trait MaintainerrApi {
     /// `DELETE /api/collections/media?mediaId=&collectionId=`. The collection id
     /// is always sent: without it Maintainerr removes the item from every
     /// collection.
-    fn remove_from_collection(
-        &mut self,
-        collection_id: i64,
-        item_key: &str,
-    ) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
+    fn remove_from_collection(&mut self, collection_id: i64, item_key: &str) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
 }

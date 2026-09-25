@@ -18,8 +18,8 @@ use super::FitItem;
 use crate::card::{ArchiveCard, LibraryKind, SeasonState};
 use crate::presence;
 use crate::score::{self, HouseholdContext};
-use crate::tautulli;
 use crate::taste::{self, GenreRates, ItemGenres};
+use crate::tautulli;
 use crate::watch::WatchSource;
 use std::collections::HashMap;
 
@@ -186,9 +186,8 @@ fn card_as_of(item: &FitItem, cut: u64, arrival: u64) -> ArchiveCard {
 fn context_as_of(item: &FitItem, show: &[&FitItem], cut: u64, spec: &PanelSpec<'_>) -> HouseholdContext {
     let others = show.iter().filter(|other| other.id != item.id);
     let sibling_season_played = others.clone().any(|other| other.plays_before(cut) > 0);
-    let sibling_season_completed = others.into_iter().any(|other| {
-        other.episodes_total.is_some_and(|total| total > 0 && other.episodes_played_before(cut) >= total)
-    });
+    let sibling_season_completed =
+        others.into_iter().any(|other| other.episodes_total.is_some_and(|total| total > 0 && other.episodes_played_before(cut) >= total));
     // The same reduction the daemon applies to its play log, at the cut.
     let evidence = PlayEvidence::as_of(item.kind, &item.plays, &item.audience_plays, cut);
     HouseholdContext {
@@ -218,9 +217,7 @@ fn source_as_of(item: &FitItem, cut: u64, spec: &PanelSpec<'_>) -> Option<WatchS
         Some(WatchSource::Tautulli) if played => Some(WatchSource::Tautulli),
         Some(WatchSource::Tautulli | WatchSource::TautulliAbsence | WatchSource::PlexHistory) | None => {
             let silent_while_watched = item.guid_resolved
-                && spec
-                    .tautulli_coverage_start
-                    .is_some_and(|start| tautulli::absence_is_evidence(item.added_epoch(spec.now), start, cut));
+                && spec.tautulli_coverage_start.is_some_and(|start| tautulli::absence_is_evidence(item.added_epoch(spec.now), start, cut));
             if played {
                 Some(WatchSource::PlexHistory)
             } else if silent_while_watched {

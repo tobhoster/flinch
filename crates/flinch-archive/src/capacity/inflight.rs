@@ -147,10 +147,7 @@ fn signed(bytes: u64) -> i64 {
 
 impl EvictionLedger {
     pub fn read(path: &std::path::Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
     }
 
     pub fn write(&self, path: &std::path::Path) -> std::io::Result<()> {
@@ -209,8 +206,7 @@ impl EvictionLedger {
             self.handoffs.entry(id.clone()).or_insert(eviction.handed_at);
         }
         let tracked = &self.entries;
-        self.handoffs
-            .retain(|id, handed_at| tracked.contains_key(id) || now.saturating_sub(*handed_at) < HANDOFF_MEMORY_SECS);
+        self.handoffs.retain(|id, handed_at| tracked.contains_key(id) || now.saturating_sub(*handed_at) < HANDOFF_MEMORY_SECS);
     }
 
     /// Settle `volume`'s evictions whose recycle window has passed, in the

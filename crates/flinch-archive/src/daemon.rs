@@ -77,11 +77,8 @@ pub fn reconcile(
         plan.entries.iter().filter(|entry| crate::policy::announces(&entry.reason)).map(|entry| entry.id.clone()).collect();
     let deleted_ids: Vec<String> = plan.entries.into_iter().map(|entry| entry.id).collect();
     let deleted: HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
-    let (reserve_ids, kept_ids): (Vec<String>, Vec<String>) = cards
-        .iter()
-        .filter(|card| !deleted.contains(card.id.as_str()))
-        .map(|card| card.id.clone())
-        .partition(|id| eligible.contains(id));
+    let (reserve_ids, kept_ids): (Vec<String>, Vec<String>) =
+        cards.iter().filter(|card| !deleted.contains(card.id.as_str())).map(|card| card.id.clone()).partition(|id| eligible.contains(id));
 
     ReconcileOutput {
         scanned: cards.len(),

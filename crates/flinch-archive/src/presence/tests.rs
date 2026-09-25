@@ -94,10 +94,8 @@ fn radarr_and_sonarr_records_map_to_their_cards() {
         {"id":11,"movieId":3,"date":"2026-04-05T00:00:00Z","eventType":"movieFileRenamed","data":{}}
     ]"#;
     let records: Vec<HistoryRecord> = serde_json::from_str(rows).expect("records parse");
-    let mapped: Vec<Option<(String, Option<u32>, Change)>> = records
-        .iter()
-        .map(|record| record.file_event().map(|(card, event)| (card, event.episode, event.change)))
-        .collect();
+    let mapped: Vec<Option<(String, Option<u32>, Change)>> =
+        records.iter().map(|record| record.file_event().map(|(card, event)| (card, event.episode, event.change))).collect();
     assert_eq!(
         mapped,
         [

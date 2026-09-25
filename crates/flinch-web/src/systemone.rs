@@ -82,9 +82,7 @@ pub fn answer(items: &[ItemSnapshot], request: &Request) -> Result<BTreeMap<Stri
         .map(|(key, question)| Ask::parse(key, question).map(|ask| (key, ask)))
         .collect::<Result<Vec<_>, AskError>>()?;
     let item = resolve(items, &request.state)?;
-    asks.into_iter()
-        .map(|(key, ask)| respond(item, &ask).map(|reply| (key.clone(), reply)))
-        .collect()
+    asks.into_iter().map(|(key, ask)| respond(item, &ask).map(|reply| (key.clone(), reply))).collect()
 }
 
 fn respond(item: &ItemSnapshot, ask: &Ask) -> Result<Answer, AskError> {
@@ -102,10 +100,7 @@ fn respond(item: &ItemSnapshot, ask: &Ask) -> Result<Answer, AskError> {
             }
             // The plan is a rule, not a guess: the chosen option is certain and
             // every other offered option is impossible.
-            let probabilities = offered
-                .into_iter()
-                .map(|name| (name.to_string(), if name == item.decision { 1.0 } else { 0.0 }))
-                .collect();
+            let probabilities = offered.into_iter().map(|name| (name.to_string(), if name == item.decision { 1.0 } else { 0.0 })).collect();
             Ok(Answer::Choice { choice: item.decision.clone(), confidence: Some(1.0), probabilities })
         }
     }
@@ -113,18 +108,10 @@ fn respond(item: &ItemSnapshot, ask: &Ask) -> Result<Answer, AskError> {
 
 /// The evidence-only forecast, else the gated score the plan used.
 fn p_safe(item: &ItemSnapshot) -> Result<f32, AskError> {
-    item.forecast
-        .or(item.p_safe)
-        .filter(|p| p.is_finite())
-        .map(|p| p.clamp(0.0, 1.0))
-        .ok_or_else(|| AskError::NoForecast {
-            id: item.id.clone(),
-            why: item
-                .reasons
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "the daemon published no score for it".to_string()),
-        })
+    item.forecast.or(item.p_safe).filter(|p| p.is_finite()).map(|p| p.clamp(0.0, 1.0)).ok_or_else(|| AskError::NoForecast {
+        id: item.id.clone(),
+        why: item.reasons.first().cloned().unwrap_or_else(|| "the daemon published no score for it".to_string()),
+    })
 }
 
 fn resolve<'a>(items: &'a [ItemSnapshot], state: &Value) -> Result<&'a ItemSnapshot, AskError> {
@@ -153,10 +140,8 @@ fn by_title<'a>(items: &'a [ItemSnapshot], fields: &Map<String, Value>) -> Resul
     let title = title.trim();
     let year = number(fields, "year")?;
     let season = number(fields, "season")?;
-    let titled: Vec<&ItemSnapshot> = items
-        .iter()
-        .filter(|item| same(&item.title, title) || show_title(item).is_some_and(|show| same(show, title)))
-        .collect();
+    let titled: Vec<&ItemSnapshot> =
+        items.iter().filter(|item| same(&item.title, title) || show_title(item).is_some_and(|show| same(show, title))).collect();
     let matches: Vec<&ItemSnapshot> = titled
         .iter()
         .copied()
@@ -272,11 +257,7 @@ mod tests {
     #[case::forecast_wins_over_the_gated_score("radarr-7", 0.8)]
     #[case::gated_score_when_no_forecast("radarr-10", 0.25)]
     fn safe_and_played_are_complementary(#[case] id: &str, #[case] safe: f32) {
-        let answers = answer(
-            &items(),
-            &request(json!(id), json!({"safe": {"type": "noul"}, "played": {"type": "noul"}})),
-        )
-        .unwrap();
+        let answers = answer(&items(), &request(json!(id), json!({"safe": {"type": "noul"}, "played": {"type": "noul"}}))).unwrap();
         assert!((noul(&answers, "safe") - safe).abs() < 1e-6);
         assert!((noul(&answers, "played") - (1.0 - safe)).abs() < 1e-6);
     }
@@ -295,24 +276,15 @@ mod tests {
     #[test]
     fn an_ambiguous_title_names_its_candidates() {
         let error = resolve(&items(), &json!({"title": "Heat"})).unwrap_err();
-        assert!(
-            matches!(&error, AskError::Ambiguous { candidates, .. } if candidates == &["radarr-7", "radarr-8"]),
-            "{error:?}"
-        );
+        assert!(matches!(&error, AskError::Ambiguous { candidates, .. } if candidates == &["radarr-7", "radarr-8"]), "{error:?}");
         let error = resolve(&items(), &json!({"title": "Severance", "season": 3})).unwrap_err();
-        assert!(
-            matches!(&error, AskError::NoMatch { candidates, .. } if candidates == &["sonarr-21-s1", "sonarr-21-s2"]),
-            "{error:?}"
-        );
+        assert!(matches!(&error, AskError::NoMatch { candidates, .. } if candidates == &["sonarr-21-s1", "sonarr-21-s2"]), "{error:?}");
     }
 
     #[test]
     fn decision_answers_the_plans_verdict_with_certainty() {
-        let answers = answer(
-            &items(),
-            &request(json!("radarr-7"), json!({"decision": {"type": "choice", "criteria": ["keep", "delete"]}})),
-        )
-        .unwrap();
+        let answers =
+            answer(&items(), &request(json!("radarr-7"), json!({"decision": {"type": "choice", "criteria": ["keep", "delete"]}}))).unwrap();
         let expected = Answer::Choice {
             choice: "delete".to_string(),
             confidence: Some(1.0),

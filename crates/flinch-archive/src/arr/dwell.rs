@@ -17,10 +17,7 @@ pub(super) fn days_on_disk(on_disk: &[Span], arrived: Option<&str>) -> f32 {
 
 #[cfg(not(test))]
 fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]

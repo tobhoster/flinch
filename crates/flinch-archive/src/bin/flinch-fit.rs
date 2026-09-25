@@ -87,12 +87,8 @@ fn main() -> anyhow::Result<()> {
     let now = args.now.unwrap_or_else(unix_now);
     let household = load::load_household(&args.state_dir)?;
     let cuts = fit::default_cuts();
-    let spec = PanelSpec {
-        now,
-        cuts_days: &cuts,
-        horizon_days: args.horizon_days,
-        tautulli_coverage_start: household.tautulli_coverage_start,
-    };
+    let spec =
+        PanelSpec { now, cuts_days: &cuts, horizon_days: args.horizon_days, tautulli_coverage_start: household.tautulli_coverage_start };
     let dataset = panel::build_dataset(&household.items, &spec);
 
     let mut acted = false;
@@ -113,7 +109,10 @@ fn main() -> anyhow::Result<()> {
         if args.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
-            print_head_to_head(&result, &path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()));
+            print_head_to_head(
+                &result,
+                &path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned()),
+            );
         }
         acted = true;
     }
@@ -128,10 +127,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0)
 }
 
 fn create(path: &Path) -> anyhow::Result<BufWriter<std::fs::File>> {
@@ -152,10 +148,7 @@ fn against(args: &Args, base_url: &str, dataset: &[Example], now: u64) -> anyhow
     let concurrency = args.concurrency.max(1);
     eprintln!("[flinch-fit] asking {origin} about {} panel row(s), {concurrency} at a time", dataset.len());
     // Not following redirects keeps the System One key on the host it was set for.
-    let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("cannot build the HTTP client")?;
+    let http = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().context("cannot build the HTTP client")?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().context("cannot start the async runtime")?;
     let asked = runtime.block_on(ask::ask_panel(&http, &endpoint, dataset, args.horizon_days, concurrency));
     if let Some(error) = &asked.first_error {

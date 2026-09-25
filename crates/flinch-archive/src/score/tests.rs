@@ -113,17 +113,8 @@ fn a_played_item_pays_no_ignorance_penalty() {
     let mut played = season(false, 400.0, false);
     played.season_state = Some(SeasonState::Completed);
     played.last_watched_days = Some(13.0);
-    let scored = score(
-        &played,
-        HouseholdContext { watch_source: Some(WatchSource::Plex), ..Default::default() },
-        &w,
-        1.0,
-    );
-    assert!(
-        !scored.signals.iter().any(|s| s.name == "no_evidence"),
-        "a watched item is not undecidable: {:?}",
-        scored.signals
-    );
+    let scored = score(&played, HouseholdContext { watch_source: Some(WatchSource::Plex), ..Default::default() }, &w, 1.0);
+    assert!(!scored.signals.iter().any(|s| s.name == "no_evidence"), "a watched item is not undecidable: {:?}", scored.signals);
     assert!(scored.p_safe < 0.45, "recently played must not look reclaimable");
 
     // The penalty still applies when there is genuinely nothing to go on.
@@ -225,12 +216,7 @@ fn watch_source() -> impl Strategy<Value = Option<WatchSource>> {
 }
 
 fn season_state() -> impl Strategy<Value = Option<SeasonState>> {
-    prop_oneof![
-        Just(None),
-        Just(Some(SeasonState::Empty)),
-        Just(Some(SeasonState::Partial)),
-        Just(Some(SeasonState::Completed)),
-    ]
+    prop_oneof![Just(None), Just(Some(SeasonState::Empty)), Just(Some(SeasonState::Partial)), Just(Some(SeasonState::Completed)),]
 }
 
 prop_compose! {

@@ -77,11 +77,7 @@ impl ScoreVerdict {
     /// Nothing predicts that from before the cut, but once *any* season shows
     /// activity the answer is obvious: refuse.
     pub fn permits_unwatched_reclaim(&self, terms: UnwatchedReclaim, dwell_days: f32) -> bool {
-        terms.enabled
-            && !self.hard_guard
-            && !self.sibling_played
-            && self.p_safe >= terms.floor
-            && dwell_days >= terms.min_dwell_days
+        terms.enabled && !self.hard_guard && !self.sibling_played && self.p_safe >= terms.floor && dwell_days >= terms.min_dwell_days
     }
 }
 
@@ -115,12 +111,25 @@ pub enum Reason {
     /// the irreversible mistake this guard exists to prevent.
     KeepBecauseWatchedUndated,
     KeepBecauseLowDuplicateValue,
-    DeleteCompletedUntouched { days: f32, size_bytes: u64 },
+    DeleteCompletedUntouched {
+        days: f32,
+        size_bytes: u64,
+    },
     /// Never played, old enough, and the calibrated score clears the floor. The
     /// reason carries the probability because that is the whole justification.
-    DeleteUnwatchedByScore { p_safe: f32, days: f32, size_bytes: u64 },
-    DeleteWatchedUntouched { days: f32, size_bytes: u64 },
-    DeleteDuplicate { size_bytes: u64, survivor_size_bytes: u64 },
+    DeleteUnwatchedByScore {
+        p_safe: f32,
+        days: f32,
+        size_bytes: u64,
+    },
+    DeleteWatchedUntouched {
+        days: f32,
+        size_bytes: u64,
+    },
+    DeleteDuplicate {
+        size_bytes: u64,
+        survivor_size_bytes: u64,
+    },
 }
 
 /// The deterministic arbitration of one card.
@@ -157,12 +166,7 @@ pub fn decide(card: &ArchiveCard, policy: &ArchivePolicy, verdict: Option<ScoreV
     }
 }
 
-fn decide_season(
-    card: &ArchiveCard,
-    policy: &ArchivePolicy,
-    recency: Recency,
-    verdict: Option<ScoreVerdict>,
-) -> Reason {
+fn decide_season(card: &ArchiveCard, policy: &ArchivePolicy, recency: Recency, verdict: Option<ScoreVerdict>) -> Reason {
     // The newest aired season is the catch-up queue; reclaiming it would delete
     // the thing most likely to be resumed next.
     if policy.keep_newest_season && card.is_newest_season == Some(true) {
@@ -198,12 +202,7 @@ fn decide_season(
     }
 }
 
-fn decide_movie(
-    card: &ArchiveCard,
-    policy: &ArchivePolicy,
-    recency: Recency,
-    verdict: Option<ScoreVerdict>,
-) -> Reason {
+fn decide_movie(card: &ArchiveCard, policy: &ArchivePolicy, recency: Recency, verdict: Option<ScoreVerdict>) -> Reason {
     match recency {
         Recency::Active | Recency::Warm => Reason::KeepBecauseWarm,
         Recency::Cold | Recency::Coldest => {
@@ -250,9 +249,7 @@ pub fn reclaims_bytes(reason: &Reason) -> u64 {
 pub fn announces(reason: &Reason) -> bool {
     match reason {
         Reason::DeleteUnwatchedByScore { .. } => true,
-        Reason::DeleteCompletedUntouched { .. } | Reason::DeleteWatchedUntouched { .. } | Reason::DeleteDuplicate { .. } => {
-            false
-        }
+        Reason::DeleteCompletedUntouched { .. } | Reason::DeleteWatchedUntouched { .. } | Reason::DeleteDuplicate { .. } => false,
         Reason::KeepBecauseFavorite
         | Reason::KeepBecauseInKeepCollection
         | Reason::KeepBecauseActive

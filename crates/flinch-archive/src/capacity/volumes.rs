@@ -127,17 +127,12 @@ fn trim_separators(path: &str) -> &str {
 /// `/media` holds `/media/tv` but not `/media2`. The root mount holds all.
 fn is_under(path: &str, mount: &str) -> bool {
     let (path, mount) = (trim_separators(path), trim_separators(mount));
-    mount.is_empty()
-        || path == mount
-        || (path.starts_with(mount) && path[mount.len()..].starts_with(['/', '\\']))
+    mount.is_empty() || path == mount || (path.starts_with(mount) && path[mount.len()..].starts_with(['/', '\\']))
 }
 
 /// The deepest mount holding `path`.
 fn deepest_mount<'a>(path: &str, mounts: &'a [Volume]) -> Option<&'a Volume> {
-    mounts
-        .iter()
-        .filter(|mount| is_under(path, &mount.path))
-        .max_by_key(|mount| trim_separators(&mount.path).len())
+    mounts.iter().filter(|mount| is_under(path, &mount.path)).max_by_key(|mount| trim_separators(&mount.path).len())
 }
 
 /// Two mounts showing the same filesystem: a shared media share mounted at
@@ -145,9 +140,7 @@ fn deepest_mount<'a>(path: &str, mounts: &'a [Volume]) -> Option<&'a Volume> {
 /// within 0.5% (the two apps are sampled seconds apart). Merging errs safe:
 /// the unmerged mistake would double the eviction goal for one disk.
 fn same_filesystem(a: &Volume, b: &Volume) -> bool {
-    a.total_bytes > 0
-        && a.total_bytes == b.total_bytes
-        && a.free_bytes.abs_diff(b.free_bytes) <= a.total_bytes / 200
+    a.total_bytes > 0 && a.total_bytes == b.total_bytes && a.free_bytes.abs_diff(b.free_bytes) <= a.total_bytes / 200
 }
 
 /// The filesystems that host the libraries, and how to attribute an item to one.
@@ -215,9 +208,6 @@ impl LibraryVolumes {
     }
 
     pub fn recycle_bin(&self, app: App) -> RecycleBin {
-        self.recycle
-            .iter()
-            .find(|(owner, _)| *owner == app)
-            .map_or(RecycleBin::Unknown, |(_, bin)| *bin)
+        self.recycle.iter().find(|(owner, _)| *owner == app).map_or(RecycleBin::Unknown, |(_, bin)| *bin)
     }
 }

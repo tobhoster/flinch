@@ -73,13 +73,9 @@ pub fn govern(
 ) -> Governance {
     let marks = Watermarks::new(settings.capacity_ceiling, settings.capacity_release);
     let snapshot = marks.and_then(|marks| CapacitySnapshot::of(&library.volumes, marks));
-    let decision =
-        decide_capacity(policy, snapshot.as_ref(), latch, settings.capacity_arm_never_played, &on_disk.credit_totals());
-    let volume_of: HashMap<String, String> = located
-        .iter()
-        .filter(|(id, _)| evictable(id))
-        .map(|(id, volume)| (id.clone(), volume.clone()))
-        .collect();
+    let decision = decide_capacity(policy, snapshot.as_ref(), latch, settings.capacity_arm_never_played, &on_disk.credit_totals());
+    let volume_of: HashMap<String, String> =
+        located.iter().filter(|(id, _)| evictable(id)).map(|(id, volume)| (id.clone(), volume.clone())).collect();
     let goal = ReclaimGoal::PerVolume(VolumeGoals { goals: decision.goals.clone(), volume_of, handed: HashSet::new() });
     Governance { invalid_watermarks: marks.is_none(), library, snapshot, decision, goal, located, on_disk }
 }
@@ -112,38 +108,25 @@ impl Governance {
             return "Eligible, but no governed disk holds it — never evicted".to_string();
         };
         if self.volume_of(card_id).is_none() {
-            return "Eligible, but not matched in Plex by id — FLINCH cannot hand it to Maintainerr, so it is never evicted"
-                .to_string();
+            return "Eligible, but not matched in Plex by id — FLINCH cannot hand it to Maintainerr, so it is never evicted".to_string();
         }
         let Some(snapshot) = &self.snapshot else {
             return "Eligible — held while disk usage is unmeasured".to_string();
         };
         let percent = |fraction: f64| (fraction * 100.0).round();
         match self.decision.goals.get(volume) {
-            Some(0) if self.on_disk.credit.get(volume).is_some_and(|credit| credit.held > 0) => format!(
-                "Eligible — held while {volume} waits for space handed over earlier that the disk has not released"
-            ),
-            Some(0) => format!(
-                "Eligible — held while {volume}'s recycle bin releases space already evicted"
-            ),
-            Some(_) => format!(
-                "Eligible — not needed yet to bring {volume} back to {}%",
-                percent(snapshot.watermarks.release())
-            ),
-            None => format!(
-                "Eligible — held while {volume} is under the {}% ceiling",
-                percent(snapshot.watermarks.ceiling())
-            ),
+            Some(0) if self.on_disk.credit.get(volume).is_some_and(|credit| credit.held > 0) => {
+                format!("Eligible — held while {volume} waits for space handed over earlier that the disk has not released")
+            }
+            Some(0) => format!("Eligible — held while {volume}'s recycle bin releases space already evicted"),
+            Some(_) => format!("Eligible — not needed yet to bring {volume} back to {}%", percent(snapshot.watermarks.release())),
+            None => format!("Eligible — held while {volume} is under the {}% ceiling", percent(snapshot.watermarks.ceiling())),
         }
     }
 
     /// status.json's capacity block; `None` when unmeasured. `handed` lists
     /// every verified FLINCH collection member still on disk, with its bytes.
-    pub fn status<'a>(
-        &self,
-        outcomes: &[VolumeOutcome],
-        handed: impl IntoIterator<Item = (&'a str, u64)>,
-    ) -> Option<CapacityStatus> {
+    pub fn status<'a>(&self, outcomes: &[VolumeOutcome], handed: impl IntoIterator<Item = (&'a str, u64)>) -> Option<CapacityStatus> {
         let snapshot = self.snapshot.as_ref()?;
         let mut per_volume: BTreeMap<String, u64> = BTreeMap::new();
         for (card_id, bytes) in handed {

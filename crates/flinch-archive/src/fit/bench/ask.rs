@@ -57,13 +57,7 @@ impl Asked {
 
 /// One request per panel row, at most `concurrency` (≥ 1) in flight. A failed
 /// row is recorded, never fatal: the caller decides what "all failed" means.
-pub async fn ask_panel(
-    http: &reqwest::Client,
-    endpoint: &Endpoint,
-    dataset: &[Example],
-    horizon_days: f32,
-    concurrency: usize,
-) -> Asked {
+pub async fn ask_panel(http: &reqwest::Client, endpoint: &Endpoint, dataset: &[Example], horizon_days: f32, concurrency: usize) -> Asked {
     let endpoint = Arc::new(endpoint.clone());
     let questions = BTreeMap::from([(QUESTION.to_string(), played_within(horizon_days))]);
     let mut asked = Asked { responses: vec![None; dataset.len()], failed: 0, first_error: None };

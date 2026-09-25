@@ -92,11 +92,8 @@ pub enum Relation {
 pub fn relate(a: &ExternalIds, b: &ExternalIds) -> Relation {
     let imdb_a = a.imdb.as_deref().and_then(imdb);
     let imdb_b = b.imdb.as_deref().and_then(imdb);
-    let verdicts = [
-        a.tmdb.zip(b.tmdb).map(|(x, y)| x == y),
-        a.tvdb.zip(b.tvdb).map(|(x, y)| x == y),
-        imdb_a.zip(imdb_b).map(|(x, y)| x == y),
-    ];
+    let verdicts =
+        [a.tmdb.zip(b.tmdb).map(|(x, y)| x == y), a.tvdb.zip(b.tvdb).map(|(x, y)| x == y), imdb_a.zip(imdb_b).map(|(x, y)| x == y)];
     if verdicts.contains(&Some(false)) {
         Relation::Conflict
     } else if verdicts.contains(&Some(true)) {

@@ -25,12 +25,7 @@ pub struct Fit {
 impl Fit {
     /// Raw logit of one example under this fit.
     pub fn logit(&self, example: &Example) -> f32 {
-        self.bias
-            + example
-                .values
-                .iter()
-                .map(|(name, value)| self.weights.get(name).copied().unwrap_or(0.0) * value)
-                .sum::<f32>()
+        self.bias + example.values.iter().map(|(name, value)| self.weights.get(name).copied().unwrap_or(0.0) * value).sum::<f32>()
     }
 
     /// The weight table the daemon would run, policy signals at their priors.
@@ -46,11 +41,7 @@ impl Fit {
 
 /// Every weight training may move: all but the frozen policy signals.
 pub fn trainable() -> Vec<&'static str> {
-    ScoreWeights::names()
-        .iter()
-        .copied()
-        .filter(|name| !ScoreWeights::frozen().contains(name))
-        .collect()
+    ScoreWeights::names().iter().copied().filter(|name| !ScoreWeights::frozen().contains(name)).collect()
 }
 
 /// The fit `flinch-fit` performs: every trainable weight, shrunk toward the
@@ -60,8 +51,7 @@ pub fn trainable() -> Vec<&'static str> {
 pub fn fit_scorecard(training: &[Example]) -> Fit {
     let names = trainable();
     let deployed = ScoreWeights::default();
-    let prior: HashMap<&'static str, f32> =
-        names.iter().map(|name| (*name, deployed.get(name) / DEPLOYED_PRIOR_TEMPERATURE)).collect();
+    let prior: HashMap<&'static str, f32> = names.iter().map(|name| (*name, deployed.get(name) / DEPLOYED_PRIOR_TEMPERATURE)).collect();
     train(training, &names, PRIOR_STRENGTH, &prior)
 }
 
@@ -79,20 +69,12 @@ pub fn fit_scorecard(training: &[Example]) -> Fit {
 /// Features are standardised internally for conditioning and the result is
 /// converted back to raw space, so fitted weights are readable in the same units
 /// as the priors (`never_played` is still "logit per unit of evidence").
-pub fn train(
-    examples: &[Example],
-    names: &[&'static str],
-    prior_strength: f32,
-    prior: &HashMap<&'static str, f32>,
-) -> Fit {
+pub fn train(examples: &[Example], names: &[&'static str], prior_strength: f32, prior: &HashMap<&'static str, f32>) -> Fit {
     let n = examples.len().max(1) as f32;
     let mut mean = vec![0.0f32; names.len()];
     let mut std = vec![1.0f32; names.len()];
     for (index, name) in names.iter().enumerate() {
-        let column: Vec<f32> = examples
-            .iter()
-            .map(|example| example.values.get(name).copied().unwrap_or(0.0))
-            .collect();
+        let column: Vec<f32> = examples.iter().map(|example| example.values.get(name).copied().unwrap_or(0.0)).collect();
         let column_mean = column.iter().sum::<f32>() / n;
         let variance = column.iter().map(|value| (value - column_mean).powi(2)).sum::<f32>() / n;
         mean[index] = column_mean;
@@ -105,20 +87,14 @@ pub fn train(
             let x = names
                 .iter()
                 .enumerate()
-                .map(|(index, name)| {
-                    (example.values.get(name).copied().unwrap_or(0.0) - mean[index]) / std[index]
-                })
+                .map(|(index, name)| (example.values.get(name).copied().unwrap_or(0.0) - mean[index]) / std[index])
                 .collect();
             (x, example.label)
         })
         .collect();
 
     // The prior, moved into standardised units: raw = standardised / std.
-    let centre: Vec<f32> = names
-        .iter()
-        .enumerate()
-        .map(|(index, name)| prior.get(name).copied().unwrap_or(0.0) * std[index])
-        .collect();
+    let centre: Vec<f32> = names.iter().enumerate().map(|(index, name)| prior.get(name).copied().unwrap_or(0.0) * std[index]).collect();
     let pull = prior_strength / n;
     let mut w = centre.clone();
     let mut b = 0.0f32;

@@ -31,10 +31,7 @@ pub async fn require_token(AxumState(st): AxumState<AppState>, request: Request,
             false,
         );
     };
-    let presented = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.as_bytes().strip_prefix(b"Bearer "));
+    let presented = request.headers().get(header::AUTHORIZATION).and_then(|value| value.as_bytes().strip_prefix(b"Bearer "));
     match presented {
         Some(token) if same_bytes(token, expected.as_bytes()) => next.run(request).await,
         Some(_) => unauthorized("That token was not accepted: enter the FLINCH web token again", true),
@@ -118,7 +115,9 @@ mod tests {
         std::fs::create_dir_all(tmp.join("web")).unwrap();
         std::fs::write(tmp.join("web/index.html"), "<div id=\"root\"></div>").unwrap();
         let st = state(&tmp, Some("s3cret"));
-        for (path, expected) in [("/healthz", StatusCode::OK), ("/", StatusCode::OK), ("/items", StatusCode::OK), ("/api/status", StatusCode::UNAUTHORIZED)] {
+        for (path, expected) in
+            [("/healthz", StatusCode::OK), ("/", StatusCode::OK), ("/items", StatusCode::OK), ("/api/status", StatusCode::UNAUTHORIZED)]
+        {
             let res = send(&st, get(path, None)).await;
             assert_eq!(res.status(), expected, "{path}");
             let headers = res.headers();

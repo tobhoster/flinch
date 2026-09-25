@@ -90,9 +90,7 @@ impl PlexLibrary {
 
     /// Season containers numbered `index` under any copy of `show`.
     pub fn seasons_of<'a>(&'a self, show: &'a PlexItem, index: u32) -> impl Iterator<Item = &'a PlexSeason> + 'a {
-        self.seasons
-            .iter()
-            .filter(move |season| season.index == index && show.holds(&season.show_rating_key))
+        self.seasons.iter().filter(move |season| season.index == index && show.holds(&season.show_rating_key))
     }
 }
 

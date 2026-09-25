@@ -65,10 +65,7 @@ pub(super) fn titles() -> CollectionTitles {
 
 /// One valid collection per kind: movies in Plex section 1, seasons in 2.
 pub(super) fn valid_collections() -> Vec<CollectionInfo> {
-    vec![
-        collection(MOVIES, "FLINCH Movies", "movie", "1", true, 0),
-        collection(SEASONS, "FLINCH Seasons", "season", "2", true, 0),
-    ]
+    vec![collection(MOVIES, "FLINCH Movies", "movie", "1", true, 0), collection(SEASONS, "FLINCH Seasons", "season", "2", true, 0)]
 }
 
 /// A global exclusion row for `media_server_id`, created by a call on `parent`.

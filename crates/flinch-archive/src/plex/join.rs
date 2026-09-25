@@ -87,7 +87,10 @@ impl RowKey {
 pub enum PlayJoin {
     Keys(PlayKeys),
     /// An unresolved movie: exact normalised title and a year the row states.
-    MovieTitleYear { title: String, year: u32 },
+    MovieTitleYear {
+        title: String,
+        year: u32,
+    },
     /// Nothing identifies its plays safely.
     Unresolved,
 }
@@ -137,8 +140,7 @@ impl PlayJoin {
     pub fn matches_audience(&self, row: &RowKey) -> bool {
         match self {
             PlayJoin::Keys(PlayKeys::Season { show_rating_keys, .. }) => {
-                (row.media == Media::Episode
-                    && row.grandparent_rating_key.as_ref().is_some_and(|key| show_rating_keys.contains(key)))
+                (row.media == Media::Episode && row.grandparent_rating_key.as_ref().is_some_and(|key| show_rating_keys.contains(key)))
                     || self.matches_by_guid(row)
             }
             other => other.matches(row),

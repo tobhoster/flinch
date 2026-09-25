@@ -1,0 +1,5 @@
+# The house style: wide lines, and rustfmt's width heuristics relaxed to the
+# full line so short calls, literals and chains stay on one line. CI checks it
+# with `cargo fmt --all --check`.
+max_width = 140
+use_small_heuristics = "Max"

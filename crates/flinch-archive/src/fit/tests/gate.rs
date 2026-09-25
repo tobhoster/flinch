@@ -125,4 +125,3 @@ fn recalibration_keeps_the_priors_order_and_calibrates_them_to_the_household() {
     let brier = |p: &[f32]| p.iter().zip(&labels).map(|(p, y)| (p - y).powi(2)).sum::<f32>() / labels.len() as f32;
     assert!(brier(&recalibrated) < brier(&priors), "{} vs the priors' {}", brier(&recalibrated), brier(&priors));
 }
-

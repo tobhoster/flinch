@@ -69,10 +69,8 @@ fn a_seasons_episode_removals_are_one_item_counting_every_file() {
 #[test]
 fn old_removals_and_items_the_arr_no_longer_has_are_left_out() {
     let movies = [movie(1, "Old", Some(true), false)];
-    let removals = [
-        removal("radarr-1", NOW - WINDOW_SECS - 1, RemovalReason::Manual),
-        removal("radarr-99", NOW - DAY, RemovalReason::Manual),
-    ];
+    let removals =
+        [removal("radarr-1", NOW - WINDOW_SECS - 1, RemovalReason::Manual), removal("radarr-99", NOW - DAY, RemovalReason::Manual)];
 
     assert!(outside_deletions(&removals, &BTreeMap::new(), &movies, &[], NOW).is_empty());
 }
@@ -80,10 +78,7 @@ fn old_removals_and_items_the_arr_no_longer_has_are_left_out() {
 #[test]
 fn whether_it_comes_back_is_read_from_the_library_now_newest_first() {
     let movies = [movie(1, "Monitored, no file", Some(true), false), movie(2, "Grabbed again", Some(true), true)];
-    let series = [
-        show(5, "Season unmonitored", Some(true), 1, Some(false), 0),
-        show(6, "Unknown", Some(true), 2, None, 0),
-    ];
+    let series = [show(5, "Season unmonitored", Some(true), 1, Some(false), 0), show(6, "Unknown", Some(true), 2, None, 0)];
     let removals = [
         removal("radarr-1", NOW - 4 * DAY, RemovalReason::Manual),
         removal("radarr-2", NOW - 3 * DAY, RemovalReason::Manual),

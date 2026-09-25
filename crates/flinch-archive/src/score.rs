@@ -81,8 +81,7 @@ pub const COMPLETED_COLD_DAYS: f32 = 180.0;
 /// cut date was still running at it, so today's status alone would leak the
 /// future into the past. Without an airing date nothing is claimed.
 pub fn series_ended_as_of(status: Option<&str>, last_aired_epoch: Option<u64>, as_of: u64) -> bool {
-    status.is_some_and(|status| status.eq_ignore_ascii_case("ended"))
-        && last_aired_epoch.is_some_and(|aired| aired < as_of)
+    status.is_some_and(|status| status.eq_ignore_ascii_case("ended")) && last_aired_epoch.is_some_and(|aired| aired < as_of)
 }
 
 /// One unweighted signal value.
@@ -137,12 +136,7 @@ impl ReclaimScore {
 /// `temperature` > 1 softens the probability (more honest for a young model);
 /// `1.0` is the identity. Fit it against observed outcomes before trusting any
 /// threshold.
-pub fn score(
-    card: &ArchiveCard,
-    ctx: HouseholdContext,
-    weights: &ScoreWeights,
-    temperature: f32,
-) -> ReclaimScore {
+pub fn score(card: &ArchiveCard, ctx: HouseholdContext, weights: &ScoreWeights, temperature: f32) -> ReclaimScore {
     let mut signals = Vec::new();
     let mut logit = weights.bias;
     let mut policy = 0.0;
@@ -205,44 +199,19 @@ pub fn features(card: &ArchiveCard, ctx: HouseholdContext) -> Vec<Feature> {
     let source = ctx.watch_source;
     match (card.season_state, card.is_watched) {
         (Some(SeasonState::Empty), _) | (_, Some(false)) => match source {
-            Some(source) => push(
-                "never_played",
-                source.evidence_factor(),
-                format!("{}: zero playback", source.label()),
-                &mut out,
-            ),
-            None => push(
-                "no_evidence",
-                1.0,
-                "no watch evidence — undecidable, fail-closed".into(),
-                &mut out,
-            ),
+            Some(source) => push("never_played", source.evidence_factor(), format!("{}: zero playback", source.label()), &mut out),
+            None => push("no_evidence", 1.0, "no watch evidence — undecidable, fail-closed".into(), &mut out),
         },
         (Some(SeasonState::Partial), _) => match source {
-            Some(source) => push(
-                "partially_played",
-                source.evidence_factor(),
-                format!("{}: partially played", source.label()),
-                &mut out,
-            ),
-            None => push(
-                "no_evidence",
-                1.0,
-                "no watch evidence — undecidable, fail-closed".into(),
-                &mut out,
-            ),
+            Some(source) => push("partially_played", source.evidence_factor(), format!("{}: partially played", source.label()), &mut out),
+            None => push("no_evidence", 1.0, "no watch evidence — undecidable, fail-closed".into(), &mut out),
         },
         // Watched/completed: the evidence exists, it just argues the other way.
         // Paying the ignorance penalty here would mislabel a household favourite
         // as "undecidable" — the recency and sibling signals already cover it.
         _ => {
             if source.is_none() {
-                push(
-                    "no_evidence",
-                    1.0,
-                    "no watch evidence — undecidable, fail-closed".into(),
-                    &mut out,
-                );
+                push("no_evidence", 1.0, "no watch evidence — undecidable, fail-closed".into(), &mut out);
             }
         }
     }
@@ -261,12 +230,7 @@ pub fn features(card: &ArchiveCard, ctx: HouseholdContext) -> Vec<Feature> {
 
     // --- atomic question 3: how long has it occupied disk? ---
     let years = (card.added_days_ago / 365.0).clamp(0.0, 4.0);
-    push(
-        "dwell",
-        years,
-        format!("on disk {:.0} d", card.added_days_ago),
-        &mut out,
-    );
+    push("dwell", years, format!("on disk {:.0} d", card.added_days_ago), &mut out);
 
     // --- atomic question 4: does the household still care about this show? ---
     // Only for an item the household has not finished: siblings being watched
@@ -285,12 +249,7 @@ pub fn features(card: &ArchiveCard, ctx: HouseholdContext) -> Vec<Feature> {
         push("newest_season", 1.0, "newest aired season".into(), &mut out);
     }
     if card.is_favorite || card.in_keep_collection {
-        push(
-            "protected_by_tag",
-            1.0,
-            if card.is_favorite { "favorite".into() } else { "keep-collection".to_string() },
-            &mut out,
-        );
+        push("protected_by_tag", 1.0, if card.is_favorite { "favorite".into() } else { "keep-collection".to_string() }, &mut out);
     }
 
     // --- atomic question 6: economics ---
@@ -319,7 +278,12 @@ pub fn features(card: &ArchiveCard, ctx: HouseholdContext) -> Vec<Feature> {
     // household better than its genres do.
     if let Some(played) = ctx.taste.filter(|p| p.is_finite()) {
         let played = played.clamp(0.01, 0.99);
-        push("taste", ((1.0 - played) / played).ln(), format!("the household plays {:.0}% of its genres within 30 d", played * 100.0), &mut out);
+        push(
+            "taste",
+            ((1.0 - played) / played).ln(),
+            format!("the household plays {:.0}% of its genres within 30 d", played * 100.0),
+            &mut out,
+        );
     }
 
     out

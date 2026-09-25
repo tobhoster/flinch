@@ -1,12 +1,10 @@
 //! The planner's rules, one scenario each.
 
 use super::super::{
-    operator_keeps, plan_sync, Blocked, Caps, CollectionTitles, Desired, ExclusionRow, Handover, MaintainerrVersion,
-    Observed, OwnedState, ProtectedEntry, ScheduledEntry, SyncAction, SyncItem,
+    operator_keeps, plan_sync, Blocked, Caps, CollectionTitles, Desired, ExclusionRow, Handover, MaintainerrVersion, Observed, OwnedState,
+    ProtectedEntry, ScheduledEntry, SyncAction, SyncItem,
 };
-use super::{
-    current, item, leaving, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS,
-};
+use super::{current, item, leaving, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS};
 use crate::card::LibraryKind;
 use rstest::rstest;
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,8 +17,7 @@ fn observed(items: &[&SyncItem], rows: &[ExclusionRow], members: &[(i64, &str)])
         let found = rows.iter().filter(|r| r.media_server_id == key || r.parent.as_deref() == Some(key.as_str())).cloned().collect();
         exclusions.insert(key, found);
     }
-    let mut observed_members: BTreeMap<i64, BTreeSet<String>> =
-        valid_collections().iter().map(|c| (c.id, BTreeSet::new())).collect();
+    let mut observed_members: BTreeMap<i64, BTreeSet<String>> = valid_collections().iter().map(|c| (c.id, BTreeSet::new())).collect();
     for (collection_id, key) in members {
         observed_members.entry(*collection_id).or_default().insert(key.to_string());
     }
@@ -121,10 +118,7 @@ fn an_item_larger_than_the_byte_cap_goes_alone_as_the_runs_first_add() {
 fn a_card_leaving_the_evict_list_is_unscheduled_before_it_is_protected() {
     let flipped = item("sonarr-2-s1", LibraryKind::Season, Some(season_ids("200", "201")), GIB);
     let mut owned = OwnedState::default();
-    owned.scheduled.insert(
-        "sonarr-2-s1".into(),
-        ScheduledEntry { target: season("200", "201"), collection_id: SEASONS, added_at: 1 },
-    );
+    owned.scheduled.insert("sonarr-2-s1".into(), ScheduledEntry { target: season("200", "201"), collection_id: SEASONS, added_at: 1 });
 
     let plan = plan_sync(&desired(&[&flipped], &[]), &observed(&[&flipped], &[], &[(SEASONS, "201")]), &owned, &OPEN);
 
@@ -305,10 +299,7 @@ fn a_leaving_soon_item_that_got_played_is_pulled_back() {
     // Played: no longer evicted.
     let plan = plan_sync(&announcing(&[], &[], "Leaving Soon"), &seen, &owned, &OPEN);
 
-    assert_eq!(
-        plan.actions,
-        [SyncAction::Unschedule { card_id: "radarr-1".into(), target: movie("100"), collection_id: LEAVING_MOVIES }]
-    );
+    assert_eq!(plan.actions, [SyncAction::Unschedule { card_id: "radarr-1".into(), target: movie("100"), collection_id: LEAVING_MOVIES }]);
 }
 
 #[test]

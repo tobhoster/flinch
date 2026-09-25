@@ -73,7 +73,11 @@ fn refit(state_dir: &Path, now: u64) {
     match adopt::refit_if_due(state_dir, now) {
         None => {}
         Some(Ok(status)) => match &status.shortfall {
-            None => println!("[flinch-arrd] fit: adopted the {}, better than the hand-set priors out of fold ({})", status.kind.label(), status.fitted_on),
+            None => println!(
+                "[flinch-arrd] fit: adopted the {}, better than the hand-set priors out of fold ({})",
+                status.kind.label(),
+                status.fitted_on
+            ),
             Some(shortfall) => println!("[flinch-arrd] fit: priors kept — {shortfall} ({})", status.fitted_on),
         },
         Some(Err(error)) => eprintln!("[flinch-arrd] fit failed, priors kept: {error}"),
@@ -100,10 +104,6 @@ fn resolve(state_dir: &Path, prior_temperature: f32) -> (ScoreWeights, String, f
             ),
             model.temperature,
         ),
-        None => (
-            ScoreWeights::default(),
-            "priors (no fit has beaten them out of fold yet)".to_string(),
-            prior_temperature,
-        ),
+        None => (ScoreWeights::default(), "priors (no fit has beaten them out of fold yet)".to_string(), prior_temperature),
     }
 }

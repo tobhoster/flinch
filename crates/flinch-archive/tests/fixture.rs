@@ -25,10 +25,6 @@ fn the_shipped_fixture_produces_the_hand_audited_plan() {
     let expected = vec!["m01", "m03", "s01", "s05", "s06"];
     assert_eq!(deleted, expected, "the plan must match the hand audit exactly");
 
-    let expected_bytes = 1_800_000_000_u64
-        + 1_600_000_000
-        + 2_300_000_000
-        + 4_200_000_000
-        + 6_200_000_000;
+    let expected_bytes = 1_800_000_000_u64 + 1_600_000_000 + 2_300_000_000 + 4_200_000_000 + 6_200_000_000;
     assert_eq!(plan.reclaimed_bytes, expected_bytes, "reclaimed bytes must match");
 }

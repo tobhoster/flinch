@@ -11,15 +11,8 @@ use crate::policy::{self, ArchivePolicy, ScoreVerdict, UnwatchedReclaim};
 use std::collections::HashMap;
 
 /// Items and bytes that would *additionally* qualify with the rule armed.
-pub fn preview(
-    cards: &[ArchiveCard],
-    verdicts: &HashMap<String, ScoreVerdict>,
-    policy: &ArchivePolicy,
-) -> (usize, u64) {
-    let armed = ArchivePolicy {
-        unwatched_reclaim: UnwatchedReclaim { enabled: true, ..policy.unwatched_reclaim },
-        ..policy.clone()
-    };
+pub fn preview(cards: &[ArchiveCard], verdicts: &HashMap<String, ScoreVerdict>, policy: &ArchivePolicy) -> (usize, u64) {
+    let armed = ArchivePolicy { unwatched_reclaim: UnwatchedReclaim { enabled: true, ..policy.unwatched_reclaim }, ..policy.clone() };
     let mut count = 0usize;
     let mut bytes = 0u64;
     for card in cards {

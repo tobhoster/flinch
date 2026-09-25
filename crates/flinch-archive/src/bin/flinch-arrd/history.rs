@@ -95,20 +95,16 @@ impl App {
 /// Fill `on_disk` on every movie and season, reading the history again when
 /// the cached read is a day old, and return the files both apps removed
 /// lately. Never fails the cycle.
-pub(super) async fn attach(
-    client: &reqwest::Client,
-    args: &Args,
-    movies: &mut [ArrMovie],
-    series: &mut [ArrSeries],
-) -> Vec<Removal> {
+pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [ArrMovie], series: &mut [ArrSeries]) -> Vec<Removal> {
     let path = super::state_dir().join("arr-history.json");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
     let mut cache = read_cache(&path);
     let mut refreshed = Vec::new();
     for app in [App::Radarr, App::Sonarr] {
-        let fresh = app.slot(&mut cache).as_ref().is_some_and(|history| {
-            history.refreshed_at <= now && now - history.refreshed_at < REFRESH_SECS && history.removals.is_some()
-        });
+        let fresh = app
+            .slot(&mut cache)
+            .as_ref()
+            .is_some_and(|history| history.refreshed_at <= now && now - history.refreshed_at < REFRESH_SECS && history.removals.is_some());
         if fresh {
             continue;
         }
@@ -127,7 +123,8 @@ pub(super) async fn attach(
             eprintln!("[flinch-arrd] arr-history.json write failed, the history is read again next cycle: {error}");
         }
     }
-    let spans = |history: &Option<AppHistory>, id: String| history.as_ref().and_then(|history| history.items.get(&id)).cloned().unwrap_or_default();
+    let spans =
+        |history: &Option<AppHistory>, id: String| history.as_ref().and_then(|history| history.items.get(&id)).cloned().unwrap_or_default();
     for movie in movies.iter_mut() {
         movie.on_disk = spans(&cache.radarr, format!("radarr-{}", movie.id));
     }
@@ -235,7 +232,11 @@ fn spans_for(app: App, records: &[HistoryRecord], movies: &[ArrMovie], series: &
         records.len(),
         items.len()
     );
-    let removals = records.iter().filter_map(HistoryRecord::removal).filter(|removal| now.saturating_sub(removal.at) <= outside::WINDOW_SECS).collect();
+    let removals = records
+        .iter()
+        .filter_map(HistoryRecord::removal)
+        .filter(|removal| now.saturating_sub(removal.at) <= outside::WINDOW_SECS)
+        .collect();
     (AppHistory { refreshed_at: now, records: records.len(), items, removals: Some(removals) }, summary)
 }
 

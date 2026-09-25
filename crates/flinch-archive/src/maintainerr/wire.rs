@@ -41,10 +41,7 @@ pub(super) struct ExclusionRequest<'a> {
 }
 
 pub(super) fn exclusion_request(target: &MaintainerrTarget) -> ExclusionRequest<'_> {
-    ExclusionRequest {
-        media_id: target.media_id(),
-        context: matches!(target, MaintainerrTarget::Season { .. }).then(|| context(target)),
-    }
+    ExclusionRequest { media_id: target.media_id(), context: matches!(target, MaintainerrTarget::Season { .. }).then(|| context(target)) }
 }
 
 #[derive(Debug, Serialize)]
@@ -202,11 +199,9 @@ struct ErrorBody {
 fn http_error(endpoint: &'static str, status: u16, body: &str) -> MaintainerrError {
     let message = match serde_json::from_str::<ErrorBody>(body).map(|parsed| parsed.message) {
         Ok(serde_json::Value::String(text)) => text,
-        Ok(serde_json::Value::Array(items)) => items
-            .iter()
-            .map(|item| item.as_str().map_or_else(|| item.to_string(), str::to_string))
-            .collect::<Vec<_>>()
-            .join("; "),
+        Ok(serde_json::Value::Array(items)) => {
+            items.iter().map(|item| item.as_str().map_or_else(|| item.to_string(), str::to_string)).collect::<Vec<_>>().join("; ")
+        }
         _ => body.chars().take(200).collect(),
     };
     MaintainerrError::Http { endpoint, status, message }
@@ -244,8 +239,9 @@ pub(super) fn read_version(status: u16, body: &str) -> Result<MaintainerrVersion
     }
     let status = match read_json::<Shape>(STATUS, status, body)? {
         Shape::Object(status) => status,
-        Shape::Encoded(text) => serde_json::from_str::<Status>(&text)
-            .map_err(|source| MaintainerrError::Parse { endpoint: STATUS, source })?,
+        Shape::Encoded(text) => {
+            serde_json::from_str::<Status>(&text).map_err(|source| MaintainerrError::Parse { endpoint: STATUS, source })?
+        }
     };
     Ok(MaintainerrVersion::parse(&status.version))
 }

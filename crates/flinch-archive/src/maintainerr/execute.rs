@@ -117,13 +117,7 @@ impl SyncReport {
 /// schedule never follows an exclusion that is still in place. With a
 /// simulated (dry-run) API every write is printed by the sink, and `owned` is
 /// left untouched.
-pub async fn execute<A: MaintainerrApi>(
-    api: &mut A,
-    plan: SyncPlan,
-    observed: &Observed,
-    owned: &mut OwnedState,
-    now: u64,
-) -> SyncReport {
+pub async fn execute<A: MaintainerrApi>(api: &mut A, plan: SyncPlan, observed: &Observed, owned: &mut OwnedState, now: u64) -> SyncReport {
     let simulated = api.simulated();
     if !simulated {
         owned.prune(observed);
@@ -157,20 +151,13 @@ async fn write<A: MaintainerrApi>(api: &mut A, action: &SyncAction) -> Result<()
     match action {
         SyncAction::RemoveExclusion { exclusion_id, .. } => api.remove_exclusion(*exclusion_id).await,
         SyncAction::Schedule { target, collection_id, .. } => api.add_to_collection(*collection_id, target).await,
-        SyncAction::Unschedule { target, collection_id, .. } => {
-            api.remove_from_collection(*collection_id, target.item_key()).await
-        }
+        SyncAction::Unschedule { target, collection_id, .. } => api.remove_from_collection(*collection_id, target.item_key()).await,
         SyncAction::Protect { target, .. } => api.add_exclusion(target).await,
     }
 }
 
 /// Write, read back, and record ownership only when the read-back agrees.
-async fn apply<A: MaintainerrApi>(
-    api: &mut A,
-    action: &SyncAction,
-    owned: &mut OwnedState,
-    now: u64,
-) -> Result<Outcome, MaintainerrError> {
+async fn apply<A: MaintainerrApi>(api: &mut A, action: &SyncAction, owned: &mut OwnedState, now: u64) -> Result<Outcome, MaintainerrError> {
     match action {
         SyncAction::RemoveExclusion { card_id, target, exclusion_id } => {
             write(api, action).await?;
@@ -185,10 +172,9 @@ async fn apply<A: MaintainerrApi>(
                 return Ok(Outcome::Unverified("the item is not a member"));
             }
             owned.protected.remove(card_id);
-            owned.scheduled.insert(
-                card_id.clone(),
-                ScheduledEntry { target: target.clone(), collection_id: *collection_id, added_at: now },
-            );
+            owned
+                .scheduled
+                .insert(card_id.clone(), ScheduledEntry { target: target.clone(), collection_id: *collection_id, added_at: now });
         }
         SyncAction::Unschedule { card_id, target, collection_id } => {
             write(api, action).await?;
@@ -202,8 +188,7 @@ async fn apply<A: MaintainerrApi>(
             // reuses an existing row, so only new ids are FLINCH's.
             let before: BTreeSet<i64> = api.exclusions(target.media_id()).await?.iter().map(|row| row.id).collect();
             write(api, action).await?;
-            let created: Vec<_> =
-                api.exclusions(target.media_id()).await?.into_iter().filter(|row| !before.contains(&row.id)).collect();
+            let created: Vec<_> = api.exclusions(target.media_id()).await?.into_iter().filter(|row| !before.contains(&row.id)).collect();
             if !created.iter().any(|row| row.media_server_id == target.item_key()) {
                 return Ok(Outcome::Unverified("no new row for the item"));
             }
@@ -214,11 +199,7 @@ async fn apply<A: MaintainerrApi>(
     Ok(Outcome::Done)
 }
 
-async fn is_member<A: MaintainerrApi>(
-    api: &mut A,
-    collection_id: i64,
-    target: &MaintainerrTarget,
-) -> Result<bool, MaintainerrError> {
+async fn is_member<A: MaintainerrApi>(api: &mut A, collection_id: i64, target: &MaintainerrTarget) -> Result<bool, MaintainerrError> {
     Ok(api.collection_members(collection_id).await?.iter().any(|key| key == target.item_key()))
 }
 

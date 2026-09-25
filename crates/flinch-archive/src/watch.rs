@@ -204,9 +204,7 @@ pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
             card.season_state = Some(SeasonState::Empty);
             continue;
         };
-        card.last_watched_days = entry
-            .last_watched_epoch
-            .map(|epoch| (now_epoch().saturating_sub(epoch)) as f32 / 86_400.0);
+        card.last_watched_days = entry.last_watched_epoch.map(|epoch| (now_epoch().saturating_sub(epoch)) as f32 / 86_400.0);
         match card.kind {
             crate::card::LibraryKind::Season => {
                 card.season_state = Some(if entry.progress >= 0.999 {
@@ -216,9 +214,7 @@ pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
                 } else {
                     SeasonState::Empty
                 });
-                card.episodes_watched = card.episodes_total.map(|total| {
-                    (total as f32 * entry.progress.clamp(0.0, 1.0)).round() as u32
-                });
+                card.episodes_watched = card.episodes_total.map(|total| (total as f32 * entry.progress.clamp(0.0, 1.0)).round() as u32);
             }
             crate::card::LibraryKind::Movie => {
                 card.is_watched = Some(entry.progress >= 0.999);
@@ -230,10 +226,7 @@ pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
 
 #[cfg(not(test))]
 fn now_epoch() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -286,10 +279,7 @@ mod tests {
     #[case::shared_but_fully_covered(health((true, true, true), (true, true), true), true)]
     #[case::shared_without_tautulli(health((true, true, true), (false, false), true), false)]
     #[case::shared_history_truncated(health((true, true, false), (true, true), true), false)]
-    fn admin_only_zeros_count_only_where_nobody_else_could_have_played_unseen(
-        #[case] health: EvidenceHealth,
-        #[case] evidence: bool,
-    ) {
+    fn admin_only_zeros_count_only_where_nobody_else_could_have_played_unseen(#[case] health: EvidenceHealth, #[case] evidence: bool) {
         assert_eq!(health.admin_zero_is_evidence(), evidence);
     }
 
@@ -306,11 +296,23 @@ mod tests {
         // 10 days ago, fully consumed
         watch.insert(
             "season-mvp".to_string(),
-            WatchEntry { id: "season-mvp".to_string(), last_watched_epoch: Some(now_epoch() - 864_000), progress: 1.0, rewatch_score: None, source: WatchSource::Plex },
+            WatchEntry {
+                id: "season-mvp".to_string(),
+                last_watched_epoch: Some(now_epoch() - 864_000),
+                progress: 1.0,
+                rewatch_score: None,
+                source: WatchSource::Plex,
+            },
         );
         watch.insert(
             "movie-rewatch".to_string(),
-            WatchEntry { id: "movie-rewatch".to_string(), last_watched_epoch: Some(now_epoch() - 864_000), progress: 1.0, rewatch_score: Some(0.9), source: WatchSource::Plex },
+            WatchEntry {
+                id: "movie-rewatch".to_string(),
+                last_watched_epoch: Some(now_epoch() - 864_000),
+                progress: 1.0,
+                rewatch_score: Some(0.9),
+                source: WatchSource::Plex,
+            },
         );
         apply(&mut cards, &watch);
 

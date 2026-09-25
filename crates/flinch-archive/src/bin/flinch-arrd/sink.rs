@@ -3,8 +3,7 @@
 //! plans exactly what an enforcing run would.
 
 use flinch_archive::maintainerr::{
-    CollectionInfo, ExclusionRow, HttpMaintainerr, MaintainerrApi, MaintainerrError, MaintainerrTarget,
-    MaintainerrVersion,
+    CollectionInfo, ExclusionRow, HttpMaintainerr, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion,
 };
 
 pub(super) enum Sink {

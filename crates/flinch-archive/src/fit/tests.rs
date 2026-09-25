@@ -154,7 +154,8 @@ fn rewatching_one_episode_does_not_complete_a_season() {
     // Eight plays of episode 1 used to count as eight episodes of an
     // eight-episode season: "completed", when the household saw one episode.
     let mut season = item("season-r", LibraryKind::Season, 500.0, vec![]);
-    season.plays = (1..=8).map(|week| Play { epoch: NOW - 400 * DAY + week * 7 * DAY, episode: Some(1), viewer: None, complete: true }).collect();
+    season.plays =
+        (1..=8).map(|week| Play { epoch: NOW - 400 * DAY + week * 7 * DAY, episode: Some(1), viewer: None, complete: true }).collect();
     let dataset = panel(&[season], &[90.0], 30.0);
     assert_eq!(dataset[0].card.season_state, Some(SeasonState::Partial));
     assert_eq!(dataset[0].card.episodes_watched, Some(1));
@@ -198,10 +199,14 @@ fn household_where(signal: &str, replayed_with_signal: bool) -> Vec<FitItem> {
             let carries = index % 2 == 0;
             let mut season = item(&format!("sonarr-{index}-s1"), LibraryKind::Season, 800.0, vec![]);
             season.show_title = Some(format!("Show {index}"));
-            season.plays = (1..=8).map(|episode| Play { epoch: first_watch + episode as u64 * DAY, episode: Some(episode), viewer: None, complete: true }).collect();
+            season.plays = (1..=8)
+                .map(|episode| Play { epoch: first_watch + episode as u64 * DAY, episode: Some(episode), viewer: None, complete: true })
+                .collect();
             if carries {
                 match signal {
-                    "rewatched" => season.plays.push(Play { epoch: first_watch + 100 * DAY, episode: Some(1), viewer: None, complete: true }),
+                    "rewatched" => {
+                        season.plays.push(Play { epoch: first_watch + 100 * DAY, episode: Some(1), viewer: None, complete: true })
+                    }
                     "viewer_breadth" => {
                         for (offset, name) in ["alice", "bob", "carol"].into_iter().enumerate() {
                             season.plays[offset].viewer = Some(Viewer::TautulliUser(name.to_string()));

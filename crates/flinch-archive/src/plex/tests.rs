@@ -140,19 +140,26 @@ fn copies_in_two_sections_merge_into_one_item_that_keeps_both_keys() {
     let target = movie_target("radarr-3", "Dune", Some(2021), ExternalIds { imdb: Some("tt1160419".into()), ..ExternalIds::default() });
     let resolution = resolve(&[target], &library);
     let ids = resolution.plex_ids();
-    assert_eq!(ids["radarr-3"], PlexIds { rating_key: "10".into(), season_rating_key: None, section_id: Some(1) }, "lowest section is primary");
+    assert_eq!(
+        ids["radarr-3"],
+        PlexIds { rating_key: "10".into(), season_rating_key: None, section_id: Some(1) },
+        "lowest section is primary"
+    );
     let history = [meta(r#"{"type":"movie","ratingKey":"40","viewedAt":1710000000}"#)];
     let played = history_entries(&[movie_target("radarr-3", "Dune", Some(2021), tmdb(438_631))], &resolution, &history);
     assert_eq!(played["radarr-3"].last_watched_epoch, Some(1_710_000_000), "plays of either copy join");
 }
 
 fn show_library(leaf_count: u32) -> PlexLibrary {
-    let shows = [meta(r#"{"ratingKey":"70","librarySectionID":2,"title":"Andor","year":2022,"leafCount":24,"Guid":[{"id":"tvdb://393189"}]}"#)];
+    let shows =
+        [meta(r#"{"ratingKey":"70","librarySectionID":2,"title":"Andor","year":2022,"leafCount":24,"Guid":[{"id":"tvdb://393189"}]}"#)];
     let seasons = [
         meta(&format!(
             r#"{{"type":"season","ratingKey":"71","parentRatingKey":"70","librarySectionID":2,"index":1,"leafCount":{leaf_count},"viewedLeafCount":6,"lastViewedAt":1690000000}}"#
         )),
-        meta(r#"{"type":"season","ratingKey":"72","parentRatingKey":"70","librarySectionID":2,"index":2,"leafCount":12,"viewedLeafCount":0}"#),
+        meta(
+            r#"{"type":"season","ratingKey":"72","parentRatingKey":"70","librarySectionID":2,"index":2,"leafCount":12,"viewedLeafCount":0}"#,
+        ),
     ];
     PlexLibrary::new(&[], &shows, &seasons)
 }
@@ -182,14 +189,10 @@ fn a_season_plex_has_not_finished_scanning_resolves_by_episode_ids_and_reads_the
     let library = show_library(12);
     let mut resolution = resolve(std::slice::from_ref(&target), &library);
     assert!(resolution.get("sonarr-7-s1").is_none());
-    assert_eq!(
-        resolution.unconfirmed_seasons(),
-        [Unconfirmed { target_id: "sonarr-7-s1".into(), show_rating_keys: vec!["70".into()] }]
-    );
+    assert_eq!(resolution.unconfirmed_seasons(), [Unconfirmed { target_id: "sonarr-7-s1".into(), show_rating_keys: vec!["70".into()] }]);
 
     let episode = |season: u32, id: u32| meta(&format!(r#"{{"type":"episode","parentIndex":{season},"Guid":[{{"id":"tvdb://{id}"}}]}}"#));
-    let files: Vec<serde_json::Value> =
-        (1..=13).map(|id| serde_json::json!({"seasonNumber": 1, "tvdbId": id, "hasFile": true})).collect();
+    let files: Vec<serde_json::Value> = (1..=13).map(|id| serde_json::json!({"seasonNumber": 1, "tvdbId": id, "hasFile": true})).collect();
     let ids = |plex_rows: Vec<PlexMetadata>| EpisodeIds {
         plex: HashMap::from([("70".to_string(), PlexEpisodes::from_rows(&plex_rows))]),
         sonarr: HashMap::from([("sonarr-7-s1".to_string(), SonarrEpisodes::from_rows(&files))]),
@@ -213,8 +216,12 @@ fn a_season_plex_sent_without_episode_counts_is_never_read_as_unwatched() {
     // Live shape: the section's season listing drops `leafCount` and
     // `viewedLeafCount`. Read as zero, the counts "differed", episode ids then
     // confirmed the season, and a fully watched season read as never played.
-    let shows = [meta(r#"{"ratingKey":"70","librarySectionID":2,"title":"Andor","year":2022,"leafCount":12,"viewedLeafCount":12,"Guid":[{"id":"tvdb://393189"}]}"#)];
-    let seasons = [meta(r#"{"type":"season","ratingKey":"71","parentRatingKey":"70","librarySectionID":2,"index":1,"viewCount":12,"lastViewedAt":1690000000}"#)];
+    let shows = [meta(
+        r#"{"ratingKey":"70","librarySectionID":2,"title":"Andor","year":2022,"leafCount":12,"viewedLeafCount":12,"Guid":[{"id":"tvdb://393189"}]}"#,
+    )];
+    let seasons = [meta(
+        r#"{"type":"season","ratingKey":"71","parentRatingKey":"70","librarySectionID":2,"index":1,"viewCount":12,"lastViewedAt":1690000000}"#,
+    )];
     let library = PlexLibrary::new(&[], &shows, &seasons);
     let target = season_target("sonarr-7-s1", "Andor", 1, 12, tvdb(393_189));
     let mut resolution = resolve(std::slice::from_ref(&target), &library);
@@ -237,11 +244,17 @@ fn episode_plays_join_by_season_key_or_show_key_and_number() {
     let target = season_target("sonarr-7-s1", "Andor", 1, 12, tvdb(393_189));
     let resolution = resolve(std::slice::from_ref(&target), &show_library(12));
     let history = [
-        meta(r#"{"type":"episode","ratingKey":"711","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":1,"viewedAt":100}"#),
+        meta(
+            r#"{"type":"episode","ratingKey":"711","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":1,"viewedAt":100}"#,
+        ),
         meta(r#"{"type":"episode","ratingKey":"712","grandparentRatingKey":"70","parentIndex":1,"index":2,"viewedAt":300}"#),
-        meta(r#"{"type":"episode","ratingKey":"721","parentRatingKey":"72","grandparentRatingKey":"70","parentIndex":2,"index":1,"viewedAt":900}"#),
+        meta(
+            r#"{"type":"episode","ratingKey":"721","parentRatingKey":"72","grandparentRatingKey":"70","parentIndex":2,"index":1,"viewedAt":900}"#,
+        ),
         // Same title, another show.
-        meta(r#"{"type":"episode","ratingKey":"911","grandparentRatingKey":"90","grandparentTitle":"Andor","parentIndex":1,"index":3,"viewedAt":950}"#),
+        meta(
+            r#"{"type":"episode","ratingKey":"911","grandparentRatingKey":"90","grandparentTitle":"Andor","parentIndex":1,"index":3,"viewedAt":950}"#,
+        ),
     ];
     let entries = history_entries(&[target], &resolution, &history);
     let s1 = &entries["sonarr-7-s1"];
@@ -308,7 +321,8 @@ fn a_keep_marker_on_any_copy_the_show_or_the_season_keeps_the_item() {
 
 #[test]
 fn newer_history_overrides_silent_item_state_but_not_newer_evidence() {
-    let entry = |epoch: Option<u64>, source| WatchEntry { id: "x".into(), last_watched_epoch: epoch, progress: 1.0, rewatch_score: None, source };
+    let entry =
+        |epoch: Option<u64>, source| WatchEntry { id: "x".into(), last_watched_epoch: epoch, progress: 1.0, rewatch_score: None, source };
     let mut entries = HashMap::from([("x".to_string(), entry(None, WatchSource::Plex))]);
     merge_history(&mut entries, HashMap::from([("x".to_string(), entry(Some(500), WatchSource::PlexHistory))]));
     assert_eq!(entries["x"].source, WatchSource::PlexHistory);
@@ -332,7 +346,6 @@ fn a_movie_with_only_a_last_viewed_stamp_counts_as_watched() {
     assert!(meta(r#"{"ratingKey":"1","title":"X","lastViewedAt":100}"#).movie_watch().is_watched());
     assert!(!meta(r#"{"ratingKey":"1","title":"X"}"#).movie_watch().is_watched());
 }
-
 
 prop_compose! {
     /// A small library where titles, years and ids collide often. The

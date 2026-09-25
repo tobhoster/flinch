@@ -129,19 +129,12 @@ pub fn resolve(targets: &[WatchTarget], library: &PlexLibrary) -> Resolution {
             resolution.matches.insert(target.id.clone(), found);
         }
     }
-    resolution.ambiguous_movies = seen
-        .into_iter()
-        .filter(|((movie, _, _), count)| *movie && *count > 1)
-        .map(|((_, title, year), _)| (title, year))
-        .collect();
+    resolution.ambiguous_movies =
+        seen.into_iter().filter(|((movie, _, _), count)| *movie && *count > 1).map(|((_, title, year), _)| (title, year)).collect();
     resolution
 }
 
-fn find<'a>(
-    items: &'a [PlexItem],
-    target: &WatchTarget,
-    unique: &dyn Fn(&WatchTarget, u32) -> bool,
-) -> Option<(&'a PlexItem, MatchedBy)> {
+fn find<'a>(items: &'a [PlexItem], target: &WatchTarget, unique: &dyn Fn(&WatchTarget, u32) -> bool) -> Option<(&'a PlexItem, MatchedBy)> {
     let mut by_id = items.iter().filter(|item| relate(&item.ids, &target.external) == Relation::Same);
     if let Some(first) = by_id.next() {
         // Two items claiming one id is a broken library, not a choice to make.

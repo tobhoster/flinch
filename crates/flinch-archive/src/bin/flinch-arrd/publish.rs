@@ -6,8 +6,8 @@ use anyhow::Result;
 use flinch_archive::daemon::{self, HistoryPoint, InflowCounts};
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::SyncSummary;
-use flinch_archive::watch::EvidenceHealth;
 use flinch_archive::outside::OutsideDeletion;
+use flinch_archive::watch::EvidenceHealth;
 use flinch_archive::{ItemSnapshot, ReconcileOutput, StatusSnapshot};
 
 /// The run's own facts, published beside the items.

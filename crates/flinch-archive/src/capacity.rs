@@ -34,8 +34,7 @@ mod status;
 mod volumes;
 
 pub use inflight::{
-    Credit, Eviction, EvictionLedger, HandedOver, HeldEviction, Occupancy, HELD_CREDIT_SECS, SETTLE_GRACE_SECS,
-    STALE_ON_DISK_SECS,
+    Credit, Eviction, EvictionLedger, HandedOver, HeldEviction, Occupancy, HELD_CREDIT_SECS, SETTLE_GRACE_SECS, STALE_ON_DISK_SECS,
 };
 pub use status::{CapacityStatus, VolumeStatus};
 pub use volumes::{App, AppDisks, LibraryVolumes, RecycleBin, RootFolder, Volume};
@@ -64,11 +63,7 @@ impl Watermarks {
     /// `None` outside 0 < release ≤ ceiling ≤ 1 (NaN included): a malformed
     /// threshold means ungoverned, never a guessed number.
     pub fn new(ceiling: f32, release: f32) -> Option<Self> {
-        let valid = ceiling.is_finite()
-            && release.is_finite()
-            && release > 0.0
-            && release <= ceiling
-            && ceiling <= 1.0;
+        let valid = ceiling.is_finite() && release.is_finite() && release > 0.0 && release <= ceiling && ceiling <= 1.0;
         valid.then(|| Self { ceiling: widen(ceiling), release: widen(release) })
     }
 
@@ -203,10 +198,7 @@ pub struct Latch {
 }
 
 pub fn read_latch(path: &std::path::Path) -> Latch {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
 }
 
 pub fn write_latch(path: &std::path::Path, latch: &Latch) -> std::io::Result<()> {
@@ -252,11 +244,7 @@ pub fn decide_capacity(
     pending: &BTreeMap<String, u64>,
 ) -> CapacityDecision {
     let Some(snapshot) = snapshot else {
-        return CapacityDecision {
-            action: CapacityAction::Unmeasured,
-            latch: before.clone(),
-            goals: BTreeMap::new(),
-        };
+        return CapacityDecision { action: CapacityAction::Unmeasured, latch: before.clone(), goals: BTreeMap::new() };
     };
     // Every latched volume is a key, even at a goal of 0 (waiting on its
     // recycle bin): "latched" and "has a goal key" mean the same thing.
@@ -277,10 +265,7 @@ pub fn decide_capacity(
         policy.unwatched_reclaim.enabled = true;
     }
     CapacityDecision {
-        action: CapacityAction::Evict {
-            goal_bytes: sum(goals.values().copied()),
-            armed_never_played: policy.unwatched_reclaim.enabled,
-        },
+        action: CapacityAction::Evict { goal_bytes: sum(goals.values().copied()), armed_never_played: policy.unwatched_reclaim.enabled },
         latch,
         goals,
     }

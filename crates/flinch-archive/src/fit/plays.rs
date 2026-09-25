@@ -60,7 +60,10 @@ impl PlayLog {
             let (Some(epoch), Some(key)) = (row.viewed_at, RowKey::plex(row)) else { continue };
             let viewer = row.account_id.map(Viewer::PlexAccount);
             // Plex writes a history row when an item is scrobbled as watched.
-            log.push(key, Play { epoch, episode: row.index.filter(|_| row.media_type.eq_ignore_ascii_case("episode")), viewer, complete: true });
+            log.push(
+                key,
+                Play { epoch, episode: row.index.filter(|_| row.media_type.eq_ignore_ascii_case("episode")), viewer, complete: true },
+            );
         }
         for row in tautulli {
             let (Some(epoch), Some(key)) = (row.epoch(), row.key()) else { continue };
@@ -222,16 +225,26 @@ mod tests {
     fn plays_join_by_rating_key_and_never_by_title() {
         let log = PlayLog::new(
             &[
-                plex(r#"{"type":"episode","ratingKey":"701","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":1,"grandparentTitle":"Andor","viewedAt":100}"#),
-                plex(r#"{"type":"episode","ratingKey":"721","parentRatingKey":"72","grandparentRatingKey":"70","parentIndex":2,"index":1,"grandparentTitle":"Andor","viewedAt":200}"#),
+                plex(
+                    r#"{"type":"episode","ratingKey":"701","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":1,"grandparentTitle":"Andor","viewedAt":100}"#,
+                ),
+                plex(
+                    r#"{"type":"episode","ratingKey":"721","parentRatingKey":"72","grandparentRatingKey":"70","parentIndex":2,"index":1,"grandparentTitle":"Andor","viewedAt":200}"#,
+                ),
                 // Same show title, another show: a different ratingKey.
-                plex(r#"{"type":"episode","ratingKey":"901","parentRatingKey":"91","grandparentRatingKey":"90","parentIndex":1,"index":1,"grandparentTitle":"Andor","viewedAt":300}"#),
+                plex(
+                    r#"{"type":"episode","ratingKey":"901","parentRatingKey":"91","grandparentRatingKey":"90","parentIndex":1,"index":1,"grandparentTitle":"Andor","viewedAt":300}"#,
+                ),
                 plex(r#"{"type":"movie","ratingKey":"9","title":"Heat","year":1995,"viewedAt":400}"#),
                 // A row with no play timestamp is not a play.
-                plex(r#"{"type":"episode","ratingKey":"702","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":2}"#),
+                plex(
+                    r#"{"type":"episode","ratingKey":"702","parentRatingKey":"71","grandparentRatingKey":"70","parentIndex":1,"index":2}"#,
+                ),
             ],
             &[
-                tautulli(r#"{"media_type":"episode","rating_key":"703","grandparent_rating_key":"70","parent_media_index":"1","media_index":"3","date":"150","percent_complete":"100"}"#),
+                tautulli(
+                    r#"{"media_type":"episode","rating_key":"703","grandparent_rating_key":"70","parent_media_index":"1","media_index":"3","date":"150","percent_complete":"100"}"#,
+                ),
                 // Stopped at 20%: still a play, not a finished one.
                 tautulli(r#"{"media_type":"movie","rating_key":"9","title":"Heat","date":"500","percent_complete":"20"}"#),
             ],
@@ -281,7 +294,10 @@ mod tests {
             "a play on the as-of date itself is the future, not evidence"
         );
         let sampled = [play(10 * DAY, Some(1), None), Play { complete: false, ..play(40 * DAY, Some(1), None) }];
-        assert!(!PlayEvidence::as_of(LibraryKind::Season, &sampled, &sampled, 50 * DAY).rewatched, "starting it again is not watching it again");
+        assert!(
+            !PlayEvidence::as_of(LibraryKind::Season, &sampled, &sampled, 50 * DAY).rewatched,
+            "starting it again is not watching it again"
+        );
 
         let movie_twice = [play(10 * DAY, None, None), play(40 * DAY, None, None)];
         assert!(PlayEvidence::as_of(LibraryKind::Movie, &movie_twice, &movie_twice, 50 * DAY).rewatched);
@@ -293,10 +309,8 @@ mod tests {
 
     #[test]
     fn viewers_are_counted_within_one_source_never_summed_across_them() {
-        let alice_everywhere = [
-            play(DAY, Some(1), Some(Viewer::PlexAccount(1))),
-            play(DAY, Some(1), Some(Viewer::TautulliUser("alice".into()))),
-        ];
+        let alice_everywhere =
+            [play(DAY, Some(1), Some(Viewer::PlexAccount(1))), play(DAY, Some(1), Some(Viewer::TautulliUser("alice".into())))];
         assert_eq!(PlayEvidence::as_of(LibraryKind::Season, &[], &alice_everywhere, 2 * DAY).viewers, 1);
 
         let household = [
