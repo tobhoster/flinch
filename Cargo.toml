@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Test-only: table-driven cases (rstest) and invariants over generated inputs
 # (proptest). Dev-dependencies only; never in a shipped binary.
-rstest = "0.26"
+rstest = "0.27"
 proptest = "1"
 
 [profile.release]
