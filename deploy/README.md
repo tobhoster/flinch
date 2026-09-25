@@ -29,7 +29,7 @@ With the published image:
 
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo -e FLINCH_WEB_TOKEN=demo \
-  ghcr.io/tobhoster/flinch:0.1.0 sh -c 'flinch-demo && flinch-web'
+  ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
 ```
 
 Unlock the UI with `demo`.
@@ -67,7 +67,7 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 
 | Tag | What it is |
 | --- | --- |
-| `0.1.0` | a release; `deploy/kustomization.yaml` pins one |
+| `0.1.1` | a release; `deploy/kustomization.yaml` pins one |
 | `0.1`, `latest` | the newest release of that line, or overall |
 | `edge` | the main branch |
 | `sha-<commit>` | one build of main |
@@ -77,8 +77,8 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 From the repository root:
 
 ```bash
-docker build -t registry.example.com/flinch:0.1.0 -f deploy/Dockerfile .
-docker push registry.example.com/flinch:0.1.0
+docker build -t registry.example.com/flinch:0.1.1 -f deploy/Dockerfile .
+docker push registry.example.com/flinch:0.1.1
 ```
 
 Then point `images:` in `deploy/kustomization.yaml` at it. The manifests use
@@ -417,7 +417,7 @@ namespace: media
 resources: ["../base"]
 components: ["../ingress"]   # only if you publish the UI through an Ingress
 images:
-  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.1.0" }
+  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.1.1" }
 patches:
   - target: { kind: Ingress, name: flinch-web }
     patch: |
