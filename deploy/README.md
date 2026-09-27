@@ -218,10 +218,10 @@ inactive, of the wrong type, bound to another Plex library, or whose *arr
 action frees nothing or is one Maintainerr refuses for its type; with
 enforcement off, every write is only printed. An item nobody finished goes
 only to a Leaving Soon collection that is active, shown in Plex and has a
-window of at least one day; while none validates, it waits instead of going
-to a delete collection. FLINCH releases only exclusions it created, and only
-for an item proven gone: no file in Radarr/Sonarr and absent from a complete
-Plex listing.
+window of at least one day; while none is named or validates, it waits
+instead of going to a delete collection. FLINCH releases only exclusions it
+created, and only for an item proven gone: no file in Radarr/Sonarr and
+absent from a complete Plex listing.
 
 ## Maintainerr setup
 
@@ -248,8 +248,8 @@ names are in Settings > Maintainerr collections.
    Maintainerr only" off. A collection with the action "Do nothing" never
    deletes: Maintainerr skips it. Turn on the overlay if the leave date should
    show on the poster. Until both validate, the status names what is wrong and
-   unwatched evictions wait. A blank title sends them straight to the delete
-   collections instead.
+   unwatched evictions wait. A blank title holds never-played reclaim off, so
+   nothing unwatched is handed over or counts toward the capacity goal.
 3. If Seerr is configured in Maintainerr, turn on **Force delete Seerr
    request** on every collection FLINCH uses. Otherwise a removed title's
    Seerr request stays until Seerr's availability sync notices, and it cannot

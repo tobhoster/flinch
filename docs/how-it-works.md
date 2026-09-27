@@ -129,11 +129,28 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
   collections). Plex shows it on the home screen, and Maintainerr
   deletes the item only after the collection's window. Play it during the
   window and FLINCH takes it back on the next cycle.
-- **A warning or nothing.** If the Leaving Soon collection is missing, inactive,
-  set to "Do nothing", hidden from Plex ("Keep in Maintainerr only" on, or
-  neither "Show on Plex home" nor library recommended) or without a window
-  ("Take action after days"), the status says so and the unwatched items wait.
-  They are never sent to a delete collection instead.
+- **A warning or nothing.** If the Leaving Soon title is blank, or the
+  collection is missing, inactive, set to "Do nothing", hidden from Plex
+  ("Keep in Maintainerr only" on, or neither "Show on Plex home" nor library
+  recommended) or without a window ("Take action after days"), the status says
+  so and the unwatched items wait. They are never sent to a delete collection
+  instead. While the title is blank, never-played reclaim is held off too, so
+  unwatched items never count toward a disk's capacity goal and watched items
+  free the space instead. An item already waiting in a Leaving Soon
+  collection that breaks later stays in it, and Maintainerr still acts on
+  that collection's schedule. Clearing or renaming the title takes what waits
+  in the old collection back out; those windows start over once the newly
+  named one takes the items.
+- **Out of a delete collection at once.** An unwatched item that FLINCH
+  handed to a delete collection earlier, for example while it still counted
+  as watched, is taken back out on the next cycle. It does not wait for its
+  move to Leaving Soon, which the per-run caps may hold back. The same holds
+  when the Leaving Soon title is also a delete collection's title and that
+  collection does not warn (no window, or hidden from Plex). FLINCH takes out
+  only memberships it recorded: an unwatched item in a delete collection
+  without such a record (the record was lost in a restart, or someone else
+  added it) is kept there by an exclusion instead, and the Maintainerr card
+  names it until it is out of that collection. Then it goes to Leaving Soon.
 - **One title, both libraries.** Make one collection per library, both titled
   `Leaving Soon`: the movie one of type *movie*, the TV one of type *season*.
   Each kind uses its own. A TV collection made with the *show* type is
@@ -459,3 +476,7 @@ The rest fail closed: the affected items are kept, never deleted.
 - One Radarr and one Sonarr instance are supported.
 - Recyclarr tiers are advice: moving items between quality profiles is a
   separate, explicit step.
+- While a named Leaving Soon collection is missing or broken, armed
+  never-played items still count toward a disk's goal and wait at the
+  hand-off, so the disk can stay over its ceiling until the collection is
+  fixed; the Maintainerr card names the problem.

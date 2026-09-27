@@ -15,6 +15,8 @@ mod wire;
 pub(super) const GIB: u64 = 1 << 30;
 pub(super) const MOVIES: i64 = 10;
 pub(super) const SEASONS: i64 = 20;
+pub(super) const LEAVING_MOVIES: i64 = 50;
+pub(super) const LEAVING_SEASONS: i64 = 51;
 
 pub(super) fn movie_ids(rating_key: &str) -> PlexIds {
     PlexIds { rating_key: rating_key.to_string(), season_rating_key: None, section_id: Some(1) }

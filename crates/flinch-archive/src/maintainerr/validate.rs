@@ -26,7 +26,9 @@ pub struct CollectionTitles {
     pub movie: String,
     pub season: String,
     /// Leaving Soon: one title for both kinds, each bound to its own Plex
-    /// library. Blank sends stale evictions to the delete collections.
+    /// library. Blank holds unwatched (announced) evictions: they are never
+    /// sent to the delete collections instead, and the daemon holds
+    /// never-played reclaim off (see [`crate::daemon::NeverPlayedHold`]).
     pub leaving: String,
 }
 
@@ -39,10 +41,10 @@ impl CollectionTitles {
         }
     }
 
-    /// The route an eviction takes: an announced one goes to Leaving Soon
-    /// whenever the operator named that collection.
+    /// The route an eviction takes: an announced one goes to Leaving Soon,
+    /// and waits while that collection is unnamed or unusable.
     pub fn route(&self, announced: bool) -> Route {
-        if announced && !self.leaving.trim().is_empty() {
+        if announced {
             Route::LeavingSoon
         } else {
             Route::Delete
@@ -59,6 +61,8 @@ impl CollectionTitles {
 /// Why a kind's collection cannot take items.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionProblem {
+    /// The title in Settings is blank, so it names no collection.
+    Untitled,
     NotFound,
     WrongType {
         found: String,
@@ -92,11 +96,19 @@ impl fmt::Display for Misconfigured {
             Route::Delete => "",
             Route::LeavingSoon => "Leaving Soon ",
         };
-        write!(f, "{label}{kind} collection {:?}", self.title)?;
+        write!(f, "{label}{kind} collection")?;
+        if !self.title.trim().is_empty() {
+            write!(f, " {:?}", self.title)?;
+        }
         if let Some(id) = self.collection_id {
             write!(f, " (id {id})")?;
         }
         match (&self.problem, self.route) {
+            (CollectionProblem::Untitled, Route::Delete) => write!(f, " has no title: name it in Settings → Maintainerr collections"),
+            (CollectionProblem::Untitled, Route::LeavingSoon) => write!(
+                f,
+                " has no title: name it in Settings → Maintainerr collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
+            ),
             (CollectionProblem::NotFound, Route::Delete) => write!(f, " not found: create it in Maintainerr and bind a delete rule to it"),
             (CollectionProblem::NotFound, Route::LeavingSoon) => write!(
                 f,
@@ -185,10 +197,13 @@ pub(super) fn resolve<'a>(
     kind: LibraryKind,
     route: Route,
 ) -> Result<Vec<&'a CollectionInfo>, Vec<Misconfigured>> {
-    let named: Vec<&CollectionInfo> =
-        collections.iter().filter(|c| titles.names(kind, route, c) && (route == Route::Delete || serves(c, kind))).collect();
     let misconfigured =
         |collection_id, problem| Misconfigured { kind, route, title: titles.title(kind, route).to_string(), collection_id, problem };
+    if titles.title(kind, route).trim().is_empty() {
+        return Err(vec![misconfigured(None, CollectionProblem::Untitled)]);
+    }
+    let named: Vec<&CollectionInfo> =
+        collections.iter().filter(|c| titles.names(kind, route, c) && (route == Route::Delete || serves(c, kind))).collect();
     if named.is_empty() {
         return Err(vec![misconfigured(None, CollectionProblem::NotFound)]);
     }

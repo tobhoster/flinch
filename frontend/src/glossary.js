@@ -41,7 +41,7 @@ export const GLOSSARY = {
   },
   never_played: {
     term: 'Never-played reclaim',
-    body: 'Lets items nobody ever played become eligible once they have been on disk long enough and pass their own floor. Off by default; “While evicting” arms it only while a disk is over the ceiling.',
+    body: 'Lets items nobody finished become eligible (a movie nobody finished, even if it was started; a season nobody played at all) once they have been on disk long enough and pass their own floor. Its switch is off by default, and “While evicting” arms it only while eviction is latched on a disk (from the ceiling down to the release mark). Neither runs it while the watch evidence is incomplete or the Leaving Soon title is blank.',
   },
   dry_run: {
     term: 'Dry run and Enforced',
@@ -81,7 +81,11 @@ export const GLOSSARY = {
   },
   held_evidence: {
     term: 'Waiting for complete evidence',
-    body: 'Never played, and never-played reclaim would take it, but a watch source was not read completely this run (or Tautulli does not keep every user’s and library’s history), so “never played” cannot be trusted yet.',
+    body: 'Nobody finished it (a season: nobody played it) and never-played reclaim is on or armed, but it is held because a watch source was not read completely this run (or Tautulli does not keep every user’s and library’s history), so “nobody finished” cannot be trusted yet. Once that hold lifts, the item still needs the rule’s own floor and time on disk.',
+  },
+  held_untitled: {
+    term: 'Waiting for a Leaving Soon title',
+    body: 'Nobody finished it (a season: nobody played it) and never-played reclaim is on or armed, but it is held because the Leaving Soon title in Settings is blank, so it could not be announced before it goes. Name the Leaving Soon collection in Settings → Maintainerr collections. Once that hold lifts, the item still needs the rule’s own floor and time on disk.',
   },
   held_reserve: {
     term: 'Eligible reserve',
@@ -105,7 +109,7 @@ export const GLOSSARY = {
   },
   evidence_complete: {
     term: 'Complete watch evidence',
-    body: 'Never-played reclaim only runs when every configured watch source was read completely this run, and Tautulli keeps history for every active user and for every library FLINCH manages. If one is missing, incomplete or not kept, “never played” cannot be trusted, so those items are held.',
+    body: 'Never-played reclaim only runs when every configured watch source was read completely this run, and Tautulli keeps history for every active user and for every library FLINCH manages. If one is missing, incomplete or not kept, “nobody finished” cannot be trusted, so those items are held.',
   },
   maintainerr: {
     term: 'Maintainerr sync',
@@ -113,7 +117,7 @@ export const GLOSSARY = {
   },
   leaving_soon: {
     term: 'Leaving Soon',
-    body: 'Items nobody finished go here first: a Maintainerr collection Plex shows on the home screen, which deletes an item only after its window (14 days is a good start). Play one during the window and FLINCH takes it back. Watched items and duplicates skip it and go straight to the delete collections. While the collection is missing, hidden from Plex or has no window, unwatched items are held, never deleted without a warning.',
+    body: 'Items nobody finished go here first: a Maintainerr collection Plex shows on the home screen, which deletes an item only after its window (14 days is a good start). Play one during the window and FLINCH takes it back. Watched items and duplicates skip it and go straight to the delete collections. While the collection is missing, hidden from Plex or has no window, new unwatched items are held, never deleted without a warning; items already waiting in it stay, and Maintainerr still acts on its schedule. While its title is blank, never-played reclaim is held off: unwatched items stay and do not count toward the capacity goal, so watched items free the space.',
   },
   unresolved: {
     term: 'Not matched by id',
@@ -144,5 +148,5 @@ export const GLOSSARY_SECTIONS = [
   ['Evidence', ['evidence', 'evidence_complete']],
   ['Maintainerr', ['maintainerr', 'leaving_soon', 'unresolved', 'operator_keeps', 'released_gone', 'outside_deletions']],
   ['Quality', ['quality_tier']],
-  ['Why items are held', ['held_reserve', 'not_governed', 'held_no_evidence', 'held_evidence', 'held_yours', 'held_newest', 'held_no_date', 'held_floor', 'held_empty', 'held_excluded']],
+  ['Why items are held', ['held_reserve', 'not_governed', 'held_no_evidence', 'held_evidence', 'held_untitled', 'held_yours', 'held_newest', 'held_no_date', 'held_floor', 'held_empty', 'held_excluded']],
 ];

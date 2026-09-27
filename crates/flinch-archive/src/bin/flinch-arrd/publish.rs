@@ -3,7 +3,7 @@
 
 use super::state_dir;
 use anyhow::Result;
-use flinch_archive::daemon::{self, HistoryPoint, InflowCounts};
+use flinch_archive::daemon::{self, HistoryPoint, InflowCounts, NeverPlayedHold};
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::SyncSummary;
 use flinch_archive::outside::OutsideDeletion;
@@ -25,12 +25,29 @@ pub(super) struct Run<'a> {
     /// What arming never-played reclaim would add: items and GiB.
     pub(super) shadow: (u64, f32),
     pub(super) health: EvidenceHealth,
+    /// Why never-played reclaim is held off this cycle, if it is.
+    pub(super) never_played_hold: Option<NeverPlayedHold>,
+    /// Whether the settings ask never-played reclaim to run this cycle.
+    pub(super) never_played_requested: bool,
     /// Files something other than FLINCH removed lately.
     pub(super) outside: Vec<OutsideDeletion>,
 }
 
 pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
-    let Run { report, sync, governance, handed, enforcing, interval_s, model, shadow: (shadow_items, shadow_gib), health, outside } = run;
+    let Run {
+        report,
+        sync,
+        governance,
+        handed,
+        enforcing,
+        interval_s,
+        model,
+        shadow: (shadow_items, shadow_gib),
+        health,
+        never_played_hold,
+        never_played_requested,
+        outside,
+    } = run;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let dir = state_dir();
     let status = StatusSnapshot {
@@ -55,6 +72,8 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         last_error: None,
         last_error_at: None,
         evidence_problems: health.problems().iter().map(|problem| problem.to_string()).collect(),
+        never_played_hold,
+        never_played_requested,
         evidence: health,
         sync,
         fit: flinch_archive::fit::adopt::read_status(&dir),

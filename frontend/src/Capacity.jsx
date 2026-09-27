@@ -25,12 +25,26 @@ function phaseOf(v) {
 const PHASE_TONE = { idle: 'ok', freeing: 'warn', waiting: 'warn', short: 'bad' };
 
 /**
+ * What to do about a short disk while the daemon holds never-played reclaim
+ * off (`status.never_played_hold`): arming it would change nothing. `held` when
+ * the settings ask for the rule (`status.never_played_requested`), so lifting
+ * the hold runs it; `off` when they do not, so lifting it alone frees nothing.
+ */
+const HELD_HINT = {
+  leaving_soon_untitled: {
+    held: ' Name the Leaving Soon collection in Settings or review holds.',
+    off: ' Name a Leaving Soon collection, then arm never-played in Settings, or review holds.',
+  },
+  incomplete_evidence: { held: ' Review holds.', off: ' Review holds.' },
+};
+
+/**
  * Disk use against the watermarks. Crossing the ceiling latches eviction until
  * usage is back at the release mark; otherwise nothing is deleted. The daemon
  * only publishes `capacity` when it measured the *arr disks, so there is no
  * empty state.
  */
-export default function Capacity({ c, eligible }) {
+export default function Capacity({ c, eligible, hold, requested }) {
   const phase = phaseOf(c);
   const tone = PHASE_TONE[phase];
   const pending = c.pending_bytes || 0;
@@ -39,6 +53,7 @@ export default function Capacity({ c, eligible }) {
   const untracked = c.untracked_bytes || 0;
   const held = volumes.flatMap((v) => v.held || []).sort((a, b) => b.bytes - a.bytes);
   const heldUntil = held.reduce((latest, h) => Math.max(latest, h.until || 0), 0);
+  const holdHint = HELD_HINT[hold]?.[requested ? 'held' : 'off'];
   return (
     <section className="rounded-lg border border-line bg-ink-900 px-4 py-3">
       <SectionTitle hint={c.latched ? 'evicting' : 'idle'} term="watermarks">Storage</SectionTitle>
@@ -76,7 +91,7 @@ export default function Capacity({ c, eligible }) {
           <span className="text-state-bad">
             Needs <span className="num">{GiB(c.goal_bytes)} GiB</span> but only <span className="num">{GiB(eligible)} GiB</span> is eligible.
           </span>
-          {c.armed_never_played ? ' Review holds.' : ' Arm never-played in Settings or review holds.'} <Explain term="eligible" />
+          {holdHint || (c.armed_never_played ? ' Review holds.' : ' Arm never-played in Settings or review holds.')} <Explain term="eligible" />
         </>}
       </p>
       {phase === 'idle' && untracked > 0 && (

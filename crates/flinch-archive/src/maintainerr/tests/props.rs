@@ -1,14 +1,18 @@
 //! Invariants of the planner and executor over generated libraries: mixes of
-//! movies and seasons, resolved or not, kept, evicted, neither or gone from
-//! the library and Plex, with operator exclusions, FLINCH-owned exclusions or
-//! memberships, and members added by operator rules.
+//! movies and seasons, resolved or not, kept, evicted (announced or not),
+//! neither or gone from the library and Plex, with operator exclusions,
+//! FLINCH-owned exclusions or memberships, and members added by operator
+//! rules, with or without a Leaving Soon collection named.
 
 use super::super::{
-    execute, observe, plan_sync, Caps, Desired, Observed, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncAction, SyncItem,
-    SyncPlan,
+    execute, observe, plan_sync, Caps, CollectionTitles, Desired, Observed, Outcome, OwnedState, ProtectedEntry, ScheduledEntry,
+    SyncAction, SyncItem, SyncPlan,
 };
 use super::fake::Fake;
-use super::{current, item, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS};
+use super::{
+    current, item, leaving, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, LEAVING_MOVIES, LEAVING_SEASONS,
+    MOVIES, SEASONS,
+};
 use crate::card::LibraryKind;
 use proptest::prelude::*;
 use std::collections::BTreeSet;
@@ -41,6 +45,8 @@ struct Card {
     rule_member: bool,
     /// Left the library and Plex: not a card any more, only owned state.
     gone: bool,
+    /// An eviction nobody finished: it may leave only through Leaving Soon.
+    announced: bool,
 }
 
 fn card() -> impl Strategy<Value = Card> {
@@ -55,8 +61,9 @@ fn card() -> impl Strategy<Value = Card> {
         owned,
         prop::bool::weighted(0.2),
         prop::bool::weighted(0.3),
+        prop::bool::weighted(0.3),
     )
-        .prop_map(|(season, resolved, decision, gib, operator_row, owned, rule_member, gone)| Card {
+        .prop_map(|(season, resolved, decision, gib, operator_row, owned, rule_member, gone, announced)| Card {
             season,
             resolved,
             decision,
@@ -65,6 +72,7 @@ fn card() -> impl Strategy<Value = Card> {
             owned,
             rule_member,
             gone: gone && matches!(decision, Decision::Neither),
+            announced: announced && matches!(decision, Decision::Evict),
         })
 }
 
@@ -76,14 +84,18 @@ struct World {
     operator_rows: BTreeSet<i64>,
 }
 
-fn world(cards: &[Card]) -> World {
-    let mut fake = Fake::new(current(), valid_collections());
+/// The Leaving Soon collections always exist in Maintainerr; Settings names
+/// them only when `leaving_soon`.
+fn world(cards: &[Card], leaving_soon: bool) -> World {
+    let collections = [valid_collections(), vec![leaving(LEAVING_MOVIES, "movie", "1"), leaving(LEAVING_SEASONS, "season", "2")]].concat();
+    let mut fake = Fake::new(current(), collections);
     let mut owned = OwnedState::default();
+    let leaving_title = if leaving_soon { "Leaving Soon" } else { "" };
     let mut desired = Desired {
         protect: Vec::new(),
         evict: Vec::new(),
         announced: Default::default(),
-        collections: titles(),
+        collections: CollectionTitles { leaving: leaving_title.to_string(), ..titles() },
         gone: BTreeSet::new(),
         seerr_configured: false,
     };
@@ -121,6 +133,9 @@ fn world(cards: &[Card]) -> World {
             continue;
         }
         let card = item(&id, kind, spec.resolved.then_some(plex), spec.gib * GIB);
+        if spec.announced {
+            desired.announced.insert(id);
+        }
         match spec.decision {
             Decision::Protect => desired.protect.push(card.clone()),
             Decision::Evict => desired.evict.push(card.clone()),
@@ -154,8 +169,9 @@ proptest! {
         cards in prop::collection::vec(card(), 0..10),
         max_items in 0usize..5,
         max_gib in 0u64..80,
+        leaving_soon in any::<bool>(),
     ) {
-        let mut world = world(&cards);
+        let mut world = world(&cards, leaving_soon);
         let caps = Caps::new(max_items, max_gib);
         let (_, plan) = plan(&mut world, &caps);
 
@@ -192,8 +208,9 @@ proptest! {
         cards in prop::collection::vec(card(), 0..10),
         max_items in 0usize..5,
         max_gib in 0u64..80,
+        leaving_soon in any::<bool>(),
     ) {
-        let mut world = world(&cards);
+        let mut world = world(&cards, leaving_soon);
         let caps = Caps::new(max_items, max_gib);
         let (observed, first) = plan(&mut world, &caps);
         let deferred: BTreeSet<String> = first.deferred.iter().cloned().collect();
@@ -204,6 +221,24 @@ proptest! {
         prop_assert!(world.operator_rows.is_subset(&rows), "an operator row was removed");
         let both = world.owned.protected.keys().filter(|id| world.owned.scheduled.contains_key(*id)).count();
         prop_assert_eq!(both, 0, "a card is both protected and scheduled");
+        let warns = |collection_id: i64| leaving_soon && [LEAVING_MOVIES, LEAVING_SEASONS].contains(&collection_id);
+        let unwarned =
+            world.owned.scheduled.iter().filter(|(id, entry)| world.desired.announced.contains(*id) && !warns(entry.collection_id)).count();
+        prop_assert_eq!(unwarned, 0, "a card nobody finished is outside Leaving Soon");
+        // A membership FLINCH does not own (an operator rule's) stays, but the
+        // card nobody finished is kept by an exclusion while it lasts.
+        let exposed = world
+            .desired
+            .evict
+            .iter()
+            .filter(|item| world.desired.announced.contains(&item.card_id))
+            .filter_map(SyncItem::target)
+            .filter(|target| {
+                [MOVIES, SEASONS].iter().any(|id| world.fake.members.get(id).is_some_and(|m| m.contains(target.item_key())))
+                    && !world.fake.rows.iter().any(|row| target.is_covered_by(row))
+            })
+            .count();
+        prop_assert_eq!(exposed, 0, "a card nobody finished sits unexcluded in a delete collection");
 
         let (_, second) = plan(&mut world, &caps);
         let acted: BTreeSet<String> = second.actions.iter().map(|a| a.card_id().to_string()).collect();
