@@ -106,15 +106,16 @@ floor is ever touched.
   never-played floor as well.
 - **Watch state is external and fail-closed.** *arr knows files; only the media
   server knows "watched". A movie counts as watched when Plex counted a view or
-  Tautulli recorded a stream of at least 85%, or one with no percentage; a play
-  that stopped sooner counts as started, not watched. Where Plex's and
-  Tautulli's records disagree, the newest decides, so a later start that Plex
-  did not count outweighs an earlier finished play. Missing or partial evidence
-  protects; it never deletes. Never-played reclaim arms only when every
-  configured watch source was read completely this cycle. Even then, an item
-  needs positive evidence: a watch source that reported on it and found no
-  finished play of a movie, or no play at all of a season. An item no source
-  reported on is never reclaimed as unplayed, however large or old it is.
+  Tautulli recorded a stream of at least 85%; a play that stopped sooner, or a
+  stream whose percentage Tautulli could not report, counts as started, not
+  watched. Where Plex's and Tautulli's records disagree, the newest decides, so
+  a later start that Plex did not count outweighs an earlier finished play.
+  Missing or partial evidence protects; it never deletes. Never-played reclaim
+  arms only when every configured watch source was read completely this cycle.
+  Even then, an item needs positive evidence: a watch source that reported on it
+  and found no finished play of a movie, or no play at all of a season. An item
+  no source reported on is never reclaimed as unplayed, however large or old it
+  is.
 - **Dwell starts when the file arrived**, not when the title was requested.
 - **Never a delete path for a model.** A model never deletes and never
   overrides a protection. Its P(safe), capped at the priors, is checked

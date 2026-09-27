@@ -84,16 +84,23 @@ impl TautulliRow {
         self.parent_media_index.parse().ok()
     }
 
-    /// Whether this stream counts as a finished watch (most of the runtime).
-    /// Anything less is still a play — the household touched it — but it does
-    /// not complete an episode or a movie.
-    pub fn is_watch(&self) -> bool {
-        self.percent_complete.parse::<f32>().map(|percent| percent >= 85.0).unwrap_or(true)
+    /// `percent_complete` as a number, when it reads as a finite one.
+    fn percent(&self) -> Option<f32> {
+        self.percent_complete.parse::<f32>().ok().filter(|percent| percent.is_finite())
     }
 
-    /// Share of the runtime streamed, 0.0-1.0; unknown counts as finished.
+    /// Whether this stream counts as a finished watch (most of the runtime).
+    /// Anything less is still a play — the household touched it — but it does
+    /// not complete an episode or a movie. A missing or unreadable percent
+    /// proves no finish, so it reads as a stream that stopped early.
+    pub fn is_watch(&self) -> bool {
+        self.percent().is_some_and(|percent| percent >= 85.0)
+    }
+
+    /// Share of the runtime streamed, 0.0-1.0; a missing or unreadable percent
+    /// counts as half, a stream that stopped early.
     pub fn fraction(&self) -> f32 {
-        self.percent_complete.parse::<f32>().map(|percent| (percent / 100.0).clamp(0.0, 1.0)).unwrap_or(1.0)
+        self.percent().map_or(0.5, |percent| (percent / 100.0).clamp(0.0, 1.0))
     }
 
     /// Who streamed it, when Tautulli says.

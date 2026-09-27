@@ -168,6 +168,31 @@ fn a_stream_is_a_watch_only_past_most_of_the_runtime() {
     assert!(!movie_stream("1", 1, 12).is_watch(), "stopped at 12% is not a watch");
 }
 
+#[rstest]
+#[case::a_finished_stream(r#","percent_complete":"100""#, true)]
+#[case::an_empty_percent(r#","percent_complete":"""#, false)]
+#[case::no_percent("", false)]
+#[case::a_null_percent(r#","percent_complete":null"#, false)]
+#[case::an_unreadable_percent(r#","percent_complete":"n/a""#, false)]
+#[case::an_infinite_percent(r#","percent_complete":"inf""#, false)]
+fn only_a_readable_percent_finishes_a_stream(#[case] percent_field: &str, #[case] finished: bool) {
+    let targets = [target("radarr-1", 1, 400)];
+    let resolution = resolved(&targets);
+    let movie = stream(&format!(r#"{{"media_type":"movie","rating_key":"1","title":"Film","date":"{}"{percent_field}}}"#, NOW - 3 * DAY));
+    assert_eq!(movie.is_watch(), finished);
+    assert_eq!(movie.fraction(), if finished { 1.0 } else { 0.5 }, "an unknown share counts as half");
+    let progress = plays_by_target(&targets, &resolution, std::slice::from_ref(&movie))["radarr-1"].progress;
+    assert!(progress > 0.0, "a play either way: {progress}");
+    assert_eq!(progress >= 0.999, finished, "the movie reads watched only when finished: {progress}");
+    let plays = crate::fit::plays::PlayLog::new(&[], std::slice::from_ref(&movie));
+    assert_eq!(plays.item_plays(&resolution.join(&targets[0]))[0].complete, finished, "the fitter reads it as the daemon does");
+    let episode = stream(&format!(
+        r#"{{"media_type":"episode","rating_key":"11","parent_media_index":"1","media_index":"1","date":"{}"{percent_field}}}"#,
+        NOW - 3 * DAY
+    ));
+    assert_eq!(season_progress(&[&episode], Some(1)) >= 0.999, finished, "the only episode completes its season only when finished");
+}
+
 /// `get_users` and `get_libraries_table` answers in Tautulli's documented shape.
 fn keep_history(users: &[(&str, u8, u8)], sections: &[(u32, u8)]) -> KeepHistory {
     let users: Vec<String> = users
