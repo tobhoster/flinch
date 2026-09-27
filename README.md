@@ -40,9 +40,10 @@
 - **Checks itself every day.** It replays its own past ("given what was known
   then, did anyone play this?"), scores itself on titles it never saw, and only
   switches to a learned model when that beats the built-in one.
-- **Warns before anything unwatched goes.** A title nobody finished goes to a
-  *Leaving Soon* row on the Plex home screen first. Play it and FLINCH takes it
-  back.
+- **Warns before anything unwatched goes** (one exception: see
+  [Known limits](docs/how-it-works.md#known-limits)). A title nobody finished
+  goes to a *Leaving Soon* row on the Plex home screen first. Play it and
+  FLINCH takes it back.
 - **Never touches what you protect.** Favorites, your keep tag, the newest aired
   season and your own Maintainerr exclusions are off limits. Missing evidence
   means keep.
@@ -75,8 +76,8 @@ flowchart LR
    catalogue id, never by name. An item that does not match is left alone.
 2. **Forecast.** Each item gets P(safe), the chance nobody plays it in the next
    30 days, with the reasons behind it.
-3. **Rules.** Deterministic rules decide what *may* go. The forecast only ranks
-   what they allow, and nothing below the confidence floor is touched.
+3. **Rules.** Deterministic rules decide what *may* go, and the forecast never
+   overrides a protection. Nothing below the confidence floor is touched.
 4. **Order.** Over the ceiling, items leave in order of expected regret per GiB,
    `(1 − P(safe)) / size`, so one large file nobody will watch goes before fifty
    small ones.
@@ -100,10 +101,15 @@ side by side. On one household, 79 past questions over 13 titles (2026-09-23):
 | [Laya](https://huggingface.co/convaiinnovations/laya) (local, CPU) | 0.578 | 0.169 | 0.522 | 0.368 |
 | **FLINCH**, scored on titles it never trained on | **0.838** | **0.024** | **0.115** | **0.052** |
 
-FLINCH's probabilities beat both: on Brier and log-loss the 95% intervals are
-clear of zero. It also leads on ranking (AUC), but with only 2 of the 13 titles
-played, that lead is not yet significant. The comparison reruns as the history
-grows. Method, commands and the full table are in
+The table is a snapshot from 2026-09-23, with only 2 of the 13 titles played.
+The FLINCH row is the recalibrated priors: a candidate the daily fit may or may
+not adopt, not necessarily the model running. FLINCH's Brier and log-loss are
+better than both, with 95% intervals clear of zero, but on the same rows a
+constant forecast of the base rate scores Brier 0.0247 and log-loss 0.118. So
+most of that lead is knowing this household's base rate, which a zero-shot
+model cannot know. FLINCH also leads on ranking (AUC), but that lead is not
+yet significant. The comparison reruns as the history grows. Method, commands
+and the full table are in
 [docs/how-it-works.md](docs/how-it-works.md#accuracy-you-can-check).
 
 ## 🚀 Try the demo
@@ -164,8 +170,10 @@ own image, and keeping your own values out of git.
 - **Missing evidence keeps.** An item FLINCH cannot match, a watch source it
   could not read in full, or a disk it cannot measure means *keep*, never
   *delete*.
-- **Two floors.** An item must clear both the model's floor and yours
-  (P(safe) ≥ 0.75 by default) before it can even be a candidate.
+- **A floor on P(safe).** An item the rules allow must also clear your Score
+  floor (P(safe) ≥ 0.75 by default) before it can even be a candidate. One
+  nobody ever played is allowed only while never-played reclaim is armed, and
+  must clear its Never-played floor as well.
 - **Deletes only through Maintainerr.** FLINCH never deletes a file itself and
   never writes to Radarr or Sonarr. Every Maintainerr write is read back; a
   failed one is retried, never assumed.
@@ -209,13 +217,19 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
   CodeQL and the Security workflow (secrets, dependency advisories and
   licenses, workflow linting, and a scan and smoke test of the image).
 - **Running on one homelab** with enforcement on since 2026-09-22. All 34
-  keep-exclusions FLINCH wrote are found in Maintainerr every cycle, and the
-  daily fit has adopted the recalibrated model (out-of-fold AUC 0.84, Brier
-  0.024).
+  keep-exclusions FLINCH wrote are found in Maintainerr every cycle. Which
+  model runs is not fixed: the daily fit adopts a fitted model only while it
+  beats the hand-set priors out of fold, and the Forecast model card on the
+  Overview shows which one is running.
 - **TV on NFS can go ungoverned.** On that homelab, Sonarr's disk report left
   out all three of its NFS mounts, so FLINCH cannot measure those disks and never
   evicts from them. The Storage card says so.
-- **Every known limit fails closed.** One Radarr and one Sonarr instance; Plex is
+- **One known limit can delete without a warning.** A season whose watched
+  episodes were deleted outside FLINCH (by hand, or by Plex's "Delete episodes
+  after playing") can read as completed and leave with no Leaving Soon warning,
+  its unwatched episodes included. Until that is fixed, keep watched episodes
+  on disk, or keep such a season with the keep tag on its show or a keep
+  collection. The rest fail closed. One Radarr and one Sonarr instance; Plex is
   required to match items. The full list is in
   [docs/how-it-works.md](docs/how-it-works.md#known-limits).
 
