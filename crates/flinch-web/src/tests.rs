@@ -1,5 +1,6 @@
 //! flinch-web's HTTP tests: each request goes through the whole app (routing,
-//! the token check, the response headers) as `axum::serve` would run it.
+//! the login and API key check, the response headers) as `axum::serve` would
+//! run it.
 
 use super::*;
 use axum::body::Body;
@@ -9,7 +10,12 @@ use std::fs;
 
 pub(crate) const TOKEN: &str = "s3cret";
 
+/// A server whose only credential is the API key `token`, as automations use it.
 pub(crate) fn state(tmp: &Path, token: Option<&str>) -> AppState {
+    state_with(tmp, auth::Auth::new(None, None, token))
+}
+
+pub(crate) fn state_with(tmp: &Path, auth: auth::Auth) -> AppState {
     let dir = tmp.join("state");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("status.json"), r#"{"scanned":4,"kept":3,"dry_run":true}"#).unwrap();
@@ -20,24 +26,28 @@ pub(crate) fn state(tmp: &Path, token: Option<&str>) -> AppState {
     )
     .unwrap();
     let items = Arc::new(snapshot::Snapshot::new(dir.join("items.json")));
-    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), token: token.map(Arc::from), items }
+    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth), items }
 }
 
-pub(crate) fn get(path: &str, authorization: Option<&str>) -> Request<Body> {
-    let request = Request::get(path);
-    let request = match authorization {
-        Some(value) => request.header(header::AUTHORIZATION, value),
-        None => request,
-    };
-    request.body(Body::empty()).unwrap()
+/// A request with these headers, as `(name, value)` pairs.
+pub(crate) fn request(method: &str, path: &str, headers: &[(&str, &str)], body: impl Into<Body>) -> Request<Body> {
+    let mut request = Request::builder().method(method).uri(path);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.body(body.into()).unwrap()
+}
+
+pub(crate) fn get(path: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    request("GET", path, headers, Body::empty())
 }
 
 fn put_settings(body: String) -> Request<Body> {
     Request::put("/api/settings").header(header::AUTHORIZATION, format!("Bearer {TOKEN}")).body(Body::from(body)).unwrap()
 }
 
-/// One request through the whole app: routing, the token check and the
-/// response headers, exactly as `axum::serve` would run it.
+/// One request through the whole app: routing, the login and API key check
+/// and the response headers, exactly as `axum::serve` would run it.
 pub(crate) async fn send(st: &AppState, request: Request<Body>) -> Response {
     call(app(st.clone()), request).await
 }
@@ -117,7 +127,7 @@ async fn the_plex_token_never_reaches_the_browser_and_a_blank_one_keeps_it() {
     let st = state(&tmp, Some(TOKEN));
     save_plex(&st, PLEX, "plex-s3cret-token");
 
-    let shown = body_of(send(&st, get("/api/settings", Some(&format!("Bearer {TOKEN}")))).await).await;
+    let shown = body_of(send(&st, get("/api/settings", &[("authorization", &format!("Bearer {TOKEN}"))])).await).await;
     assert!(!shown.contains("plex-s3cret-token"), "token sent to the browser: {shown}");
     let view: serde_json::Value = serde_json::from_str(&shown).unwrap();
     assert_eq!(view["plex_token_set"], true);

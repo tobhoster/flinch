@@ -11,7 +11,7 @@ mod systemone;
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path as AxumPath, State as AxumState},
+    extract::{DefaultBodyLimit, Path as AxumPath, State as AxumState},
     http::{header, StatusCode},
     middleware,
     response::{IntoResponse, Response},
@@ -27,8 +27,8 @@ use std::sync::Arc;
 struct AppState {
     dir: Arc<PathBuf>,
     web: Arc<PathBuf>,
-    /// `FLINCH_WEB_TOKEN`, read once at startup. `None` keeps the API closed.
-    token: Option<Arc<str>>,
+    /// Who may use the API: the login, the API key and the live sessions.
+    auth: Arc<auth::Auth>,
     /// `items.json`, parsed once per published version for `/v1/systemone`.
     items: Arc<snapshot::Snapshot>,
 }
@@ -218,14 +218,17 @@ async fn assets(AxumState(st): AxumState<AppState>, AxumPath(path): AxumPath<Str
     }
 }
 
-/// Any other path under `/api/`: a JSON 404 behind the token, not the SPA
+/// Any other path under `/api/`: a JSON 404 behind the login, not the SPA
 /// shell, so the whole API namespace is guarded and a typo reads as one.
 async fn api_unknown() -> Response {
     refuse(StatusCode::NOT_FOUND, "no such API endpoint")
 }
 
-/// Everything under `/api/` and `/v1/systemone` needs the token; the shell,
-/// its assets, the logos and the health probe carry no data and stay open.
+/// Everything under `/api/` and `/v1/systemone` needs a session or the API
+/// key, except logging in and out and asking whether you are; the shell, its
+/// assets, the logos and the health probe carry no data and stay open. The
+/// login is the one open route that reads a body, so it reads only a few KiB:
+/// protected routes refuse before reading theirs.
 fn app(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/status", get(api_status))
@@ -235,8 +238,11 @@ fn app(state: AppState) -> Router {
         .route("/api/settings", get(api_settings_get).put(api_settings_put))
         .route("/api/{*rest}", any(api_unknown))
         .route(flinch_archive::systemone::PATH, post(api_systemone))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_token));
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_auth));
     Router::new()
+        .route("/api/login", post(auth::login).layer(DefaultBodyLimit::max(auth::LOGIN_BODY_LIMIT)))
+        .route("/api/logout", post(auth::logout))
+        .route("/api/session", get(auth::session))
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/assets/{path}", get(assets))
@@ -253,15 +259,10 @@ async fn main() -> Result<()> {
     let port = std::env::var("FLINCH_WEB_PORT").unwrap_or_else(|_| "7911".to_string());
     let dir = std::env::var("FLINCH_STATE_DIR").unwrap_or_else(|_| "state".to_string());
     let web = std::env::var("FLINCH_WEB_DIR").unwrap_or_else(|_| "web".to_string());
-    let token = auth::configured_token(std::env::var("FLINCH_WEB_TOKEN").ok().as_deref());
-    if token.is_some() {
-        println!("flinch-web auth: token set");
-    } else {
-        eprintln!("flinch-web auth: FLINCH_WEB_TOKEN not set - the API refuses every request until it is");
-    }
+    let auth = Arc::new(auth::Auth::from_env());
     let dir = PathBuf::from(dir);
     let items = Arc::new(snapshot::Snapshot::new(dir.join("items.json")));
-    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), token, items });
+    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth, items });
     let addr = format!("0.0.0.0:{port}");
     println!("flinch-web on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.context("bind")?;
