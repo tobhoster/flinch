@@ -23,7 +23,9 @@ pub struct RuntimeSettings {
     /// Maintainerr collection that announces evictions nobody finished: shown
     /// in Plex, deleting only after its window, so the household can still
     /// claim an item by playing it. One title for both kinds, each bound to its
-    /// own library. Blank sends them straight to the delete collections.
+    /// own library. Blank holds never-played reclaim off (see
+    /// [`super::NeverPlayedHold`]): nothing unwatched goes to the delete
+    /// collections, or counts toward a capacity goal.
     pub collection_leaving: String,
     /// Minimum P(safe) before an item may be scheduled, read capped at the
     /// priors' ([`crate::score::score_fenced`]). Thresholds are meaningless
@@ -87,7 +89,7 @@ impl RuntimeSettings {
     /// The Maintainerr collections the operator named. Each library type has
     /// its own delete collection: a movie handed to a season collection is an
     /// invalid target, not a deletion. A blank title hands nothing of that kind
-    /// (the sync reports the collection as missing).
+    /// (the sync reports the title as missing).
     pub fn collection_titles(&self) -> crate::maintainerr::CollectionTitles {
         crate::maintainerr::CollectionTitles {
             movie: self.collection_movie.clone(),

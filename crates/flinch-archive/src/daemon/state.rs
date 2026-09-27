@@ -160,6 +160,18 @@ pub struct StatusSnapshot {
     /// non-empty, never-played reclaim stays off whatever the settings say.
     #[serde(default)]
     pub evidence_problems: Vec<String>,
+    /// Why never-played reclaim is held off this cycle, whatever its switch or
+    /// disk pressure asks, so the UI never advises arming a rule that cannot
+    /// run. `None` when nothing holds it, and in a status file written before
+    /// it was published.
+    #[serde(default)]
+    pub never_played_hold: Option<super::NeverPlayedHold>,
+    /// Whether the settings ask never-played reclaim to run this cycle (see
+    /// [`super::never_played_requested`]). Held and not asked for, the UI says
+    /// to lift the hold and then enable the rule, not only to lift the hold.
+    /// `false` in a status file written before it was published.
+    #[serde(default)]
+    pub never_played_requested: bool,
     /// What each watch source delivered this cycle, so the UI marks a service
     /// down on the daemon's word instead of guessing from item data.
     #[serde(default)]

@@ -2,6 +2,7 @@
 //! decision, the reason in the operator's words, and the watch evidence.
 
 use flinch_archive::arr::{ArrMovie, ArrSeries};
+use flinch_archive::daemon::NeverPlayedHold;
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::{self as mx, OwnedState};
 use flinch_archive::policy::ScoreVerdict;
@@ -31,9 +32,9 @@ pub(super) struct ItemInputs<'a> {
     pub(super) report: &'a ReconcileOutput,
     pub(super) plex_ids: &'a HashMap<String, flinch_archive::ids::PlexIds>,
     pub(super) play_keys: &'a HashMap<String, flinch_archive::plex::PlayKeys>,
-    /// Never-played reclaim the settings or disk pressure would run now, held
-    /// only because the watch evidence is incomplete.
-    pub(super) never_played_held: bool,
+    /// Never-played reclaim the settings or disk pressure would run now, and
+    /// why it is held instead.
+    pub(super) never_played_held: Option<NeverPlayedHold>,
 }
 
 pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
@@ -94,10 +95,10 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 let no_evidence = watch.get(&card.id).is_none();
                 match (never_played, policy.unwatched_reclaim.enabled) {
                     (true, _) if no_evidence => "No watch evidence (not found in Plex or Tautulli this run), so it is held".to_string(),
-                    (true, false) if never_played_held => {
-                        "Never played; never-played reclaim is held until the watch evidence is complete".to_string()
-                    }
-                    (true, false) => "Never played; never-played reclaim is off".to_string(),
+                    (true, false) => match never_played_held {
+                        Some(hold) => format!("Never played; never-played reclaim is held {}", hold.until()),
+                        None => "Never played; never-played reclaim is off".to_string(),
+                    },
                     (true, true) => "Never played, outside the never-played reclaim terms".to_string(),
                     (false, _) if is_delete => decision.describe(),
                     (false, _) => match below_floor {
@@ -137,6 +138,8 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             on_disk: presence(card, movie, show),
             inflow: None,
             // Where it sits once handed over; until then, where it is headed.
+            // With the Leaving Soon title blank nothing is announced (see
+            // `NeverPlayedHold`), so no item reads as headed there.
             route: membership
                 .and_then(|entry| destinations.get(&entry.collection_id))
                 .map(|destination| destination.route)

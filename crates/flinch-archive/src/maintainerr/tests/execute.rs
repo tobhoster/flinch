@@ -2,12 +2,16 @@
 //! failure retention, ordering between a card's steps, and dry-run.
 
 use super::super::{
-    execute, observe, plan_sync, Caps, Desired, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncItem, SyncReport, SyncSummary,
+    execute, observe, plan_sync, Caps, CollectionTitles, Desired, Outcome, OwnedState, ProtectedEntry, ScheduledEntry, SyncItem,
+    SyncReport, SyncSummary,
 };
 use super::fake::{Fake, Fault, Op};
-use super::{current, item, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, MOVIES, SEASONS};
+use super::{
+    current, item, leaving, movie, movie_ids, row, season, season_ids, titles, valid_collections, GIB, LEAVING_MOVIES, MOVIES, SEASONS,
+};
 use crate::card::LibraryKind;
 use rstest::rstest;
+use std::collections::BTreeSet;
 
 fn fake() -> Fake {
     Fake::new(current(), valid_collections())
@@ -181,4 +185,80 @@ async fn a_membership_maintainerr_already_deleted_is_forgotten() {
 
     assert!(report.plan.actions.is_empty(), "nothing to remove");
     assert!(owned.scheduled.is_empty());
+}
+
+#[tokio::test]
+async fn without_a_leaving_soon_title_an_unwatched_item_waits_and_the_status_says_why() {
+    let mut maintainerr = fake();
+    let mut owned = OwnedState::default();
+    let evict = [a_movie("radarr-1", "100"), a_movie("radarr-2", "110")];
+    let want = Desired { announced: BTreeSet::from(["radarr-1".to_string()]), ..desired(&[], &evict) };
+
+    let report = cycle(&mut maintainerr, &want, &mut owned).await;
+
+    assert_eq!(maintainerr.members[&MOVIES], BTreeSet::from(["110".to_string()]), "only the watched item is handed over");
+    assert_eq!(owned.scheduled.keys().collect::<Vec<_>>(), ["radarr-2"]);
+    let problems = SyncSummary::new(&report, false).problems;
+    assert!(problems.iter().any(|problem| problem.starts_with("Leaving Soon movie collection has no title")), "{problems:?}");
+    assert!(problems.contains(&"radarr-1: collection misconfigured".to_string()), "{problems:?}");
+}
+
+#[tokio::test]
+async fn an_unwatched_item_in_a_delete_collection_flinch_lost_track_of_is_held_until_it_is_out() {
+    let mut maintainerr = fake();
+    maintainerr.collections.push(leaving(LEAVING_MOVIES, "movie", "1"));
+    maintainerr.members.entry(LEAVING_MOVIES).or_default();
+    let mut want = desired(&[], &[a_movie("radarr-1", "100")]);
+    want.collections.leaving = "Leaving Soon".into();
+    // Handed over while it counted as watched, then the record of it was lost:
+    // a stop before scheduled.json was written.
+    cycle(&mut maintainerr, &want, &mut OwnedState::default()).await;
+    assert_eq!(maintainerr.members[&MOVIES], BTreeSet::from(["100".to_string()]));
+    let mut owned = OwnedState::default();
+
+    // Now nobody finished it.
+    want.announced.insert("radarr-1".into());
+    let held = cycle(&mut maintainerr, &want, &mut owned).await;
+
+    assert_eq!(outcomes(&held), [("protect radarr-1 (ratingKey 100)".to_string(), Outcome::Done)]);
+    assert!(maintainerr.members[&MOVIES].contains("100"), "a membership FLINCH does not own is never removed");
+    assert!(maintainerr.members[&LEAVING_MOVIES].is_empty(), "not announced while it can leave unwarned");
+    let problems = SyncSummary::new(&held, false).problems;
+    assert!(problems.iter().any(|problem| problem.starts_with("radarr-1: held:") && problem.contains("collection 10")), "{problems:?}");
+
+    // The operator takes it out of the delete collection: it is announced.
+    maintainerr.members.entry(MOVIES).or_default().clear();
+    let announced = cycle(&mut maintainerr, &want, &mut owned).await;
+
+    assert!(announced.outcomes.iter().all(|o| *o == Outcome::Done), "{:?}", outcomes(&announced));
+    assert_eq!(maintainerr.members[&LEAVING_MOVIES], BTreeSet::from(["100".to_string()]));
+    assert!(maintainerr.rows.is_empty(), "its exclusion is released");
+    assert_eq!(owned.scheduled["radarr-1"].collection_id, LEAVING_MOVIES);
+}
+
+#[tokio::test]
+async fn a_deferred_move_into_leaving_soon_is_a_take_back() {
+    let mut maintainerr = fake();
+    maintainerr.collections.push(leaving(LEAVING_MOVIES, "movie", "1"));
+    maintainerr.members.entry(MOVIES).or_default().insert("100".into());
+    let mut owned = OwnedState::default();
+    owned.scheduled.insert("radarr-1".into(), ScheduledEntry { target: movie("100"), collection_id: MOVIES, added_at: 1 });
+    // Handed over while it counted as watched; now nobody finished it.
+    let evict = [a_movie("radarr-1", "100")];
+    let want = Desired {
+        announced: BTreeSet::from(["radarr-1".to_string()]),
+        collections: CollectionTitles { leaving: "Leaving Soon".to_string(), ..titles() },
+        ..desired(&[], &evict)
+    };
+
+    let observed = observe(&mut maintainerr, &evict, &want.collections, &owned).await.expect("the fake always answers");
+    let plan = plan_sync(&want, &observed, &owned, &Caps::new(0, 0));
+    let report = execute(&mut maintainerr, plan, &observed, &mut owned, 42).await;
+
+    assert_eq!(report.outcomes, [Outcome::Done]);
+    assert!(maintainerr.members.values().all(BTreeSet::is_empty), "in no collection: {:?}", maintainerr.members);
+    assert!(owned.scheduled.is_empty(), "nothing of FLINCH's is on its way out");
+    assert_eq!(report.unscheduled().collect::<Vec<_>>(), ["radarr-1"], "the ledger forgets it");
+    let summary = SyncSummary::new(&report, false);
+    assert_eq!((summary.unscheduled, summary.scheduled, summary.deferred), (1, 0, 1));
 }

@@ -5,12 +5,15 @@
 //! The rules:
 //! - Evict: first remove FLINCH's own exclusions for the item, then add it to
 //!   the collection for its kind and route — Leaving Soon for an announced
-//!   item, when the operator named one; the delete collection otherwise. An
-//!   item that is already a member costs nothing against the caps. The caps
-//!   count only new adds, and each is checked as `handed + size > cap`.
+//!   item, the delete collection otherwise. An item that is already a member
+//!   costs nothing against the caps. The caps count only new adds, and each is
+//!   checked as `handed + size > cap`.
 //! - Un-schedule: a membership FLINCH added whose card is no longer evicted is
 //!   removed, and so is one in the wrong route's collection once the right one
-//!   takes it. Un-schedules come first; the executor verifies each.
+//!   takes it. An announced item's membership outside Leaving Soon goes at
+//!   once, even while its add waits; a collection titled both Leaving Soon
+//!   and delete counts as Leaving Soon only while it is valid as one.
+//!   Un-schedules come first; the executor verifies each.
 //! - Protect: an exclusion is added only when no row covers the item. A row
 //!   FLINCH does not own is the operator's: it is never touched, and the card
 //!   is reported as an operator keep (a hard keep guard for the policy).
@@ -19,8 +22,12 @@
 //!   whose Plex item has several copies (FLINCH cannot tell which one its
 //!   evidence judged), is held; a membership FLINCH made for it is taken back.
 //! - Keep wins: a card in both lists is only protected.
-//! - A broken Leaving Soon collection blocks announced items; it never sends
-//!   them to the delete collection instead.
+//! - A broken or unnamed Leaving Soon collection blocks announced items; it
+//!   never sends them to the delete collection instead.
+//! - An announced item in a delete collection by a membership FLINCH does not
+//!   own is held under an exclusion until it is out: FLINCH never removes a
+//!   membership it did not record, and never announces an item that could
+//!   still leave unwarned.
 //! - Gone: an exclusion FLINCH made for an item Plex no longer holds (see
 //!   [`OwnedState::vanished`]) protects nothing and is released. Only
 //!   FLINCH's own rows go; the operator's stay.
@@ -175,6 +182,11 @@ pub enum Blocked {
     /// Plex merged several copies of the item by GUID (e.g. one per library):
     /// Maintainerr acts on one, and FLINCH cannot tell which copy it judged.
     SeveralPlexCopies(Vec<String>),
+    /// Nobody finished it, yet it is a member of this delete collection by a
+    /// membership FLINCH has no record of: a hand-over whose record was lost,
+    /// or someone else's add. FLINCH never removes it, so an exclusion keeps
+    /// the item until it is out, and only then does it go to Leaving Soon.
+    InDeleteCollection(i64),
 }
 
 impl fmt::Display for Blocked {
@@ -193,6 +205,10 @@ impl fmt::Display for Blocked {
                 "held: Plex has {} copies of this item (ratingKeys {}) and FLINCH cannot tell which one it judged; keep one copy in Plex, or keep the item",
                 keys.len(),
                 keys.join(", ")
+            ),
+            Self::InDeleteCollection(collection_id) => write!(
+                f,
+                "held: nobody finished it, yet it is in delete collection {collection_id}, which FLINCH has no record of adding it to and so never removes it from; an exclusion keeps it until it is out of collection {collection_id} (remove it there in Maintainerr); then Leaving Soon can take it"
             ),
         }
     }
@@ -271,23 +287,27 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         gone: BTreeSet::new(),
         warnings: validate::cleanup_warnings(&observed.collections, &desired.collections, desired.seerr_configured),
     };
-    let routes: &[Route] = match desired.collections.route(true) {
-        Route::LeavingSoon => &[Route::Delete, Route::LeavingSoon],
-        Route::Delete => &[Route::Delete],
-    };
     let mut resolved: Vec<((LibraryKind, Route), Option<Vec<&CollectionInfo>>)> = Vec::new();
     for kind in [LibraryKind::Movie, LibraryKind::Season] {
-        for route in routes {
-            let found = validate::resolve(&observed.collections, &desired.collections, kind, *route)
+        for route in [Route::Delete, Route::LeavingSoon] {
+            let found = validate::resolve(&observed.collections, &desired.collections, kind, route)
                 .map_err(|problems| plan.misconfigured.extend(problems))
                 .ok();
-            if *route == Route::LeavingSoon {
+            if route == Route::LeavingSoon {
                 plan.leaving.extend(found.iter().flatten().map(|collection| collection.id));
             }
-            resolved.push(((kind, *route), found));
+            resolved.push(((kind, route), found));
         }
     }
     let candidates_for = |kind, route| resolved.iter().find(|(key, _)| *key == (kind, route)).and_then(|(_, found)| found.as_deref());
+    // Collections a delete title names, except one that also carries the
+    // Leaving Soon title and is valid as one this cycle: a member there is
+    // warned, anywhere else it can leave unwarned.
+    let deletes = |collection: &CollectionInfo| {
+        [LibraryKind::Movie, LibraryKind::Season].into_iter().any(|kind| desired.collections.names(kind, Route::Delete, collection))
+    };
+    let deleting: BTreeSet<i64> =
+        observed.collections.iter().filter(|c| deletes(c) && !plan.leaving.contains(&c.id)).map(|c| c.id).collect();
 
     let keep: BTreeSet<&str> = desired.protect.iter().map(|item| item.card_id.as_str()).collect();
     // Every ratingKey a kept card resolves to, and which card: no eviction
@@ -301,6 +321,8 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
     // other collection is the item's old route and is taken back.
     let mut placed: BTreeMap<&str, i64> = BTreeMap::new();
     let mut evictions = Vec::new();
+    // Exclusions for evictions held in a delete collection FLINCH does not own.
+    let mut holds = Vec::new();
     let (mut handed, mut handed_bytes) = (0usize, 0u64);
     for item in desired.evict.iter().filter(|item| !keep.contains(item.card_id.as_str())) {
         let id = item.card_id.as_str();
@@ -331,6 +353,28 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
             continue;
         }
         let route = desired.collections.route(desired.announced.contains(id));
+        // Nobody finished it, yet it is in a delete collection by a membership
+        // FLINCH has no record of: a hand-over whose record was lost (a stop
+        // before `scheduled.json` was written, an add whose answer never came
+        // back), or someone else's. FLINCH never removes what it does not own,
+        // so an exclusion keeps the item, and it waits: no release, and no
+        // Leaving Soon add while it could still leave unwarned.
+        if route == Route::LeavingSoon {
+            // FLINCH owns a membership only under the ratingKey it added: the
+            // take-back below removes that one, never a key Plex gave it since.
+            let flinchs = owned.scheduled.get(id).filter(|entry| entry.target.item_key() == target.item_key());
+            let unowned = deleting.iter().copied().find(|collection_id| {
+                observed.members.get(collection_id).is_some_and(|members| members.contains(target.item_key()))
+                    && flinchs.is_none_or(|entry| entry.collection_id != *collection_id)
+            });
+            if let Some(collection_id) = unowned {
+                plan.blocked.push(blocked(Blocked::InDeleteCollection(collection_id)));
+                if !rows.iter().any(|row| target.is_covered_by(row)) {
+                    holds.push(SyncAction::Protect { card_id: id.to_string(), target: target.clone() });
+                }
+                continue;
+            }
+        }
         let Some(candidates) = candidates_for(item.kind, route) else {
             plan.blocked.push(blocked(Blocked::CollectionMisconfigured));
             continue;
@@ -359,7 +403,8 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
             continue;
         }
         if !caps.admits(handed, handed_bytes, item.bytes) {
-            // Deferred: an old-route membership stays until the new add fits.
+            // Deferred: an old-route membership stays until the new add fits,
+            // except an announced item's outside Leaving Soon (below).
             plan.deferred.push(id.to_string());
             continue;
         }
@@ -375,10 +420,22 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         });
     }
 
+    // Collections titled Leaving Soon, valid or not: FLINCH added to one only
+    // while it warned. One that also carries a delete title took the delete
+    // route's adds too, so it counts only while it warns.
+    let announcing: BTreeSet<i64> = validate::destinations(&observed.collections, &desired.collections)
+        .into_iter()
+        .filter_map(|(collection_id, destination)| (destination.route == Route::LeavingSoon).then_some(collection_id))
+        .filter(|collection_id| !deleting.contains(collection_id))
+        .collect();
     for (card_id, entry) in &owned.scheduled {
         let still_member = observed.members.get(&entry.collection_id).is_none_or(|m| m.contains(entry.target.item_key()));
         let moved = placed.get(card_id.as_str()).is_some_and(|collection_id| *collection_id != entry.collection_id);
-        if still_member && (moved || !evicting.contains(card_id.as_str())) {
+        // Nobody finished it, so it may wait only in Leaving Soon: a membership
+        // anywhere else is taken back now, also while its add is deferred or
+        // blocked.
+        let unwarned = desired.announced.contains(card_id) && !announcing.contains(&entry.collection_id);
+        if still_member && (moved || unwarned || !evicting.contains(card_id.as_str())) {
             plan.actions.push(SyncAction::Unschedule {
                 card_id: card_id.clone(),
                 target: entry.target.clone(),
@@ -387,6 +444,7 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         }
     }
 
+    plan.actions.extend(holds);
     for item in &desired.protect {
         let id = item.card_id.clone();
         let Some(target) = item.target() else {

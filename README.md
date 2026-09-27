@@ -172,8 +172,8 @@ own image, and keeping your own values out of git.
   *delete*.
 - **A floor on P(safe).** An item the rules allow must also clear your Score
   floor (P(safe) ≥ 0.75 by default) before it can even be a candidate. One
-  nobody ever played is allowed only while never-played reclaim is armed, and
-  must clear its Never-played floor as well.
+  nobody finished (a season: nobody played) is allowed only while never-played
+  reclaim is armed, and must clear its Never-played floor as well.
 - **Deletes only through Maintainerr.** FLINCH never deletes a file itself and
   never writes to Radarr or Sonarr. Every Maintainerr write is read back; a
   failed one is retried, never assumed.

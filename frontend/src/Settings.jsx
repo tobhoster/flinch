@@ -109,6 +109,10 @@ export default function Settings({ status }) {
   const num = (key, props) => ({ id: key, value: form[key], onChange: set(key), ...props });
   const ev = status?.evidence;
   const sync = status?.sync;
+  // What holds never-played reclaim whatever its switch says: incomplete watch
+  // evidence the daemon reported, or a Leaving Soon title this form leaves blank.
+  const neverPlayedHeld = status?.never_played_hold === 'incomplete_evidence' ? 'the watch evidence is complete'
+    : !String(form.collection_leaving || '').trim() ? 'a Leaving Soon collection is named' : null;
   // The daemon may take Plex from its environment, so its own report counts too.
   const plexReady = Boolean(form.plex_url && (form.plex_token || form.plex_token_set)) || Boolean(ev?.plex_configured);
   const [tautulliTone, tautulli] = !ev ? ['warn', 'no data']
@@ -173,23 +177,23 @@ export default function Settings({ status }) {
         </Section>
 
         <Section title="Never-played reclaim">
-          <Row label="Never-played items" htmlFor="unwatched_reclaim_enabled" term="never_played"
+          <Row label="Items nobody finished" htmlFor="unwatched_reclaim_enabled" term="never_played"
             help="Off: anything nobody finished (a season: nobody played) is held, unless “While evicting” arms this rule while eviction is latched. On: items nobody finished that pass the floor and time on disk can become candidates.">
             <Toggle id="unwatched_reclaim_enabled" checked={!!form.unwatched_reclaim_enabled} onChange={set('unwatched_reclaim_enabled')}>
               Allow as candidates
             </Toggle>
             <span className="text-fg-muted">
               {form.unwatched_reclaim_enabled
-                ? <><span className="text-state-warn">On</span> — never-played items can be deleted</>
+                ? <><span className="text-state-warn">On</span> — {neverPlayedHeld ? `held until ${neverPlayedHeld}` : 'items nobody finished can be deleted'}</>
                 : form.capacity_arm_never_played
                   ? 'Off — held unless “While evicting” arms it'
                   : 'Off — items nobody finished are held'}
             </span>
           </Row>
-          <Row label="Floor" htmlFor="unwatched_reclaim_floor" term="p_safe" help="Minimum P(safe) for a never-played item.">
+          <Row label="Floor" htmlFor="unwatched_reclaim_floor" term="p_safe" help="Minimum P(safe) for an item nobody finished.">
             <NumberField {...num('unwatched_reclaim_floor', { min: 0, max: 1, step: 0.05 })} unit="P(safe)" />
           </Row>
-          <Row label="Time on disk" htmlFor="unwatched_reclaim_dwell_days" help="Minimum age before an unplayed item counts as never played.">
+          <Row label="Time on disk" htmlFor="unwatched_reclaim_dwell_days" help="Minimum time on disk before an item nobody finished can be reclaimed.">
             <NumberField {...num('unwatched_reclaim_dwell_days', { min: 0, step: 1 })} unit="days" />
           </Row>
         </Section>
@@ -202,7 +206,7 @@ export default function Settings({ status }) {
             <TextField id="collection_season" value={form.collection_season} onChange={set('collection_season')} />
           </Row>
           <Row label="Leaving Soon" htmlFor="collection_leaving" term="leaving_soon"
-            help="Announces items nobody finished, in both libraries, before they are deleted. Blank sends them to the delete collections.">
+            help="Announces items nobody finished, in both libraries, before they are deleted. Blank holds never-played reclaim off: nothing unwatched is handed over or counts toward the capacity goal.">
             <TextField id="collection_leaving" value={form.collection_leaving} onChange={set('collection_leaving')} />
           </Row>
         </Section>

@@ -152,6 +152,25 @@ fn started_movie() -> (ArrMovie, HashMap<String, watch::WatchEntry>, crate::ids:
 const DELETE_MOVIES: i64 = 10;
 const LEAVING_MOVIES: i64 = 30;
 
+/// A Maintainerr movie collection bound to Plex section 1 whose *arr action
+/// deletes the files.
+fn movie_collection(id: i64, title: &str, delete_after_days: Option<i64>, visible_on_home: bool) -> crate::maintainerr::CollectionInfo {
+    crate::maintainerr::CollectionInfo {
+        id,
+        title: title.to_string(),
+        media_type: "movie".to_string(),
+        library_id: "1".to_string(),
+        is_active: true,
+        arr_action: 1,
+        delete_after_days,
+        visible_on_home,
+        visible_on_recommended: false,
+        keep_in_maintainerr_only: false,
+        overlay_enabled: false,
+        force_seerr: false,
+    }
+}
+
 /// Hand a cycle's decisions to Maintainerr the way bin/flinch-arrd/handoff.rs
 /// does, with every eviction past its grace window and a Leaving Soon
 /// collection named and valid. `held` is the collection an earlier cycle
@@ -165,20 +184,6 @@ fn hand_over(report: &ReconcileOutput, plex_ids: &crate::ids::PlexIds, held: Opt
         plex: Some(plex_ids.clone()),
         copies: Vec::new(),
         bytes: 5_000_000_000,
-    };
-    let collection = |id, title: &str, delete_after_days, visible_on_home| mx::CollectionInfo {
-        id,
-        title: title.to_string(),
-        media_type: "movie".to_string(),
-        library_id: "1".to_string(),
-        is_active: true,
-        arr_action: 1,
-        delete_after_days,
-        visible_on_home,
-        visible_on_recommended: false,
-        keep_in_maintainerr_only: false,
-        overlay_enabled: false,
-        force_seerr: false,
     };
     let desired = mx::Desired {
         protect: report.kept_ids.iter().chain(&report.reserve_ids).map(item).collect(),
@@ -195,8 +200,8 @@ fn hand_over(report: &ReconcileOutput, plex_ids: &crate::ids::PlexIds, held: Opt
     let mut observed = mx::Observed {
         version: mx::MaintainerrVersion::Release { major: 3, minor: 29, patch: 0 },
         collections: vec![
-            collection(DELETE_MOVIES, "FLINCH Movies", None, false),
-            collection(LEAVING_MOVIES, "Leaving Soon", Some(14), true),
+            movie_collection(DELETE_MOVIES, "FLINCH Movies", None, false),
+            movie_collection(LEAVING_MOVIES, "Leaving Soon", Some(14), true),
         ],
         members: [(DELETE_MOVIES, BTreeSet::new()), (LEAVING_MOVIES, BTreeSet::new())].into(),
         exclusions: [(plex_ids.rating_key.clone(), Vec::new())].into(),
@@ -216,6 +221,175 @@ fn hand_over(report: &ReconcileOutput, plex_ids: &crate::ids::PlexIds, held: Opt
         }
     }
     (into, out_of)
+}
+
+#[rstest::rstest]
+#[case::named_with_complete_evidence("Leaving Soon", true, None)]
+#[case::a_blank_title("", true, Some(NeverPlayedHold::LeavingSoonUntitled))]
+#[case::a_title_of_spaces("  ", true, Some(NeverPlayedHold::LeavingSoonUntitled))]
+#[case::incomplete_evidence("Leaving Soon", false, Some(NeverPlayedHold::IncompleteEvidence))]
+#[case::incomplete_evidence_is_named_first("", false, Some(NeverPlayedHold::IncompleteEvidence))]
+fn never_played_reclaim_needs_complete_evidence_and_a_leaving_soon_title(
+    #[case] leaving: &str,
+    #[case] complete: bool,
+    #[case] hold: Option<NeverPlayedHold>,
+) {
+    let health =
+        watch::EvidenceHealth { plex_configured: true, plex_items_ok: true, plex_history_complete: complete, ..Default::default() };
+    let settings =
+        RuntimeSettings { collection_leaving: leaving.to_string(), unwatched_reclaim_enabled: true, ..RuntimeSettings::default() };
+    assert_eq!(NeverPlayedHold::of(&health, &settings.collection_titles()), hold);
+
+    // Held, neither the operator's switch nor disk pressure arms the rule.
+    let mut policy = ArchivePolicy {
+        unwatched_reclaim: crate::policy::UnwatchedReclaim { enabled: settings.unwatched_reclaim_enabled, ..Default::default() },
+        ..ArchivePolicy::default()
+    };
+    let governing = hold_never_played(&settings, hold, &mut policy);
+    assert_eq!((policy.unwatched_reclaim.enabled, governing.capacity_arm_never_played), (hold.is_none(), hold.is_none()));
+}
+
+#[rstest::rstest]
+#[case::a_blank_title(Some(NeverPlayedHold::LeavingSoonUntitled), "\"leaving_soon_untitled\"")]
+#[case::incomplete_evidence(Some(NeverPlayedHold::IncompleteEvidence), "\"incomplete_evidence\"")]
+#[case::nothing_holds_it(None, "null")]
+fn the_status_names_the_never_played_hold_for_the_ui(#[case] hold: Option<NeverPlayedHold>, #[case] published: &str) {
+    // A status file written before the hold was published still loads.
+    let old: StatusSnapshot = serde_json::from_str(
+        r#"{"scanned":4,"delete_candidates":0,"kept":4,"reclaimed_bytes":0,"protections_added":0,
+            "protections_skipped_repeat":0,"dry_run":true,"ran_at_unix":1}"#,
+    )
+    .expect("an old status file");
+    assert_eq!(old.never_played_hold, None);
+
+    // The UI reads these words to say what would lift the hold.
+    let status = serde_json::to_value(StatusSnapshot { never_played_hold: hold, ..old }).expect("serializable");
+    assert_eq!(status["never_played_hold"].to_string(), published);
+    let read: StatusSnapshot = serde_json::from_value(status).expect("round trip");
+    assert_eq!(read.never_played_hold, hold);
+}
+
+#[rstest::rstest]
+#[case::its_switch(true, false, false, true)]
+#[case::while_evicting_on_a_disk_that_evicts(false, true, true, true)]
+#[case::while_evicting_with_every_disk_idle(false, true, false, false)]
+#[case::neither(false, false, true, false)]
+fn the_status_says_whether_the_settings_ask_for_never_played_reclaim(
+    #[case] switch: bool,
+    #[case] while_evicting: bool,
+    #[case] evicting: bool,
+    #[case] requested: bool,
+) {
+    use crate::capacity::CapacityAction;
+    // As saved, whatever holds the rule: a blank Leaving Soon title is one.
+    let settings = RuntimeSettings {
+        unwatched_reclaim_enabled: switch,
+        capacity_arm_never_played: while_evicting,
+        collection_leaving: String::new(),
+        ..RuntimeSettings::default()
+    };
+    let action = if evicting { CapacityAction::Evict { goal_bytes: 1 << 30, armed_never_played: false } } else { CapacityAction::Idle };
+    assert_eq!(never_played_requested(&settings, &action), requested);
+
+    // Held and not asked for, naming Leaving Soon alone frees nothing: the UI
+    // reads this to say to enable the rule too. An older status file reads as
+    // not asked for.
+    let old: StatusSnapshot = serde_json::from_str(
+        r#"{"scanned":4,"delete_candidates":0,"kept":4,"reclaimed_bytes":0,"protections_added":0,
+            "protections_skipped_repeat":0,"dry_run":true,"ran_at_unix":1}"#,
+    )
+    .expect("an old status file");
+    assert!(!old.never_played_requested);
+    let status = serde_json::to_value(StatusSnapshot { never_played_requested: requested, ..old }).expect("serializable");
+    assert_eq!(status["never_played_requested"], requested);
+}
+
+#[test]
+fn a_blank_leaving_soon_title_leaves_the_capacity_goal_to_watched_evictions() {
+    use crate::capacity::{App, AppDisks, CapacityAction, Latch, LibraryVolumes, OnDisk, RecycleBin, RootFolder, Volume};
+    use crate::maintainerr as mx;
+    const GB: u64 = 1_000_000_000;
+    // Four years on disk: a large movie Plex saw unplayed, and a smaller one
+    // watched 400 days ago. The unplayed one has less regret per byte, so an
+    // armed rule would rank it first, and it alone would cover the goal.
+    let movie = |id: u32, size_gb: u64| ArrMovie {
+        id,
+        title: format!("Movie {id}"),
+        size_on_disk: size_gb * GB,
+        has_file: true,
+        movie_file: Some(crate::arr::MovieFile { quality: None, date_added: Some("2022-09-01T00:00:00Z".to_string()) }),
+        path: Some(format!("/data/movies/Movie {id}")),
+        ..Default::default()
+    };
+    let movies = [movie(1, 300), movie(2, 120)];
+    let seen = |id: &str, progress, last_watched_epoch| {
+        let entry =
+            watch::WatchEntry { id: id.to_string(), last_watched_epoch, progress, rewatch_score: None, source: watch::WatchSource::Plex };
+        (entry.id.clone(), entry)
+    };
+    let watch = HashMap::from([seen("radarr-1", 0.0, None), seen("radarr-2", 1.0, Some(NOW - 400 * 86_400))]);
+    let verdict = |p_safe| ScoreVerdict { p_safe, hard_guard: false, sibling_played: false };
+    let verdicts = HashMap::from([("radarr-1".to_string(), verdict(0.85)), ("radarr-2".to_string(), verdict(0.9))]);
+    // /data is 85% full against the default 80% ceiling: free 100 GB to reach 75%.
+    let library = LibraryVolumes::build(&[AppDisks {
+        app: App::Radarr,
+        diskspace: vec![Volume { path: "/data".to_string(), total_bytes: 1000 * GB, free_bytes: 150 * GB }],
+        root_folders: vec![RootFolder { path: "/data/movies".to_string(), free_bytes: None }],
+        recycle: RecycleBin::Disabled,
+    }]);
+    // The defaults, which arm never-played reclaim while evicting, with the
+    // Leaving Soon title cleared; every watch source was read completely.
+    let settings = RuntimeSettings { collection_leaving: String::new(), ..RuntimeSettings::default() };
+    let titles = settings.collection_titles();
+    let health = watch::EvidenceHealth { plex_configured: true, plex_items_ok: true, plex_history_complete: true, ..Default::default() };
+
+    // One cycle the way bin/flinch-arrd/main.rs runs it.
+    let mut policy = ArchivePolicy { score_floor: settings.score_floor, ..ArchivePolicy::default() };
+    let governing = hold_never_played(&settings, NeverPlayedHold::of(&health, &titles), &mut policy);
+    let volume_of = crate::govern::volume_map(&library, &movies, &[]);
+    let governance = crate::govern::govern(library, volume_of, |_| true, &governing, &Latch::default(), OnDisk::default(), &mut policy);
+    let report = reconcile(&movies, &[], &watch, &BTreeSet::new(), &policy, &verdicts, &governance.goal);
+
+    assert_eq!(report.deleted_ids, ["radarr-2"], "the watched movie covers the goal");
+    assert_eq!(report.kept_ids, ["radarr-1"], "the unplayed movie is held, not planned");
+    assert!(report.announced_ids.is_empty(), "nothing is headed for a Leaving Soon that cannot announce");
+    assert!(report.goal_met);
+    assert!(matches!(governance.decision.action, CapacityAction::Evict { armed_never_played: false, .. }));
+
+    // Handed over the way bin/flinch-arrd/handoff.rs does, to the one movie
+    // delete collection there is.
+    let item = |id: &String| mx::SyncItem {
+        card_id: id.clone(),
+        kind: crate::card::LibraryKind::Movie,
+        plex: Some(crate::ids::PlexIds { rating_key: id.replace("radarr-", "10"), season_rating_key: None, section_id: Some(1) }),
+        copies: Vec::new(),
+        bytes: movies.iter().find(|movie| format!("radarr-{}", movie.id) == *id).map_or(0, |movie| movie.size_on_disk),
+    };
+    let desired = mx::Desired {
+        protect: report.kept_ids.iter().chain(&report.reserve_ids).map(item).collect(),
+        evict: report.deleted_ids.iter().map(item).collect(),
+        announced: report.announced_ids.clone(),
+        collections: titles.clone(),
+        gone: BTreeSet::new(),
+        seerr_configured: false,
+    };
+    let observed = mx::Observed {
+        version: mx::MaintainerrVersion::Release { major: 3, minor: 29, patch: 0 },
+        collections: vec![movie_collection(DELETE_MOVIES, &titles.movie, None, false)],
+        members: [(DELETE_MOVIES, BTreeSet::new())].into(),
+        exclusions: [("101".to_string(), Vec::new()), ("102".to_string(), Vec::new())].into(),
+    };
+    let plan = mx::plan_sync(&desired, &observed, &mx::OwnedState::default(), &mx::Caps::new(10, 500));
+    let scheduled: Vec<(&str, i64)> = plan
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            mx::SyncAction::Schedule { card_id, collection_id, .. } => Some((card_id.as_str(), *collection_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scheduled, [("radarr-2", DELETE_MOVIES)], "into its delete collection");
+    assert!(plan.blocked.is_empty(), "{:?}", plan.blocked);
 }
 
 #[test]

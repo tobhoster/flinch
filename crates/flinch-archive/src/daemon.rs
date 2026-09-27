@@ -20,8 +20,9 @@ pub struct ReconcileOutput {
     /// per-run caps meet them in this order, never a hash order.
     pub deleted_ids: Vec<String>,
     /// Of `deleted_ids`: the evictions nobody finished (see
-    /// [`crate::policy::announces`]). With a Leaving Soon collection named,
-    /// they are announced there before they go.
+    /// [`crate::policy::announces`]). They are announced in Leaving Soon
+    /// before they go, and wait while it is unusable. While it is unnamed
+    /// there are none: never-played reclaim is held (see [`NeverPlayedHold`]).
     pub announced_ids: BTreeSet<String>,
     /// Cards the policy or a floor keeps: the ones to protect.
     pub kept_ids: Vec<String>,
@@ -101,6 +102,63 @@ pub fn guard_operator_keeps(cards: &mut [ArchiveCard], operator_keeps: &BTreeSet
     for card in cards.iter_mut().filter(|card| operator_keeps.contains(&card.id)) {
         card.in_keep_collection = true;
     }
+}
+
+/// Why never-played reclaim is held off for a cycle, whatever the operator's
+/// switch or disk pressure asks for. Held, the rule permits nothing: its items
+/// are kept, and none counts toward a capacity goal. status.json names it as
+/// `"incomplete_evidence"` or `"leaving_soon_untitled"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NeverPlayedHold {
+    /// A watch source was not read completely (see
+    /// [`watch::EvidenceHealth::never_played_reclaim_safe`]): "never played"
+    /// would be a guess.
+    IncompleteEvidence,
+    /// The Leaving Soon title is blank, so nothing unwatched can be announced,
+    /// and nothing unwatched leaves unannounced. Armed, the rule's items would
+    /// cover the capacity goal and then wait at the hand-off, while the watched
+    /// evictions they displaced were never picked: the disk would stay full.
+    LeavingSoonUntitled,
+}
+
+impl NeverPlayedHold {
+    /// This cycle's hold, if any. Incomplete evidence is named first: naming
+    /// Leaving Soon would not lift it.
+    pub fn of(health: &watch::EvidenceHealth, titles: &crate::maintainerr::CollectionTitles) -> Option<Self> {
+        if !health.never_played_reclaim_safe() {
+            Some(Self::IncompleteEvidence)
+        } else if titles.leaving.trim().is_empty() {
+            Some(Self::LeavingSoonUntitled)
+        } else {
+            None
+        }
+    }
+
+    /// Until when the held items wait, in the operator's words.
+    pub fn until(self) -> &'static str {
+        match self {
+            Self::IncompleteEvidence => "until the watch evidence is complete",
+            Self::LeavingSoonUntitled => "until a Leaving Soon collection is named",
+        }
+    }
+}
+
+/// Hold never-played reclaim off while `hold` says so: clears the operator's
+/// switch on `policy`, and returns the settings capacity governs by, which then
+/// never arm the rule under disk pressure either.
+pub fn hold_never_played(settings: &RuntimeSettings, hold: Option<NeverPlayedHold>, policy: &mut ArchivePolicy) -> RuntimeSettings {
+    policy.unwatched_reclaim.enabled &= hold.is_none();
+    RuntimeSettings { capacity_arm_never_played: settings.capacity_arm_never_played && hold.is_none(), ..settings.clone() }
+}
+
+/// Whether the operator's settings ask never-played reclaim to run this cycle:
+/// its switch, or "While evicting" while a disk evicts. Read from the settings
+/// as saved, not as held: held and not asked for, lifting the hold alone runs
+/// nothing, so the UI names both steps (status.json `never_played_requested`).
+pub fn never_played_requested(settings: &RuntimeSettings, action: &crate::capacity::CapacityAction) -> bool {
+    settings.unwatched_reclaim_enabled
+        || (settings.capacity_arm_never_played && matches!(action, crate::capacity::CapacityAction::Evict { .. }))
 }
 
 #[cfg(test)]

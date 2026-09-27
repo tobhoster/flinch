@@ -198,6 +198,22 @@ fn a_missing_title_or_any_invalid_namesake_makes_the_kind_misconfigured() {
 }
 
 #[rstest]
+#[case::delete(Route::Delete, "movie collection has no title: name it in Settings → Maintainerr collections")]
+#[case::leaving_soon(
+    Route::LeavingSoon,
+    "Leaving Soon movie collection has no title: name it in Settings → Maintainerr collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
+)]
+fn a_blank_title_names_no_collection(#[case] route: Route, #[case] message: &str) {
+    let blank = CollectionTitles { movie: " ".to_string(), leaving: String::new(), ..titles() };
+    let collections = [valid_collections(), vec![leaving(50, "movie", "1")]].concat();
+    let problems = resolve(&collections, &blank, LibraryKind::Movie, route).unwrap_err();
+    assert_eq!(
+        problems.iter().map(|problem| (&problem.problem, problem.to_string())).collect::<Vec<_>>(),
+        [(&CollectionProblem::Untitled, message.to_string())]
+    );
+}
+
+#[rstest]
 #[case::bound_section(Some(1), Some(10))]
 #[case::other_section(Some(9), None)]
 #[case::unknown_section_single_collection(None, Some(10))]

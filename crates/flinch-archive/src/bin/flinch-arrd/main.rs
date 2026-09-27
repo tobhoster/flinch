@@ -7,8 +7,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use flinch_archive::capacity::CapacityAction;
-use flinch_archive::daemon::reconcile;
+use flinch_archive::daemon::{reconcile, NeverPlayedHold};
 use flinch_archive::maintainerr::{self as mx, HttpMaintainerr, OwnedState, SyncItem};
 use flinch_archive::ArchivePolicy;
 use std::collections::HashMap;
@@ -316,26 +315,27 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
 
     // XC-03: a partly read watch record never arms never-played reclaim — not
     // by the operator's switch, and not by capacity pressure. Deleting on the
-    // strength of *absent* plays needs every source read completely.
-    let never_played_safe = health.never_played_reclaim_safe();
-    if !never_played_safe && policy.unwatched_reclaim.enabled {
-        eprintln!("[flinch-arrd] never-played reclaim held off this cycle: {}", health.problems().join("; "));
+    // strength of *absent* plays needs every source read completely. Nor does
+    // a blank Leaving Soon title: its items could never be announced, so they
+    // would fill the capacity goal and never leave.
+    let never_played_hold = NeverPlayedHold::of(&health, &titles);
+    if let Some(hold) = never_played_hold.filter(|_| policy.unwatched_reclaim.enabled) {
+        let why = match hold {
+            NeverPlayedHold::IncompleteEvidence => health.problems().join("; "),
+            NeverPlayedHold::LeavingSoonUntitled => "the Leaving Soon title is blank".to_string(),
+        };
+        eprintln!("[flinch-arrd] never-played reclaim held off this cycle: {why}");
     }
-    policy.unwatched_reclaim.enabled &= never_played_safe;
-    let governing = flinch_archive::daemon::RuntimeSettings {
-        capacity_arm_never_played: settings_for_score.capacity_arm_never_played && never_played_safe,
-        ..settings.clone()
-    };
+    let governing = flinch_archive::daemon::hold_never_played(settings, never_played_hold, &mut policy);
 
     // Capacity: measure the library volumes, decide per volume, set the goal;
     // what Maintainerr already holds is taken first, so no window restarts.
     let (mut governance, mut ledger) = storage::govern(&disks, (&movies, &series), &cards, &plex_ids, &governing, &mut policy, cycle_now);
     governance.take_handed_first(owned.scheduled.keys().cloned().collect());
     // Never-played reclaim the settings (or disk pressure) would run now, held
-    // only because the watch evidence is incomplete: the items must say so.
-    let never_played_held = !never_played_safe
-        && (settings_for_score.unwatched_reclaim_enabled
-            || (settings_for_score.capacity_arm_never_played && matches!(governance.decision.action, CapacityAction::Evict { .. })));
+    // only by `never_played_hold`: the items must say why.
+    let never_played_requested = flinch_archive::daemon::never_played_requested(settings_for_score, &governance.decision.action);
+    let never_played_held = never_played_hold.filter(|_| never_played_requested);
 
     // What arming the never-played rule would add. Computed in the library
     // (tested), by card id — never by pairing iteration orders.
@@ -425,6 +425,8 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             model: model_label,
             shadow: (shadow_count as u64, shadow_gib),
             health,
+            never_played_hold,
+            never_played_requested,
             outside: history::outside(&removals, &ledger, (&movies, &series), now),
         },
         &items,

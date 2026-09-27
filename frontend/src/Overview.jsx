@@ -30,6 +30,7 @@ const HELD = {
   unresolved: 'unresolved',
   noEvidence: 'held_no_evidence',
   evidenceHeld: 'held_evidence',
+  untitled: 'held_untitled',
   newest: 'held_newest',
   yours: 'held_yours',
   noDate: 'held_no_date',
@@ -41,14 +42,32 @@ const HELD = {
 /**
  * The daemon's reason strings for items it is not evicting. "Eligible —" is the
  * reserve (waiting for a disk to need space); the ungoverned and unmatched forms
- * can never be evicted; the evidence forms wait on watch evidence. Anything
+ * can never be evicted; the evidence forms wait on watch evidence, and the
+ * never-played hold on complete evidence or a Leaving Soon title. Anything
  * else falls through to the policy and floor buckets.
  */
 const NOT_GOVERNED_REASON = 'Eligible, but no governed disk';
 const UNRESOLVED_REASON = 'Eligible, but not matched in Plex';
 const NO_EVIDENCE_REASON = 'No watch evidence';
+const NEVER_PLAYED_HELD_REASON = '; never-played reclaim is held until';
 const EVIDENCE_HELD_REASON = 'until the watch evidence is complete';
 const RESERVE_REASON = /^Eligible\s+—/;
+
+/**
+ * Why the never-played rule cannot run yet (`never_played_hold`), when enabling
+ * it would change nothing: `held` when the settings ask for it
+ * (`never_played_requested`), `off` when lifting the hold alone would not run it.
+ */
+const SHADOW_HINT = {
+  leaving_soon_untitled: {
+    held: 'It is held until a Leaving Soon collection is named in Settings.',
+    off: 'Name a Leaving Soon collection, then enable it in Settings.',
+  },
+  incomplete_evidence: {
+    held: 'It is held until the watch evidence is complete.',
+    off: 'Once the watch evidence is complete, enable it in Settings.',
+  },
+};
 
 /** Hard guards the operator set: the keep tag, a Plex label or collection, their own exclusion. */
 const OPERATOR_GUARDS = new Set(['favorite', 'keep-collection']);
@@ -100,7 +119,7 @@ export default function Overview({ status, items, history, loading }) {
       else if (reason.startsWith(NOT_GOVERNED_REASON)) add(HELD.notGoverned, item);
       else if (reason.startsWith(UNRESOLVED_REASON)) add(HELD.unresolved, item);
       else if (reason.startsWith(NO_EVIDENCE_REASON)) add(HELD.noEvidence, item);
-      else if (reason.includes(EVIDENCE_HELD_REASON)) add(HELD.evidenceHeld, item);
+      else if (reason.includes(NEVER_PLAYED_HELD_REASON)) add(reason.includes(EVIDENCE_HELD_REASON) ? HELD.evidenceHeld : HELD.untitled, item);
       else if (RESERVE_REASON.test(reason)) add(HELD.reserve, item);
       else if (watchedNoDate) add(HELD.noDate, item);
       else if (item.protected) add(HELD.excluded, item);
@@ -139,7 +158,7 @@ export default function Overview({ status, items, history, loading }) {
         <Metric label="Held" value={totals.held} />
       </dl>
 
-      {s.capacity && <Capacity c={s.capacity} eligible={s.eligible_bytes} />}
+      {s.capacity && <Capacity c={s.capacity} eligible={s.eligible_bytes} hold={s.never_played_hold} requested={s.never_played_requested} />}
 
       <section>
         <SectionTitle hint={`${items.length} items`} term="evidence">Watch evidence</SectionTitle>
@@ -244,6 +263,7 @@ function NothingToReclaim({ held, closest, status }) {
   const why = status.capacity && !status.capacity.latched
     ? 'Storage is under the ceiling, so nothing is scheduled.'
     : eligibleHeld ? 'Nothing is scheduled this run.' : 'Nothing passes the policy and the P(safe) floor.';
+  const shadowHint = SHADOW_HINT[status.never_played_hold]?.[status.never_played_requested ? 'held' : 'off'] || 'Enable it in Settings.';
   return (
     <section className="min-w-0 space-y-5">
       <div>
@@ -292,7 +312,7 @@ function NothingToReclaim({ held, closest, status }) {
       {status.shadow_items > 0 && (
         <p className="text-fg-muted">
           Never-played reclaim would add <span className="num text-fg">{status.shadow_items}</span> items
-          (<span className="num text-fg">{(status.shadow_gib || 0).toFixed(1)} GiB</span>). Enable it in Settings.
+          (<span className="num text-fg">{(status.shadow_gib || 0).toFixed(1)} GiB</span>). {shadowHint}
         </p>
       )}
     </section>
