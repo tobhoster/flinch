@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Loader2, Lock, Play } from 'lucide-react';
-import { Locked, forgetToken, loadStatus, loadItems, loadHistory, onLocked, storeToken, triggerRun } from './api.js';
+import { Loader2, LogOut, Play } from 'lucide-react';
+import { Locked, loadSession, loadStatus, loadItems, loadHistory, logOut, onLocked, triggerRun } from './api.js';
 import { Dot, Tabs, ago } from './ui.jsx';
 import Overview from './Overview.jsx';
 import MediaTable from './MediaTable.jsx';
 import Settings from './Settings.jsx';
-import Unlock from './Unlock.jsx';
+import Login from './Login.jsx';
 
 const TABS = [['overview', 'Overview'], ['series', 'Series'], ['movies', 'Movies'], ['settings', 'Settings']];
 
@@ -16,39 +16,56 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  // null while the API accepts us; `{ configured, refused }` after a 401.
+  // null while the API accepts us; `{ loginConfigured, reason, over }` once it
+  // wants a login. `over` is a session that ended mid-use: the login shows over
+  // the dashboard, which stays mounted, so an unsaved Settings form survives.
   const [locked, setLocked] = useState(null);
+  // False until the server said whether this browser has a session.
+  const [checked, setChecked] = useState(false);
 
   const refresh = useCallback(async () => {
     const [st, it, hi] = await Promise.all([loadStatus(), loadItems(), loadHistory()]);
     setStatus(st); setItems(it); setHistory(hi); setLoading(false);
   }, []);
 
-  // One refresh sends three requests; a refused token must stay reported even
-  // when a later 401 of the same batch went out without it.
-  useEffect(() => onLocked((err) => setLocked((prev) => ({
-    configured: err.configured,
-    refused: err.refused || Boolean(prev?.refused),
-  }))), []);
+  // Only requests the dashboard makes can be refused, so it is up. A refresh
+  // sends three: the first 401 decides, and a Log out already under way wins.
+  useEffect(() => onLocked((err) => setLocked((prev) => prev ?? {
+    loginConfigured: err.loginConfigured,
+    reason: err.message,
+    over: true,
+  })), []);
+
+  // Ask once before loading anything, so a browser without a session goes
+  // straight to the login instead of through three 401s.
+  useEffect(() => {
+    loadSession()
+      .then((session) => {
+        if (!session.authenticated) setLocked({ loginConfigured: session.login_configured, reason: '', over: false });
+      })
+      .catch(() => { /* No answer: the first poll's 401, if any, shows the login. */ })
+      .finally(() => setChecked(true));
+  }, []);
 
   // No polling while locked: every poll would be another 401.
   useEffect(() => {
-    if (locked) return undefined;
+    if (!checked || locked) return undefined;
     refresh();
     const id = setInterval(refresh, 15000);
     return () => clearInterval(id);
-  }, [refresh, locked]);
+  }, [refresh, checked, locked]);
 
-  const onUnlock = (token) => {
-    storeToken(token);
-    setLoading(true);
-    setLocked(null);
-  };
+  const onLogin = () => setLocked(null);
 
-  const onLock = () => {
-    forgetToken();
+  const onLogOut = async () => {
+    try {
+      await logOut();
+    } catch {
+      // No answer: the session lives on at the server until it expires or
+      // flinch-web restarts. The login is shown either way.
+    }
     setStatus(null); setItems([]); setHistory([]); setLoading(true);
-    setLocked({ configured: true, refused: false });
+    setLocked({ loginConfigured: true, reason: '', over: false });
   };
 
   const onTrigger = async () => {
@@ -59,52 +76,62 @@ export default function App() {
       await new Promise((r) => setTimeout(r, 6000));
       await refresh();
     } catch (err) {
-      // A 401 already swapped the dashboard for the unlock screen.
+      // A 401 already put the login over the dashboard.
       if (!(err instanceof Locked)) throw err;
     } finally {
       setRunning(false);
     }
   };
 
-  if (locked) return <Unlock configured={locked.configured} refused={locked.refused} onUnlock={onUnlock} />;
+  if (!checked) return <p className="px-4 py-12 text-center text-xs text-fg-muted">Loading…</p>;
+  if (locked && !locked.over) return <Login loginConfigured={locked.loginConfigured} onLogin={onLogin} />;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 pb-12 pt-3 sm:px-6">
-      <header>
-        {/* Phones: brand and run button share the first row; status and services
-            each take a full row below. From `sm` up it is one line in DOM order. */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2">
-          <span className="inline-flex items-center gap-2">
-            <img src="/logo-dark.png" alt="" className="h-6 w-6" />
-            <span className="text-sm font-semibold tracking-wide text-fg">FLINCH</span>
-          </span>
-          <div className="order-2 basis-full sm:order-none sm:basis-auto">
-            <StatusLine status={status} loading={loading} />
+    <>
+      {/* Inert under the login: nothing behind it can be clicked or focused. */}
+      <div inert={Boolean(locked)} className="mx-auto max-w-[1200px] px-4 pb-12 pt-3 sm:px-6">
+        <header>
+          {/* Phones: brand and run button share the first row; status and services
+              each take a full row below. From `sm` up it is one line in DOM order. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2">
+            <span className="inline-flex items-center gap-2">
+              <img src="/logo-dark.png" alt="" className="h-6 w-6" />
+              <span className="text-sm font-semibold tracking-wide text-fg">FLINCH</span>
+            </span>
+            <div className="order-2 basis-full sm:order-none sm:basis-auto">
+              <StatusLine status={status} loading={loading} />
+            </div>
+            <div className="order-3 basis-full sm:order-none sm:ml-auto sm:basis-auto">
+              <Connections status={status} />
+            </div>
+            <button onClick={onTrigger} disabled={running} className="btn order-1 ml-auto sm:order-none sm:ml-0">
+              {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+              {running ? 'Running…' : 'Trigger run'}
+            </button>
+            <button onClick={onLogOut} title="End this browser's session" className="btn order-1 sm:order-none">
+              <LogOut size={13} /> Log out
+            </button>
           </div>
-          <div className="order-3 basis-full sm:order-none sm:ml-auto sm:basis-auto">
-            <Connections status={status} />
+          {/* Tabs never wrap; on phones they scroll as their own strip. */}
+          <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            <Tabs tabs={TABS} value={tab} onChange={setTab} />
           </div>
-          <button onClick={onTrigger} disabled={running} className="btn order-1 ml-auto sm:order-none sm:ml-0">
-            {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-            {running ? 'Running…' : 'Trigger run'}
-          </button>
-          <button onClick={onLock} title="Forget the access token on this browser" className="btn order-1 sm:order-none">
-            <Lock size={13} /> Lock
-          </button>
-        </div>
-        {/* Tabs never wrap; on phones they scroll as their own strip. */}
-        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-          <Tabs tabs={TABS} value={tab} onChange={setTab} />
-        </div>
-      </header>
+        </header>
 
-      <main className="pt-4">
-        {tab === 'overview' && <Overview status={status} items={items} history={history} loading={loading} />}
-        {tab === 'series' && <MediaTable items={items} kind="season" />}
-        {tab === 'movies' && <MediaTable items={items} kind="movie" />}
-        {tab === 'settings' && <Settings status={status} />}
-      </main>
-    </div>
+        <main className="pt-4">
+          {tab === 'overview' && <Overview status={status} items={items} history={history} loading={loading} />}
+          {tab === 'series' && <MediaTable items={items} kind="season" />}
+          {tab === 'movies' && <MediaTable items={items} kind="movie" />}
+          {tab === 'settings' && <Settings status={status} />}
+        </main>
+      </div>
+      {/* Above everything the dashboard can open: a Sheet, an explainer (z-[60]). */}
+      {locked && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-950/95">
+          <Login loginConfigured={locked.loginConfigured} reason={locked.reason} onLogin={onLogin} />
+        </div>
+      )}
+    </>
   );
 }
 

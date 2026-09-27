@@ -1,40 +1,20 @@
-// Every call to the FLINCH API goes through `request`, so the bearer token is
-// attached in one place and a refusal locks the whole app, not one panel.
+// Every call to the FLINCH API goes through `request`, so the session cookie
+// and the UI's own header go out in one place and a refusal locks the whole
+// app, not one panel.
 
-const TOKEN_KEY = 'flinch-token';
-
-// Storage can be unavailable (private windows, blocked site data); the app then
-// asks for the token again on every load rather than failing to start.
-export function storedToken() {
-  try {
-    return localStorage.getItem(TOKEN_KEY) || '';
-  } catch {
-    return '';
-  }
+// Versions before the login kept an access token here; the session cookie,
+// which scripts cannot read, replaced it.
+try {
+  localStorage.removeItem('flinch-token');
+} catch {
+  // Storage unavailable: nothing was kept.
 }
 
-export function storeToken(token) {
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Nothing to keep it in; the next 401 asks again.
-  }
-}
-
-export function forgetToken() {
-  try {
-    localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // Nothing was stored.
-  }
-}
-
-/** Thrown for a 401. `configured` is false when the server has no token at all. */
+/** Thrown for a 401. `loginConfigured` is false when the server has no login set. */
 export class Locked extends Error {
-  constructor(message, configured, refused) {
+  constructor(message, loginConfigured) {
     super(message);
-    this.configured = configured;
-    this.refused = refused;
+    this.loginConfigured = loginConfigured;
   }
 }
 
@@ -46,7 +26,11 @@ export function onLocked(listener) {
   return () => lockListeners.delete(listener);
 }
 
-/** The server's reason for a refusal: `{"error": …}` when it sends JSON, else its text. */
+/**
+ * The server's reason for a refusal: `{"error": …}` when it sends JSON, else
+ * its text. An HTML page is a proxy's (a 502 while flinch-web restarts), not
+ * FLINCH's, and never shown as markup.
+ */
 async function reason(res) {
   const text = await res.text().catch(() => '');
   try {
@@ -55,26 +39,59 @@ async function reason(res) {
   } catch {
     // Plain text: shown as it is.
   }
+  if ((res.headers.get('Content-Type') || '').includes('text/html')) {
+    return `FLINCH answered ${res.status}; try again in a moment.`;
+  }
   return text || `${res.url} -> ${res.status}`;
 }
 
+/**
+ * Sends the session cookie, to this origin only, and `X-Flinch-Request: 1`:
+ * the server refuses a write made with the cookie without it, and a page on
+ * another site cannot add it.
+ */
+function send(url, init = {}) {
+  return fetch(url, { ...init, credentials: 'same-origin', headers: { 'X-Flinch-Request': '1', ...init.headers } });
+}
+
 async function request(url, init = {}) {
-  const token = storedToken();
-  const headers = { ...init.headers };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(url, { ...init, headers });
+  const res = await send(url, init);
   if (res.status === 401) {
     const text = await res.text().catch(() => '');
     let body = {};
-    try { body = JSON.parse(text) || {}; } catch { /* not JSON: treat as configured */ }
-    // A token that was sent and refused is wrong or rotated; keeping it would
-    // only fail again on every poll.
-    if (token) forgetToken();
-    const locked = new Locked(body.error || 'Unlock required', body.configured !== false, Boolean(token));
+    try { body = JSON.parse(text) || {}; } catch { /* not JSON: treat the login as set up */ }
+    const locked = new Locked(body.error || 'Log in required', body.login_configured !== false);
     for (const listener of lockListeners) listener(locked);
     throw locked;
   }
   return res;
+}
+
+/**
+ * `{ authenticated, login_configured }`: whether to show the dashboard, the
+ * login, or how to set one up. Gives up after 10 s, so a hung server cannot
+ * keep the page blank.
+ */
+export async function loadSession() {
+  const res = await send('/api/session', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`/api/session -> ${res.status}`);
+  return res.json();
+}
+
+/** Resolves once the server set the session cookie; rejects with its reason (a wrong login, or too many tries). */
+export async function logIn(username, password) {
+  const res = await send('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) throw new Error(await reason(res));
+}
+
+/** Ends the session on the server and clears its cookie. */
+export async function logOut() {
+  const res = await send('/api/logout', { method: 'POST' });
+  if (!res.ok) throw new Error(await reason(res));
 }
 
 export async function getJson(url) {
