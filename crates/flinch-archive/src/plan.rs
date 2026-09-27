@@ -3,7 +3,7 @@
 //! The sharpness contract is explicit here, not aspirational:
 //!
 //! - An item is proposed for deletion only when the DETERMINISTIC policy says
-//!   safe AND, when the card has a calibrated verdict, its P(safe) is at least
+//!   safe AND, when the card has a score verdict, its P(safe) is at least
 //!   `policy.score_floor`. The model's answer must also reach `delete_floor`
 //!   (default 0.95), but the shipped [`Baseline`] answers 1.0 for every delete
 //!   the policy permits, so that floor never sees a probability.
@@ -199,8 +199,8 @@ fn eviction_order(a: &Candidate, b: &Candidate) -> Ordering {
 /// 2. Eligibility: the policy permits a delete, the model clears
 ///    `delete_floor` (the sharpness gate: a confident model never overrides a
 ///    "keep", a shy one never overrules a "delete"), and — when the card has a
-///    calibrated verdict — P(safe) clears `policy.score_floor`.
-/// 3. Eligible items are ranked by [`eviction_order`], using the calibrated
+///    score verdict — its P(safe) clears `policy.score_floor`.
+/// 3. Eligible items are ranked by [`eviction_order`], using the score
 ///    verdict's P(safe) when present and the model's probability otherwise (so a
 ///    baseline 1.0 ranks by size alone).
 /// 4. The goal takes that order until it is covered.

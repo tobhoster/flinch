@@ -125,7 +125,7 @@ export default function Settings({ status }) {
             <NumberField {...num('capacity_release', { min: 1, max: 99, step: 1 })} unit="% release" />
           </Row>
           <Row label="While evicting" htmlFor="capacity_arm_never_played" term="never_played"
-            help="Only while eviction is latched (from the ceiling down to the release mark), arms the calibrated never-played rule as an extra candidate source. It still needs its own floor and time on disk; the floor is never lowered. Idle, this has no effect.">
+            help="Only while eviction is latched (from the ceiling down to the release mark), arms the never-played rule as an extra candidate source. It still needs its own floor and time on disk; the floor is never lowered. Idle, this has no effect.">
             <Toggle id="capacity_arm_never_played" checked={!!form.capacity_arm_never_played} onChange={set('capacity_arm_never_played')}>
               Arm never-played reclaim
             </Toggle>
@@ -167,7 +167,7 @@ export default function Settings({ status }) {
           <Row label="Score floor" htmlFor="score_floor" term="score_floor" help="Minimum P(safe) for an item to become a candidate. Policy must also allow it.">
             <NumberField {...num('score_floor', { min: 0, max: 1, step: 0.05 })} unit="P(safe)" />
           </Row>
-          <Row label="Temperature" htmlFor="score_temperature" term="temperature" help="Scales raw scores before calibration. Above 1 makes them less extreme.">
+          <Row label="Temperature" htmlFor="score_temperature" term="temperature" help="Scales raw scores before any floor applies. Above 1 makes them less extreme. Once a fitted model is adopted, this sets only the hand-set priors' cap on P(safe); the model uses its own fitted temperature.">
             <NumberField {...num('score_temperature', { min: 0.1, step: 0.1 })} />
           </Row>
         </Section>

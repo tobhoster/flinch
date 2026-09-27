@@ -100,14 +100,17 @@ pub struct Feature {
 #[derive(Debug, Clone)]
 pub struct ReclaimScore {
     /// The probability the plan gates on: policy terms included, and capped
-    /// under a hard guard so no weighting can talk past a rule.
+    /// under a hard guard so no weighting can talk past a rule. The daemon
+    /// also caps it at the priors' ([`score_fenced`]), so adopting a fit never
+    /// makes more items eligible.
     pub p_safe: f32,
     /// The forecast behind it: the probability that nobody plays the item
     /// within the horizon, from the household's evidence alone. The frozen
     /// policy terms and the guard ceiling decide the plan; they predict
     /// nothing, and folding them in made a guarded season read "99% sure to
     /// be played" whether or not anyone would. This is the number shown and
-    /// the one every accuracy metric scores.
+    /// the one every accuracy metric scores. It is not fenced by the priors,
+    /// so nothing that deletes or replaces may gate on it: read `p_safe`.
     pub forecast: f32,
     /// Raw logit before temperature, retained for fitting and for debugging.
     pub raw_logit: f32,
@@ -164,6 +167,40 @@ pub fn score(card: &ArchiveCard, ctx: HouseholdContext, weights: &ScoreWeights, 
     }
 
     ReclaimScore { p_safe, forecast, raw_logit: logit, signals, hard_guard }
+}
+
+/// Score one item under the running scorecard, gated no higher than the
+/// hand-set priors gate it.
+///
+/// A fitted model sets the forecast and can narrow what the floors pass, never
+/// widen it: `p_safe` is the lower of its P(safe) and the priors' at
+/// `prior_temperature`, the operator's temperature, and NaN when either is.
+/// Both sides carry the hard-guard ceiling. While the priors run, both sides
+/// are the same call, so every number is bit-identical to [`score`]'s.
+pub fn score_fenced(
+    card: &ArchiveCard,
+    ctx: HouseholdContext,
+    running: &ScoreWeights,
+    temperature: f32,
+    prior_temperature: f32,
+) -> ReclaimScore {
+    let priors = score(card, ctx, &ScoreWeights::default(), prior_temperature);
+    let mut scored = score(card, ctx, running, temperature);
+    scored.p_safe = fenced(scored.p_safe, priors.p_safe);
+    scored
+}
+
+/// The lower of the running model's P(safe) and the priors', and NaN when
+/// either is: `f32::min` returns the other side, which would let a failed
+/// score clear a floor.
+fn fenced(running: f32, priors: f32) -> f32 {
+    if running.is_nan() {
+        running
+    } else if priors.is_nan() {
+        priors
+    } else {
+        running.min(priors)
+    }
 }
 
 /// The structural guard on a card, if any: favorites, keep-collections and the

@@ -25,13 +25,15 @@ pub struct RuntimeSettings {
     /// claim an item by playing it. One title for both kinds, each bound to its
     /// own library. Blank sends them straight to the delete collections.
     pub collection_leaving: String,
-    /// Minimum calibrated P(safe) before an item may be scheduled. Thresholds
-    /// are meaningless until the score is calibrated; this is where the Laya
-    /// lesson lands.
+    /// Minimum P(safe) before an item may be scheduled, read capped at the
+    /// priors' ([`crate::score::score_fenced`]). Thresholds are meaningless
+    /// until the score is calibrated; this is where the Laya lesson lands.
     pub score_floor: f32,
     /// Temperature applied to the raw logit. >1 softens an overconfident model.
+    /// Once a fit is adopted it scales only the priors' side of the cap on
+    /// P(safe) ([`crate::score::score_fenced`]); the fit runs at its own.
     pub score_temperature: f32,
-    /// Reclaim items nobody ever played when the calibrated score clears the
+    /// Reclaim items nobody ever played when their P(safe) clears the
     /// floor. Off by default: this is the capability Maintainerr cannot express,
     /// and deleting on the strength of absent evidence is the operator's call.
     pub unwatched_reclaim_enabled: bool,
@@ -46,7 +48,7 @@ pub struct RuntimeSettings {
     /// Where a latched eviction stops (0.75 = 75%). Below the ceiling so one
     /// finished download does not trigger one more delete.
     pub capacity_release: f32,
-    /// While evicting, arm the calibrated never-played rule as an extra
+    /// While evicting, arm the never-played rule as an extra
     /// candidate source (still gated by its own floor and dwell). Off: the
     /// volume may stay over budget, and the status says so instead of guessing.
     pub capacity_arm_never_played: bool,

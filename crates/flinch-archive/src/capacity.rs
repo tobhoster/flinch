@@ -22,8 +22,8 @@
 //! - **More aggressive only on measured evidence.** Unmeasured capacity evicts
 //!   nothing and leaves the latch as it was: losing telemetry never deletes more.
 //! - **Pressure widens the permitted set; it never lowers a floor.** While
-//!   evicting, the operator may let the calibrated never-played rule contribute,
-//!   still gated by its own P(safe) floor and dwell.
+//!   evicting, the operator may let the never-played rule contribute, still
+//!   gated by its own P(safe) floor and dwell.
 //! - **Space that never frees is reported, not chased.** Evicted bytes the
 //!   disk has not released after the recycle window stay credited as *held*
 //!   (see [`EvictionLedger`]), so a torrent seeding the same file cannot make
@@ -234,8 +234,8 @@ pub struct CapacityDecision {
 /// has a goal of 0 instead of evicting a second batch for the same gap. A
 /// latched volume vanishing from the measurement (unmounted, renamed) drops
 /// out of the latch: there is nothing to free on a disk that is not there.
-/// While anything evicts and `arm_never_played` is set, the calibrated
-/// never-played rule joins the permitted set.
+/// While anything evicts and `arm_never_played` is set, the never-played rule
+/// joins the permitted set.
 pub fn decide_capacity(
     policy: &mut ArchivePolicy,
     snapshot: Option<&CapacitySnapshot>,

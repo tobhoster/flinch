@@ -73,16 +73,18 @@ over the ceiling: free 70.0 GiB to reach the release mark
 ## The keep/reclaim reflex
 
 What *may* go is decided by deterministic rules; what goes *first* is decided by
-a calibrated forecast; nothing below a floor is ever touched.
+P(safe), capped at the hand-set priors once a model is adopted; nothing below a
+floor is ever touched.
 
 - **Rules are absolute, and separate from the forecast.** Favorites,
   keep-collections, the operator's own Maintainerr exclusions, the keep tag
   (`flinch-keep` by default) as a Radarr/Sonarr tag *or* a Plex label or
   collection, active items and the newest aired season are immune. The plan
-  gates on a score that carries these rules; the number you see is the
-  forecast alone, with a lock beside any item a rule keeps. Folding the rules
-  into the displayed number used to make a guarded season read "99% sure to be
-  played" whether or not anyone would.
+  gates on a score that carries these rules. The Movies and Series tables show
+  the forecast alone, with a lock beside any item a rule keeps; the Overview's
+  candidate lists show the P(safe) the plan gates on. Folding the rules into
+  the forecast used to make a guarded season read "99% sure to be played"
+  whether or not anyone would.
 - **The floors are on P(safe).** An item the rules allow is eligible only when
   its P(safe), the score that carries the rules, is at least the operator's
   `score_floor` (default 0.75). The rules allow a never-played item only while
@@ -92,14 +94,24 @@ a calibrated forecast; nothing below a floor is ever touched.
   floor (`unwatched_reclaim_floor`, default 0.75). The plan's model delete floor
   (0.95) never sees a probability: it is checked against the rules' own answer,
   1.0 for every delete they allow, so it adds no gate of its own.
+- **A fitted model can narrow, never widen.** The score floor, the never-played
+  floor and the eviction order read the lower of two P(safe)s: the running
+  model's and the hand-set priors' at the operator's `score_temperature`
+  (default 1.6). If either cannot be computed, the item is held. So adopting a
+  fit can hold an item the priors would pass, but never passes one they hold.
+  The forecast in the Movies and Series tables, which `/v1/systemone` also
+  answers with, stays the running model's, and nothing that deletes gates on
+  it; the Overview's candidate lists show the capped P(safe), so the two can
+  differ. To free more, lower the score floor, and for items nobody played the
+  never-played floor as well.
 - **Watch state is external and fail-closed.** *arr knows files; only the media
   server knows "watched". Missing or partial evidence protects; it never
   deletes. Never-played reclaim arms only when every configured watch source was
   read completely this cycle.
 - **Dwell starts when the file arrived**, not when the title was requested.
 - **Never a delete path for a model.** A model never deletes and never
-  overrides a protection. Its P(safe) is checked against the floors above and
-  orders what passes.
+  overrides a protection. Its P(safe), capped at the priors, is checked
+  against the floors above and orders what passes.
 
 ## Leaving Soon: nothing unwatched goes without a warning (one exception: see Known limits)
 
@@ -243,9 +255,10 @@ forecast by a model fitted without that title. Two models compete:
   questions and 12 of each outcome.
 
 Each must beat the priors' out-of-fold Brier without losing their ranking; of
-those that do, the one with the better log-loss is adopted. The UI's
-**Forecast model** card shows which model runs, what it learned from, its
-scores, and what is still missing.
+those that do, the one with the better log-loss is adopted. An adopted model
+sets the forecast, but it can only narrow what the floors pass (see the
+keep/reclaim reflex above). The UI's **Forecast model** card shows which model
+runs, what it learned from, its scores, and what is still missing.
 
 The same panel is exported for any other model, and scored side by side:
 
@@ -400,8 +413,9 @@ flowchart LR
     SC --> RC
 ```
 
-Deterministic rules decide what is permitted; a learned forecast decides what is
-preferred; below the confidence floor nothing happens.
+Deterministic rules decide what is permitted; P(safe), capped at the hand-set
+priors once a model is adopted, decides what is preferred; below the confidence
+floor nothing happens.
 
 ## Known limits
 

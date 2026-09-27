@@ -31,12 +31,12 @@ impl InflowProfiles {
     }
 }
 
-/// Calibrated P(safe) at or above which an item is low value: nobody is
-/// expected to play it again within the horizon. Deliberately high — a
-/// profile move is cheap to undo, but a wasted re-download is not free.
+/// P(safe) at or above which an item is low value: nobody is expected to
+/// play it again within the horizon. Deliberately high — a profile move is
+/// cheap to undo, but a wasted re-download is not free.
 pub const COMPACT_FLOOR: f32 = 0.85;
-/// Calibrated P(safe) below which the household is expected to come back to
-/// the item: it earns the premium tier.
+/// P(safe) below which the household is expected to come back to the item:
+/// it earns the premium tier.
 pub const PREMIUM_CEILING: f32 = 0.40;
 
 /// Which tier an item should use.

@@ -185,7 +185,9 @@ pub struct Metrics {
     pub priors_ece: f32,
     pub horizon_days: f32,
     pub fitted_at_unix: u64,
-    /// Rows the model flags at the operating floor, out of fold.
+    /// Rows the model flags at the operating floor, out of fold, on its own
+    /// P(safe). The daemon caps that at the priors' ([`score::score_fenced`]),
+    /// so this is what the model alone would flag, not what adopting it passes.
     pub flagged_at_floor: usize,
     pub precision_at_floor: f32,
     /// Panel-wide audit of the *prior* model through the operating floor: how
