@@ -157,10 +157,20 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
   reported as the wrong type, and it never blocks movies. Turn **Use rules**
   off on both: FLINCH adds the items, and anything the group's own rules
   selected would be deleted by Maintainerr on its own.
-- **A window is never restarted.** The next cycle's plan takes what
+- **A newcomer never restarts a window.** The next cycle's plan takes what
   Maintainerr already holds first, so a slightly cheaper newcomer cannot push
   an announced item back out and restart its window. The item table shows
   "Leaves Oct 7" once an item is handed over.
+- **A change of collection is a move.** When an item belongs in another
+  collection, for example after a collection title changed in Settings, FLINCH
+  takes it out of the old collection and adds it to the new one. Its window
+  restarts there, and the add counts against the per-run caps: a finished or
+  duplicate item that does not fit yet stays in its old collection. An item
+  nobody finished never waits unprotected outside Leaving Soon: FLINCH takes
+  it out of any other collection it put it in at once, even while its add
+  waits, and keeps it by an exclusion in a delete collection it has no record
+  of adding it to (see *A warning or nothing* and *Out of a delete collection
+  at once* above).
 
 ## Deletions FLINCH did not make
 
@@ -178,7 +188,11 @@ in the library has a name, and says which will download again.
 - **FLINCH's own are left out.** A removal counts as FLINCH's when FLINCH
   handed the item to Maintainerr no later than the removal. Hand-overs are
   remembered while FLINCH tracks the eviction and for 120 days after the
-  hand-over, unless FLINCH took the item back.
+  hand-over, unless FLINCH took the item back. A move to another collection
+  that lands in one run is not a take-back: the item keeps its first
+  hand-over. An item nobody finished that is taken out before its Leaving Soon
+  add lands counts as taken back; its next hand-over is when Leaving Soon
+  takes it.
 - **Monitored with nothing on disk will download again.** Each entry says
   whether the app still monitors the item (for a season: the show and the
   season both) and whether a file is back. Monitored with nothing on disk

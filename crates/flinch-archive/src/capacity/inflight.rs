@@ -168,6 +168,28 @@ impl EvictionLedger {
         self.handoffs.entry(handed.id.to_string()).or_insert(now);
     }
 
+    /// Book a collection membership FLINCH made and Maintainerr still holds,
+    /// added at `added_at`: this cycle's adds, and any hand-over the ledger
+    /// lost (a failed write or a corrupt `evictions.json`, a stop between the
+    /// two state writes). A tracked one keeps its first hand-over, and a
+    /// membership older than [`STALE_ON_DISK_SECS`] is not tracked again.
+    pub fn book(&mut self, handed: HandedOver<'_>, added_at: u64, now: u64) {
+        if now.saturating_sub(added_at) >= STALE_ON_DISK_SECS {
+            return;
+        }
+        // Still on disk: its volume and size are today's, wherever its files
+        // moved since the first hand-over. On the same disk a smaller size may
+        // be a deletion caught partway, some files already in the recycle bin:
+        // keep the larger one, since too little credit evicts more.
+        if let Some(eviction) = self.entries.get_mut(handed.id).filter(|eviction| eviction.gone_at.is_none()) {
+            let same_disk = eviction.volume == handed.volume;
+            eviction.bytes = if same_disk { eviction.bytes.max(handed.bytes) } else { handed.bytes };
+            eviction.app = handed.app;
+            eviction.volume = handed.volume.to_string();
+        }
+        self.record(handed, added_at);
+    }
+
     /// Forget a hand-over that was taken back: if the item later leaves disk
     /// for any other reason, neither its bytes nor its deletion are FLINCH's.
     pub fn forget(&mut self, id: &str) {

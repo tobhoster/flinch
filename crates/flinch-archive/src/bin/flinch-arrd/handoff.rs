@@ -2,8 +2,11 @@
 //! reserve included — becomes an exclusion, evictions past the grace window
 //! join a collection (least regret first, within the caps): Leaving Soon when
 //! nobody finished them, their kind's delete collection otherwise. FLINCH's
-//! exclusions on items gone from the library and Plex are released. Every
-//! verified add or take-back is booked in the eviction ledger.
+//! exclusions on items gone from the library and Plex are released. An
+//! enforcing run books in the eviction ledger every membership FLINCH made
+//! that Maintainerr still holds, while its item is in the library on a
+//! governed disk and younger than the stale limit. Every take-back is
+//! forgotten there.
 
 use super::sink::Sink;
 use super::state_dir;
@@ -72,23 +75,25 @@ pub(super) async fn sync(
     for (action, outcome) in synced.results() {
         println!("[flinch-arrd] {action}: {outcome}");
     }
-    // Exactly the verified new adds: their bytes are pending until a recycle
-    // bin releases them.
-    for (card_id, bytes) in synced.scheduled() {
-        let Some(volume) = governance.volume_for(card_id) else { continue };
-        let app = match items.get(card_id).map(|item| item.kind) {
-            Some(LibraryKind::Movie) => App::Radarr,
-            Some(LibraryKind::Season) => App::Sonarr,
-            None => continue,
-        };
-        let title = names.get(card_id).copied().unwrap_or_default();
-        ledger.record(HandedOver { id: card_id, title, app, volume: &volume, bytes }, now);
-    }
-    // Taken back: nothing of theirs is on its way out any more.
-    for card_id in synced.unscheduled() {
+    // Taken back: nothing of theirs is on its way out any more. A move to
+    // another collection is not a take-back.
+    for card_id in synced.taken_back() {
         ledger.forget(card_id);
     }
     if enforcing {
+        // Every membership FLINCH made that Maintainerr still holds is a
+        // hand-over, booked at its add: this cycle's adds, and any the ledger
+        // lost. Only an enforcing sync prunes `owned` to what Maintainerr holds.
+        for (card_id, entry) in &owned.scheduled {
+            let Some(item) = items.get(card_id.as_str()) else { continue };
+            let Some(volume) = governance.volume_for(card_id) else { continue };
+            let app = match item.kind {
+                LibraryKind::Movie => App::Radarr,
+                LibraryKind::Season => App::Sonarr,
+            };
+            let title = names.get(card_id.as_str()).copied().unwrap_or_default();
+            ledger.book(HandedOver { id: card_id, title, app, volume: &volume, bytes: item.bytes }, entry.added_at, now);
+        }
         if let Err(error) = owned.write(&state_dir()) {
             eprintln!("[flinch-arrd] protected.json/scheduled.json write failed: {error}");
         }
