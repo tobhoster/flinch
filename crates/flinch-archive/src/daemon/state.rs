@@ -37,8 +37,9 @@ pub struct ItemSnapshot {
     /// "Plex says zero plays" is evidence and "Plex has no idea" is not.
     #[serde(default)]
     pub last_watched_days: Option<f32>,
-    /// Fraction of the item played (episodes watched / total for a season,
-    /// 0.0 or 1.0 for a movie). `None` = no media-server entry.
+    /// Fraction of the item played (episodes watched / total for a season;
+    /// for a movie 1.0 when finished, 0.0 when never played, and in between
+    /// when only started). `None` = no media-server entry.
     #[serde(default)]
     pub watched_fraction: Option<f32>,
     /// Where the watch verdict came from: `"plex"` (matched) or absent when the

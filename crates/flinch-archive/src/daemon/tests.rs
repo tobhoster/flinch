@@ -123,6 +123,137 @@ fn only_the_eviction_nobody_finished_is_announced() {
     assert_eq!(report.announced_ids, BTreeSet::from(["sonarr-6-s1".to_string()]));
 }
 
+/// A movie two years on disk that Plex dated 200 days ago but never counted
+/// as viewed: its watch state and Plex ids, the way the daemon reads them.
+fn started_movie() -> (ArrMovie, HashMap<String, watch::WatchEntry>, crate::ids::PlexIds) {
+    let movie = ArrMovie {
+        id: 1,
+        title: "Started One".to_string(),
+        year: Some(2020),
+        size_on_disk: 5_000_000_000,
+        has_file: true,
+        movie_file: Some(crate::arr::MovieFile { quality: None, date_added: Some("2025-01-01T00:00:00Z".to_string()) }),
+        tmdb_id: Some(1),
+        ..Default::default()
+    };
+    let row = serde_json::json!({
+        "ratingKey": "100", "librarySectionID": 1, "title": "Started One", "year": 2020,
+        "lastViewedAt": NOW - 200 * 86_400, "Guid": [{"id": "tmdb://1"}],
+    });
+    let library = crate::plex::PlexLibrary::new(&[serde_json::from_value(row).expect("a Plex movie row")], &[], &[]);
+    let card = movie.to_card().expect("on disk");
+    let target = crate::plex::WatchTarget { external: movie.external_ids(), ..crate::plex::WatchTarget::from(&card) };
+    let resolution = crate::plex::resolve(&[target], &library);
+    let health = watch::EvidenceHealth { plex_configured: true, plex_items_ok: true, plex_history_complete: true, ..Default::default() };
+    let plex_ids = resolution.plex_ids().remove("radarr-1").expect("resolved by GUID");
+    (movie, resolution.item_entries(&health), plex_ids)
+}
+
+const DELETE_MOVIES: i64 = 10;
+const LEAVING_MOVIES: i64 = 30;
+
+/// Hand a cycle's decisions to Maintainerr the way bin/flinch-arrd/handoff.rs
+/// does, with every eviction past its grace window and a Leaving Soon
+/// collection named and valid. `held` is the collection an earlier cycle
+/// already put radarr-1 in. Returns the collections this cycle schedules
+/// into, then those it takes a card back out of.
+fn hand_over(report: &ReconcileOutput, plex_ids: &crate::ids::PlexIds, held: Option<i64>) -> (Vec<i64>, Vec<i64>) {
+    use crate::maintainerr as mx;
+    let item = |id: &String| mx::SyncItem {
+        card_id: id.clone(),
+        kind: crate::card::LibraryKind::Movie,
+        plex: Some(plex_ids.clone()),
+        copies: Vec::new(),
+        bytes: 5_000_000_000,
+    };
+    let collection = |id, title: &str, delete_after_days, visible_on_home| mx::CollectionInfo {
+        id,
+        title: title.to_string(),
+        media_type: "movie".to_string(),
+        library_id: "1".to_string(),
+        is_active: true,
+        arr_action: 1,
+        delete_after_days,
+        visible_on_home,
+        visible_on_recommended: false,
+        keep_in_maintainerr_only: false,
+        overlay_enabled: false,
+        force_seerr: false,
+    };
+    let desired = mx::Desired {
+        protect: report.kept_ids.iter().chain(&report.reserve_ids).map(item).collect(),
+        evict: report.deleted_ids.iter().map(item).collect(),
+        announced: report.announced_ids.clone(),
+        collections: mx::CollectionTitles {
+            movie: "FLINCH Movies".to_string(),
+            season: "FLINCH Seasons".to_string(),
+            leaving: "Leaving Soon".to_string(),
+        },
+        gone: BTreeSet::new(),
+        seerr_configured: false,
+    };
+    let mut observed = mx::Observed {
+        version: mx::MaintainerrVersion::Release { major: 3, minor: 29, patch: 0 },
+        collections: vec![
+            collection(DELETE_MOVIES, "FLINCH Movies", None, false),
+            collection(LEAVING_MOVIES, "Leaving Soon", Some(14), true),
+        ],
+        members: [(DELETE_MOVIES, BTreeSet::new()), (LEAVING_MOVIES, BTreeSet::new())].into(),
+        exclusions: [(plex_ids.rating_key.clone(), Vec::new())].into(),
+    };
+    let mut owned = mx::OwnedState::default();
+    if let Some(collection_id) = held {
+        let target = mx::MaintainerrTarget::from_plex(plex_ids, crate::card::LibraryKind::Movie).expect("a movie key");
+        observed.members.entry(collection_id).or_default().insert(target.item_key().to_string());
+        owned.scheduled.insert("radarr-1".to_string(), mx::ScheduledEntry { target, collection_id, added_at: NOW - 86_400 });
+    }
+    let (mut into, mut out_of) = (Vec::new(), Vec::new());
+    for action in mx::plan_sync(&desired, &observed, &owned, &mx::Caps::new(10, 100)).actions {
+        match action {
+            mx::SyncAction::Schedule { collection_id, .. } => into.push(collection_id),
+            mx::SyncAction::Unschedule { collection_id, .. } => out_of.push(collection_id),
+            _ => {}
+        }
+    }
+    (into, out_of)
+}
+
+#[test]
+fn a_started_movie_is_announced_or_kept_never_silently_deleted() {
+    let (movie, watch, plex_ids) = started_movie();
+    let verdicts = HashMap::from([("radarr-1".to_string(), ScoreVerdict { p_safe: 0.99, hard_guard: false, sibling_played: false })]);
+    let cycle = |enabled| {
+        let policy = ArchivePolicy {
+            unwatched_reclaim: crate::policy::UnwatchedReclaim { enabled, ..Default::default() },
+            ..ArchivePolicy::default()
+        };
+        reconcile(std::slice::from_ref(&movie), &[], &watch, &BTreeSet::new(), &policy, &verdicts, &ReclaimGoal::AllSafe)
+    };
+
+    // Started but never finished: kept while never-played reclaim is off.
+    let unarmed = cycle(false);
+    assert_eq!(unarmed.kept_ids, ["radarr-1"]);
+    assert!(unarmed.deleted_ids.is_empty(), "never deleted as a watched movie");
+    assert_eq!(hand_over(&unarmed, &plex_ids, None), (vec![], vec![]));
+    // An earlier cycle read it as watched and scheduled it for deletion.
+    assert_eq!(hand_over(&unarmed, &plex_ids, Some(DELETE_MOVIES)), (vec![], vec![DELETE_MOVIES]), "taken back");
+
+    // Armed: it may go, but only announced, through Leaving Soon.
+    let armed = cycle(true);
+    assert_eq!(armed.deleted_ids, ["radarr-1"]);
+    assert_eq!(armed.announced_ids, BTreeSet::from(["radarr-1".to_string()]));
+    assert_eq!(
+        hand_over(&armed, &plex_ids, None),
+        (vec![LEAVING_MOVIES], vec![]),
+        "into Leaving Soon, never straight into the delete collection"
+    );
+    assert_eq!(
+        hand_over(&armed, &plex_ids, Some(DELETE_MOVIES)),
+        (vec![LEAVING_MOVIES], vec![DELETE_MOVIES]),
+        "moved to Leaving Soon, out of the delete collection"
+    );
+}
+
 /// The run (by index) at which one steady candidate first becomes eligible.
 fn first_eligible(runs: u32, at: &[u64]) -> Option<usize> {
     let mut state = CandidateState::default();

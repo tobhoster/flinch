@@ -3,15 +3,28 @@
 //!
 //! Each row carries the card and household context inference would have scored
 //! at the cut, rebuilt from plays *before* the cut only, and a label from plays
-//! in the horizon *after* it. Play state, recency, rewatches, viewers, sibling
-//! engagement and play-log provenance are exact. A few facts have no history to
-//! replay and use their current value — the documented approximation: size,
-//! the newest-season flag, the sibling count, and provenance from an item-state
+//! in the horizon *after* it. Recency, rewatches, viewers, sibling engagement
+//! and play-log provenance are exact, and so is play state as the play log
+//! records it (one exception below). A few facts have no history to replay and
+//! use their current value — the documented approximation: size, the
+//! newest-season flag, the sibling count, and provenance from an item-state
 //! source (a live Plex query or an export). They barely move over a season, and
 //! pretending to know their history would be inventing data. Series status is
 //! only counted once the final episode had aired by the cut, so it never leaks.
 //! Taste is a post-pass over the finished panel: each row reads the household's
 //! genre play-rates counted from rows whose outcome had closed by its own cut.
+//!
+//! The exception, a known disagreement with the daemon: a movie is finished
+//! here when the play log holds a finished play. The daemon also reads Plex
+//! item state and lets the newest record decide, so a later `lastViewedAt` Plex
+//! did not count (a start) outranks an older finished play: a Tautulli stream
+//! of 85% or more, which is dated by its start and so older than Plex's stamp
+//! for the same session, or another account's counted view. The play log has
+//! no item state to replay, so the panel trains such a movie as finished while
+//! the daemon scores it as started. The daemon's is the cautious reading: it
+//! never gates a start above the same movie read as finished, under the priors
+//! or a fit ([`crate::score::score_fenced`]), and the movie waits for
+//! never-played reclaim and Leaving Soon instead of leaving as watched.
 
 use super::plays::PlayEvidence;
 use super::FitItem;

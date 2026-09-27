@@ -117,8 +117,9 @@ pub enum Reason {
         days: f32,
         size_bytes: u64,
     },
-    /// Never played, old enough, and the calibrated score clears the floor. The
-    /// reason carries the probability because that is the whole justification.
+    /// Nobody finished it (a season: nobody played any of it), it is old
+    /// enough, and its P(safe) clears the floor. The reason carries the
+    /// probability because that is the whole justification.
     DeleteUnwatchedByScore {
         p_safe: f32,
         days: f32,
@@ -272,8 +273,8 @@ impl Reason {
         match self {
             Reason::KeepBecauseFavorite => "Favorite".into(),
             Reason::KeepBecauseInKeepCollection => "Kept by you (Maintainerr exclusion or Plex keep marker)".into(),
-            Reason::KeepBecauseActive => "Watched in the last 30 days".into(),
-            Reason::KeepBecauseWarm => "Watched recently".into(),
+            Reason::KeepBecauseActive => "Played in the last 30 days".into(),
+            Reason::KeepBecauseWarm => "Played recently".into(),
             Reason::KeepBecauseNewestSeason => "Newest aired season".into(),
             Reason::KeepBecauseNotCompleted => "Not fully watched".into(),
             Reason::KeepBecauseNeverWatchedIsSoleCopy => "Never played".into(),
@@ -283,7 +284,7 @@ impl Reason {
                 format!("Watched, untouched for {days:.0} days")
             }
             Reason::DeleteUnwatchedByScore { p_safe, days, .. } => {
-                format!("Never played in {days:.0} days, P(safe) {:.0}%", p_safe * 100.0)
+                format!("Nobody finished it in {days:.0} days, P(safe) {:.0}%", p_safe * 100.0)
             }
             Reason::DeleteDuplicate { .. } => "Duplicate copy".into(),
         }

@@ -202,22 +202,31 @@ where
 impl PlexMetadata {
     /// Watch state of a single movie.
     ///
-    /// Watched if EITHER signal says so: Plex omits `viewCount` entirely when it
-    /// is 1 (observed live on a movie that had only `lastViewedAt`), so trusting
-    /// the count alone would silently classify watched movies as unwatched.
+    /// Watched only when Plex counted a view (`viewCount`). A `lastViewedAt`
+    /// without one was seen live on movies whose only Tautulli streams were
+    /// partial, so it reads as started, not finished: like a partial Tautulli
+    /// stream, it keeps its date for recency and never makes the movie watched.
     pub fn movie_watch(&self) -> WatchInfo {
-        let watched = self.view_count.unwrap_or(0) > 0 || self.last_viewed_at.is_some();
-        WatchInfo { watched_fraction: if watched { 1.0 } else { 0.0 }, last_viewed_unix: self.last_viewed_at }
+        let watched_fraction = if self.view_count.unwrap_or(0) > 0 {
+            1.0
+        } else if self.last_viewed_at.is_some() {
+            0.01
+        } else {
+            0.0
+        };
+        WatchInfo { watched_fraction, last_viewed_unix: self.last_viewed_at }
     }
 
     /// Watch state of a show or season from its leaf counts (episodes watched / held).
+    ///
+    /// A `lastViewedAt` with no episode counted is a start, as in
+    /// [`Self::movie_watch`]: played, so never "no play at all".
     pub fn leaf_watch(&self) -> WatchInfo {
         let total = self.leaf_count.unwrap_or(0);
         let viewed = self.viewed_leaf_count.unwrap_or(0);
-        WatchInfo {
-            watched_fraction: if total == 0 { 0.0 } else { (viewed as f32 / total as f32).min(1.0) },
-            last_viewed_unix: self.last_viewed_at,
-        }
+        let counted = if total == 0 { 0.0 } else { (viewed as f32 / total as f32).min(1.0) };
+        let started = counted == 0.0 && self.last_viewed_at.is_some();
+        WatchInfo { watched_fraction: if started { 0.01 } else { counted }, last_viewed_unix: self.last_viewed_at }
     }
 
     /// The external catalogue ids this row's GUIDs name.

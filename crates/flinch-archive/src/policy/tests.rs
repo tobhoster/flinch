@@ -41,6 +41,36 @@ fn armed_score_reclaims_never_played_and_disabled_never_does() {
 }
 
 #[test]
+fn a_score_gated_reclaim_says_nobody_finished_it() {
+    // The rule also takes a movie somebody started: "never played" is false
+    // beside its play date, and "nobody finished it" is true of both.
+    let armed = ArchivePolicy { unwatched_reclaim: UnwatchedReclaim { enabled: true, ..Default::default() }, ..ArchivePolicy::default() };
+    let verdict = ScoreVerdict { p_safe: 0.78, hard_guard: false, sibling_played: false };
+    for played in [None, Some(200.0)] {
+        let mut movie = golden_movie();
+        movie.is_watched = Some(false);
+        movie.last_watched_days = played;
+        movie.added_days_ago = 400.0;
+        assert_eq!(decide(&movie, &armed, Some(verdict)).describe(), "Nobody finished it in 400 days, P(safe) 78%");
+    }
+}
+
+#[test]
+fn a_recent_play_is_called_played_not_watched() {
+    // The recency rules keep a movie somebody only started as well as one
+    // somebody finished: "watched" is false beside the start, and "played" is
+    // true of both.
+    for is_watched in [false, true] {
+        for (days, reason) in [(10.0, "Played in the last 30 days"), (60.0, "Played recently")] {
+            let mut movie = golden_movie();
+            movie.is_watched = Some(is_watched);
+            movie.last_watched_days = Some(days);
+            assert_eq!(decide(&movie, &ArchivePolicy::default(), None).describe(), reason, "watched {is_watched}, played {days} d ago");
+        }
+    }
+}
+
+#[test]
 fn armed_score_still_cannot_talk_past_a_guard_or_a_thin_dwell() {
     let armed = ArchivePolicy {
         unwatched_reclaim: UnwatchedReclaim { enabled: true, floor: 0.75, min_dwell_days: 90.0 },
