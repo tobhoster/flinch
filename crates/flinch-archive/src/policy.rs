@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub struct ArchivePolicy {
     /// Completed-and-untouched for at least this many days.
     pub retention_days: f32,
-    /// Minimum calibrated P(safe) (the scorecard's verdict) before a delete the
+    /// Minimum P(safe) (the scorecard's verdict) before a delete the
     /// policy permits may be planned. 0.0 disables the gate — the deterministic
     /// rules alone decide — which is the library default; the daemon sets it
     /// from the operator's `score_floor`. Cards without a verdict are judged by
@@ -28,7 +28,7 @@ pub struct ArchivePolicy {
     pub keep_newest_season: bool,
     /// Delete duplicate movie copies, keeping the largest (best quality).
     pub dedupe_movies: bool,
-    /// Reclaim never-played items when the calibrated score clears a floor.
+    /// Reclaim never-played items when their P(safe) clears a floor.
     ///
     /// This is the one place FLINCH exceeds Maintainerr's rule: "watched and
     /// stale" can never free a movie nobody ever opened, which is exactly the
@@ -42,7 +42,7 @@ pub struct ArchivePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct UnwatchedReclaim {
     pub enabled: bool,
-    /// Minimum calibrated P(safe).
+    /// Minimum P(safe).
     pub floor: f32,
     /// Minimum time on disk before absence of playback means anything.
     pub min_dwell_days: f32,
@@ -54,11 +54,13 @@ impl Default for UnwatchedReclaim {
     }
 }
 
-/// What the calibrated model thinks of one item, as the policy sees it.
+/// What the scorecard thinks of one item, as the policy sees it.
 ///
-/// The policy is the arbiter: a model can widen what is reclaimable, never
-/// override a protection. `hard_guard` carries the structural caps (favorite,
-/// keep-collection, newest season) so a high score can never talk past them.
+/// The policy is the arbiter: a fitted model can narrow what is reclaimable,
+/// never widen it (`p_safe` is capped at the priors' by
+/// [`crate::score::score_fenced`]), and never override a protection.
+/// `hard_guard` carries the structural caps (favorite, keep-collection, newest
+/// season) so a high score can never talk past them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScoreVerdict {
     pub p_safe: f32,

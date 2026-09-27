@@ -1,7 +1,8 @@
 //! The archive reflex: sharp, calibrated, auditable decisions about which
 //! watched seasons and movies can be reclaimed. Deterministic policy first; a
-//! trained head slots in through the `ArchiveModel` boundary and is judged by
-//! calibration and sharpness together (see [`calibration`]).
+//! fitted model reaches the plan as each card's [`policy::ScoreVerdict`]
+//! P(safe), capped at the hand-set priors' ([`score::score_fenced`]), and is
+//! judged by calibration and sharpness together (see [`calibration`]).
 //!
 //! Invariants:
 //! - The policy's protections (favorites, keep-collections, active items, the
@@ -9,7 +10,7 @@
 //! - Nothing is deleted. This crate produces a plan; a separate explicit
 //!   `apply` step moves candidates to trash with a TTL.
 //! - A delete requires BOTH the deterministic rule AND, when the card has a
-//!   calibrated verdict, P(safe) at or above the policy's `score_floor`. The
+//!   score verdict, its P(safe) at or above the policy's `score_floor`. The
 //!   plan's 0.95 `delete_floor` sees only the shipped `Baseline`'s answer, 1.0
 //!   for every delete the rule permits (see [`plan`]). Below a floor: keep.
 

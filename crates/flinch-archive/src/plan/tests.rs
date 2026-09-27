@@ -1,5 +1,7 @@
 use super::*;
+use crate::daemon::RuntimeSettings;
 use crate::golden::golden_season;
+use crate::score::{self, HouseholdContext, ReclaimScore, ScoreWeights};
 use proptest::prelude::*;
 use rstest::rstest;
 
@@ -126,6 +128,63 @@ fn the_score_floor_gates_what_the_policy_permits(#[case] p_safe: Option<f32>, #[
     assert_eq!(!plan.entries.is_empty(), planned);
 }
 
+/// What the priors hold at the default floor: a film finished 100 d ago, one
+/// nobody played with no watch evidence at all, and a season Tautulli saw
+/// nobody start.
+fn held_by_the_priors() -> Vec<(ArchiveCard, HouseholdContext)> {
+    let mut finished = crate::golden::golden_movie();
+    finished.id = "finished".to_string();
+    finished.last_watched_days = Some(100.0);
+    finished.added_days_ago = 400.0;
+    finished.rewatch_score = None;
+    finished.size_bytes = 20 * GB;
+    let mut unseen = finished.clone();
+    unseen.id = "no-evidence".to_string();
+    unseen.is_watched = Some(false);
+    unseen.last_watched_days = None;
+    let mut unstarted = watched_cold_season("unstarted");
+    unstarted.season_state = Some(crate::card::SeasonState::Empty);
+    unstarted.episodes_watched = Some(0);
+    unstarted.last_watched_days = None;
+    unstarted.added_days_ago = 120.0;
+    let plex = HouseholdContext { watch_source: Some(crate::watch::WatchSource::Plex), ..Default::default() };
+    let tautulli = HouseholdContext { watch_source: Some(crate::watch::WatchSource::TautulliAbsence), ..Default::default() };
+    vec![(finished, plex), (unseen, HouseholdContext::default()), (unstarted, tautulli)]
+}
+
+/// The ids the plan makes eligible when `scorer` scores every card, at the
+/// default floors with never-played reclaim armed.
+fn eligible_under(scorer: impl Fn(&ArchiveCard, HouseholdContext) -> ReclaimScore) -> Vec<String> {
+    let rows = held_by_the_priors();
+    let cards: Vec<ArchiveCard> = rows.iter().map(|(card, _)| card.clone()).collect();
+    let verdicts: HashMap<String, ScoreVerdict> = rows
+        .iter()
+        .map(|(card, ctx)| {
+            let scored = scorer(card, *ctx);
+            (card.id.clone(), ScoreVerdict { p_safe: scored.p_safe, hard_guard: scored.hard_guard.is_some(), sibling_played: false })
+        })
+        .collect();
+    let mut policy = ArchivePolicy { score_floor: RuntimeSettings::default().score_floor, ..ArchivePolicy::default() };
+    policy.unwatched_reclaim.enabled = true;
+    let plan = build_plan(&cards, &Baseline::new(policy), &policy, 0.95, &verdicts, &ReclaimGoal::AllSafe);
+    ids(&plan).into_iter().map(String::from).collect()
+}
+
+#[test]
+fn an_adopted_recalibration_never_widens_the_eligible_set() {
+    // Shaped like a recalibration a household panel can adopt: the priors'
+    // weights with a bias of 6 at temperature 2, about 3 logits toward "safe".
+    let recalibrated = ScoreWeights { bias: 6.0, ..ScoreWeights::default() };
+    let prior_temperature = RuntimeSettings::default().score_temperature;
+    let priors = eligible_under(|card, ctx| score::score(card, ctx, &ScoreWeights::default(), prior_temperature));
+    assert!(priors.is_empty(), "the priors hold all three: {priors:?}");
+    // Gated on the fit alone, all three would go: one on no evidence at all.
+    let unfenced = eligible_under(|card, ctx| score::score(card, ctx, &recalibrated, 2.0));
+    assert_eq!(unfenced, ["finished", "no-evidence", "unstarted"], "the fit alone must pass what the priors hold");
+    let fenced = eligible_under(|card, ctx| score::score_fenced(card, ctx, &recalibrated, 2.0, prior_temperature));
+    assert_eq!(fenced, priors, "a fit may narrow the eligible set, never widen it");
+}
+
 fn on_volumes(pairs: &[(&str, &str)], goals: &[(&str, u64)]) -> ReclaimGoal {
     ReclaimGoal::PerVolume(VolumeGoals {
         goals: goals.iter().map(|(v, gb)| (v.to_string(), gb * GB)).collect(),
@@ -180,7 +239,7 @@ fn an_item_already_handed_over_is_taken_before_a_cheaper_newcomer() {
     assert_eq!(ids(&baseline_plan(&cards, &verdicts, &goal)), ["announced"]);
 }
 
-/// (size in GB, calibrated P(safe), is favorite)
+/// (size in GB, P(safe), is favorite)
 fn specs() -> impl Strategy<Value = Vec<(u64, f32, bool)>> {
     prop::collection::vec((1u64..=100, 0.0f32..=1.0, any::<bool>()), 0..24)
 }

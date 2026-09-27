@@ -354,3 +354,39 @@ fn a_finished_season_is_not_kept_alive_by_its_own_show() {
     let finished_show = under_defaults(&card, HouseholdContext { sibling_season_completed: true, siblings: 3, ..plex_context() });
     assert_eq!(alone, finished_show);
 }
+
+#[rstest]
+#[case::a_fit_that_would_widen(0.95, 0.45, 0.45)]
+#[case::a_fit_that_narrows(0.60, 0.80, 0.60)]
+#[case::both_clear_the_floor(0.97, 0.80, 0.80)]
+#[case::the_priors_running(0.80, 0.80, 0.80)]
+fn fenced_is_the_lower(#[case] running: f32, #[case] priors: f32, #[case] expected: f32) {
+    assert_eq!(fenced(running, priors), expected);
+}
+
+#[test]
+fn fenced_is_nan_when_either_side_is() {
+    // `f32::min` returns the other side: a failed score would clear the floor.
+    assert!(fenced(f32::NAN, 0.99).is_nan());
+    assert!(fenced(0.99, f32::NAN).is_nan());
+    assert!(fenced(f32::NAN, f32::NAN).is_nan());
+    // While the priors run both sides are the same NaN, and it keeps its bits.
+    let nan = f32::from_bits(f32::NAN.to_bits() | 1);
+    assert_eq!(fenced(nan, nan).to_bits(), nan.to_bits());
+}
+
+proptest! {
+    /// While the priors run, the fence compares a score with itself: not a bit
+    /// of what the plan gates on, or of what the UI shows, may move.
+    #[test]
+    fn under_the_priors_the_fence_changes_nothing(card in any_card(), ctx in any_context(), temperature in 0.4f32..4.0) {
+        let priors = ScoreWeights::default();
+        let gated = score_fenced(&card, ctx, &priors, temperature, temperature);
+        let plain = score(&card, ctx, &priors, temperature);
+        prop_assert_eq!(gated.p_safe.to_bits(), plain.p_safe.to_bits());
+        prop_assert_eq!(gated.forecast.to_bits(), plain.forecast.to_bits());
+        prop_assert_eq!(gated.raw_logit.to_bits(), plain.raw_logit.to_bits());
+        prop_assert_eq!(gated.signals, plain.signals);
+        prop_assert_eq!(gated.hard_guard, plain.hard_guard);
+    }
+}

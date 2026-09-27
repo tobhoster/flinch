@@ -11,7 +11,7 @@ use crate::watch;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The model's delete gate. The baseline answers 1.0 for every reclaiming
-/// reason, so the calibrated `score_floor` is the gate that bites.
+/// reason, so `score_floor` on P(safe) is the gate that bites.
 const DELETE_FLOOR: f32 = 0.95;
 
 #[derive(Debug, Clone)]

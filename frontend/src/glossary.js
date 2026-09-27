@@ -5,11 +5,11 @@
 export const GLOSSARY = {
   p_safe: {
     term: 'P(safe)',
-    body: 'The chance that nobody in the household plays the item within the next 30 days, forecast from this household’s own Plex and Tautulli history. Rules are separate: favorites, keep tags and collections, and the newest aired season are kept whatever this number says, and the table marks them with a lock. Calibrated means that of the items shown at 90%, about 9 in 10 really go unplayed; the Forecast model card shows how well that has held up so far.',
+    body: 'The chance that nobody in the household plays the item within the next 30 days, forecast from this household’s own Plex and Tautulli history. Rules are separate: favorites, keep tags and collections, and the newest aired season are kept whatever this number says, and the Movies and Series tables, which show it, mark them with a lock. The Overview’s Candidates and “Closest by P(safe)” lists show the P(safe) the floors and the eviction order read instead: it carries the rules, and once a fitted model is adopted it is capped at the hand-set priors’, so it can be lower than the tables’ forecast. Calibrated means that of the forecasts at 90%, about 9 in 10 really go unplayed; the Forecast model card shows how well that has held up so far.',
   },
   model: {
     term: 'Forecast model',
-    body: 'Once a day FLINCH asks your history questions it already knows the answers to: at past dates, was this title played within the next 30 days? Every answer is checked on titles the fit did not see (out of fold). Two fits compete. Recalibrating the priors keeps their order and fits only how sure to be; it needs 40 questions and 2 played titles. The full fit relearns every weight and needs 120 questions and 12 of each outcome. The better one replaces the hand-set priors only when it beats them there. Until then the priors run, and the card says what is still missing.',
+    body: 'Once a day FLINCH asks your history questions it already knows the answers to: at past dates, was this title played within the next 30 days? Every answer is checked on titles the fit did not see (out of fold). Two fits compete. Recalibrating the priors keeps their order and fits only how sure to be; it needs 40 questions and 2 played titles. The full fit relearns every weight and needs 120 questions and 12 of each outcome. The better one replaces the hand-set priors only when it beats them there, and then sets the forecast; what the floors pass stays capped at what the priors allow. Until then the priors run, and the card says what is still missing.',
   },
   taste: {
     term: 'Genre taste',
@@ -17,11 +17,11 @@ export const GLOSSARY = {
   },
   score_floor: {
     term: 'Score floor',
-    body: 'The minimum P(safe) for an item to be eligible at all. The policy must also allow it: favorites, keep-collections, recently watched items and the newest aired season are never eligible, whatever the score.',
+    body: 'The minimum P(safe) for an item to be eligible at all. The policy must also allow it: favorites, keep-collections, recently watched items and the newest aired season are never eligible, whatever the score. Once a fitted model is adopted, the floors read the lower of its P(safe) and the hand-set priors’, so an item can show above the floor and still be held: adopting a model never makes more eligible. To free more, lower this floor, and for items nobody finished the never-played floor as well.',
   },
   temperature: {
     term: 'Temperature',
-    body: 'Softens overconfident scores before any threshold applies. Above 1 makes them less extreme.',
+    body: 'Softens overconfident scores before any threshold applies. Above 1 makes them less extreme. Once a fitted model is adopted, this temperature sets only the hand-set priors’ cap on P(safe); the model uses its own fitted temperature.',
   },
   eligible: {
     term: 'Eligible and reserve',
@@ -133,7 +133,7 @@ export const GLOSSARY = {
   },
   quality_tier: {
     term: 'Quality tier (advice)',
-    body: 'Recyclarr defines a premium and a compact profile; FLINCH advises which one an item deserves from the same calibrated evidence (P(safe) at least 85% → compact, below 40% → premium, guards and keeps always premium). It never changes profiles on its own.',
+    body: 'Recyclarr defines a premium and a compact profile; FLINCH advises which one an item deserves from the same P(safe) the floors read (at least 85% → compact, below 40% → premium, guards and keeps always premium). It never changes profiles on its own.',
   },
 };
 

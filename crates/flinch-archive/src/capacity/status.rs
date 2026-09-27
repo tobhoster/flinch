@@ -81,7 +81,7 @@ pub struct CapacityStatus {
     /// idle: an idle run has no goal to miss.
     #[serde(default)]
     pub goal_met: Option<bool>,
-    /// The calibrated never-played rule is part of the permitted set.
+    /// The never-played rule is part of the permitted set.
     pub armed_never_played: bool,
     #[serde(default)]
     pub volumes: Vec<VolumeStatus>,
