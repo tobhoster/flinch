@@ -9,8 +9,9 @@ FLINCH runs as two pods that share one volume:
   schedule. Both are addressed by Plex ratingKey, so an item whose Plex GUID
   join failed is left alone. It has no Service or Ingress: it only calls out.
 - `flinch-web`, the UI and its JSON API on port 7911. It reads the state the
-  daemon writes and writes `settings.json` when you save Settings. Every API
-  call needs the token in `FLINCH_WEB_TOKEN`; the browser asks for it once.
+  daemon writes and writes `settings.json` when you save Settings. People log
+  in with `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD`; automations send the
+  API key in `FLINCH_WEB_TOKEN`.
 
 | Path | What it is |
 | --- | --- |
@@ -28,19 +29,21 @@ The demo fills a state directory with made-up titles and serves the UI on
 With the published image:
 
 ```bash
-docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo -e FLINCH_WEB_TOKEN=demo \
+docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
+  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo -e FLINCH_WEB_TOKEN=demo \
   ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
 ```
 
-Unlock the UI with `demo`.
+Log in as `demo` with the password `demo`. Release 0.1.1 predates the login
+and asks for a token instead: enter `demo`.
 
 From source:
 
 ```bash
 cd frontend && npm ci && npm run build && cd ..
 FLINCH_STATE_DIR=/tmp/flinch-demo cargo run -p flinch-web --bin flinch-demo
-FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist FLINCH_WEB_TOKEN=demo \
-  cargo run -p flinch-web --bin flinch-web
+FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist \
+  FLINCH_WEB_USERNAME=demo FLINCH_WEB_PASSWORD=demo cargo run -p flinch-web --bin flinch-web
 ```
 
 ## Requirements
@@ -108,15 +111,18 @@ command line, where they would stay in your shell history:
 
 ```bash
 install -m 600 /dev/null flinch.env                              # readable only by you
-echo "FLINCH_WEB_TOKEN=$(openssl rand -hex 32)" >> flinch.env   # the UI's login
+echo "FLINCH_WEB_TOKEN=$(openssl rand -hex 32)" >> flinch.env   # the API key, for automations
 $EDITOR flinch.env
 kubectl -n media create secret generic flinch-secrets --from-env-file=flinch.env
 rm flinch.env
 ```
 
-with one `KEY=value` per line:
+with one `KEY=value` per line, and no quotes around a value: `--from-env-file`
+keeps them as part of it, so a quoted password would include the quotes:
 
 ```
+FLINCH_WEB_USERNAME=<your choice>
+FLINCH_WEB_PASSWORD=<a strong password>
 FLINCH_WEB_TOKEN=<generated above>
 RADARR_API_KEY=<radarr api key>
 SONARR_API_KEY=<sonarr api key>
@@ -129,7 +135,8 @@ TAUTULLI_API_KEY=<tautulli api key>
 
 | Key | Needed | Notes |
 | --- | --- | --- |
-| `FLINCH_WEB_TOKEN` | yes, for the UI | the UI's login: any long random string. Without it the UI says how to set it and the API refuses everything |
+| `FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD` | yes, for the UI | the UI's login. The username matches exactly, case included; spaces around either value are ignored. Without both, the UI says how to set them |
+| `FLINCH_WEB_TOKEN` | no | the API key for automations (Home Assistant, n8n, System One clients), sent as `X-Api-Key` or `Authorization: Bearer`: any long random string. With neither it nor a login, the API refuses everything |
 | `RADARR_API_KEY` | yes | Radarr > Settings > General |
 | `SONARR_API_KEY` | yes | Sonarr > Settings > General |
 | `MAINTAINERR_API_KEY` | no | Maintainerr checks no key today; FLINCH sends one when it is set |
@@ -137,7 +144,7 @@ TAUTULLI_API_KEY=<tautulli api key>
 | `TAUTULLI_URL`, `TAUTULLI_API_KEY` | no | without them FLINCH reads Tautulli's address from Maintainerr, but Maintainerr returns the key masked, so set them here to use Tautulli |
 
 Leave out the keys you do not use. The Radarr and Sonarr keys are required
-(the daemon exits without them), and the UI stays locked without the token.
+(the daemon exits without them), and the UI stays locked without the login.
 
 ## Install
 
@@ -158,22 +165,67 @@ A port-forward is the simplest, and it only listens on your machine:
 kubectl -n media port-forward svc/flinch-web 7911:7911
 ```
 
-Open <http://localhost:7911> and paste the token. To read it back:
+Open <http://localhost:7911> and log in with `FLINCH_WEB_USERNAME` and
+`FLINCH_WEB_PASSWORD`. The session lasts 30 days from its last use, until you
+press **Log out**, or until `flinch-web` restarts: sessions live in its memory
+only. To change the login, update the Secret and restart `flinch-web`
+(`kubectl -n media rollout restart deploy/flinch-web`), which also logs every
+browser out.
+
+Release 0.1.1, which `deploy/kustomization.yaml` pins until the next release,
+predates the login: it asks for the token in `FLINCH_WEB_TOKEN` instead. To
+read it back:
 
 ```bash
 kubectl -n media get secret flinch-secrets -o jsonpath='{.data.FLINCH_WEB_TOKEN}' | base64 -d
 ```
 
-The browser keeps it until you press **Lock**. To change it, update the Secret
-and restart `flinch-web` (`kubectl -n media rollout restart deploy/flinch-web`).
-
 To publish the UI through your ingress controller, turn on the `ingress`
 component in `deploy/kustomization.yaml` and set its host (the commented
 `patches:` example) and certificate (`deploy/ingress/flinch-web-ingress.yaml`).
-It is HTTPS only, because the browser sends the token with every request. For
-single sign-on in front of the token, add your proxy's forward-auth annotation
-(Authelia, Authentik, oauth2-proxy). Keep it off the internet: whoever gets
-past it can schedule deletions.
+It is HTTPS only, because the browser sends its session cookie with every
+request; `flinch-web` marks the cookie `Secure` when the ingress reports HTTPS
+in `X-Forwarded-Proto`, as ingress-nginx and Traefik do. For single sign-on in
+front of the login, add your proxy's forward-auth annotation (Authelia,
+Authentik, oauth2-proxy). Keep it off the internet: whoever gets past it can
+schedule deletions.
+
+### Upgrading from the access token
+
+Up to 0.1.1, one token in `FLINCH_WEB_TOKEN` opened both the UI and the API.
+From the release with the login on:
+
+- Automations keep working unchanged: the token is now the API key.
+  `Authorization: Bearer <FLINCH_WEB_TOKEN>` is still accepted everywhere,
+  `POST /v1/systemone` included, and `X-Api-Key: <FLINCH_WEB_TOKEN>` now is
+  too.
+- The UI asks for a username and password, and deletes the token the browser
+  kept. Until both are in the Secret it shows **No login set**.
+
+Add the login to the Secret you have from a file only you can read
+(`kubectl create secret` fails on a Secret that exists):
+
+```bash
+install -m 600 /dev/null login.yaml    # readable only by you
+$EDITOR login.yaml
+kubectl -n media patch secret flinch-secrets --type merge --patch-file login.yaml
+rm login.yaml
+```
+
+with:
+
+```yaml
+stringData:
+  FLINCH_WEB_USERNAME: '<your choice>'
+  FLINCH_WEB_PASSWORD: '<a strong password>'
+```
+
+Keep the single quotes, so YAML takes each value as written; a `'` inside one
+is written `''`. Then apply the new release's manifests, with
+`kubectl apply -k deploy/` from a checkout of it or your overlay with its
+`newTag` moved: they pass the two new keys to `flinch-web` and restart it. If
+it already runs the new release, restart it instead:
+`kubectl -n media rollout restart deploy/flinch-web`.
 
 ## First run
 
@@ -438,10 +490,28 @@ kubectl apply -k deploy/local
 
 ## Security
 
-- **The token is the login.** `flinch-web` refuses every API request without
-  `Authorization: Bearer <FLINCH_WEB_TOKEN>`, and everything when no token is
-  set. Anyone who has it can change Settings, including Enforcement, so treat
-  it like the *arr API keys.
+- **A login for people, an API key for machines.** `flinch-web` refuses every
+  API request without a session from logging in (`FLINCH_WEB_USERNAME`,
+  `FLINCH_WEB_PASSWORD`) or the API key (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or
+  `Authorization: Bearer`), and everything when neither is set. Either one can
+  change Settings, including Enforcement, so treat both like the *arr API
+  keys.
+- **Sessions.** The session cookie is `HttpOnly` and `SameSite=Strict`, and
+  `Secure` behind an HTTPS ingress. A session lasts 30 days from its last use,
+  every login starts a new one, **Log out** ends it, and a restart of
+  `flinch-web` ends them all. No cache may keep an answer behind the login
+  (`Cache-Control: no-store`).
+- **Logging in, logging out and writing with the cookie need the UI's
+  header.** Each needs `X-Flinch-Request: 1`, which the UI sends and a page on
+  another site cannot add. So a site you visit cannot guess the password
+  through your browser, hold the pause below, log you out, or change Settings.
+- **Failed logins pause logging in.** After five in a row, logins are refused
+  for 30 seconds, doubling with each further failure up to 15 minutes, and a
+  success resets the count. The count is shared by everyone, since behind an
+  ingress every request comes from the same address: someone who can reach
+  the UI can keep you from logging in, but not your open sessions or the API
+  key. Restarting `flinch-web` clears the pause, and ends every session:
+  `kubectl -n media rollout restart deploy/flinch-web`.
 - **HTTPS off the machine.** Through an Ingress, serve it over HTTPS only
   (`deploy/ingress`), and keep it off the internet.
 - **The Plex URL and token are one credential.** They always come from the

@@ -2,10 +2,12 @@
 # shared flinch-state-rwx claim (flinch-state.yaml), and writes settings.json
 # there when you save Settings.
 #
-# Every API call needs the token in FLINCH_WEB_TOKEN (Secret flinch-secrets);
-# the browser asks for it once. Without one the UI says how to set it and the
-# API refuses everything. There is no Ingress here: reach the UI with
-# `kubectl port-forward`, or add the deploy/ingress component (HTTPS).
+# People log in with FLINCH_WEB_USERNAME and FLINCH_WEB_PASSWORD; automations
+# send the API key in FLINCH_WEB_TOKEN (all in Secret flinch-secrets). Without
+# a login the UI says how to set one, and with neither the API refuses
+# everything. Sessions live in memory: a restart logs everyone out. There is
+# no Ingress here: reach the UI with `kubectl port-forward`, or add the
+# deploy/ingress component (HTTPS).
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -37,6 +39,11 @@ spec:
             - { name: FLINCH_WEB_PORT, value: "7911" }
             # Optional only so a missing key shows up in the UI, with how to fix
             # it, rather than as a pod stuck in CreateContainerConfigError.
+            - name: FLINCH_WEB_USERNAME
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_USERNAME, optional: true } }
+            - name: FLINCH_WEB_PASSWORD
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_PASSWORD, optional: true } }
+            # The API key for automations; without it only the login opens the API.
             - name: FLINCH_WEB_TOKEN
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_TOKEN, optional: true } }
           securityContext:
