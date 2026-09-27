@@ -258,7 +258,43 @@ async fn a_deferred_move_into_leaving_soon_is_a_take_back() {
     assert_eq!(report.outcomes, [Outcome::Done]);
     assert!(maintainerr.members.values().all(BTreeSet::is_empty), "in no collection: {:?}", maintainerr.members);
     assert!(owned.scheduled.is_empty(), "nothing of FLINCH's is on its way out");
-    assert_eq!(report.unscheduled().collect::<Vec<_>>(), ["radarr-1"], "the ledger forgets it");
+    assert_eq!(report.taken_back().collect::<Vec<_>>(), ["radarr-1"], "the ledger forgets it");
     let summary = SyncSummary::new(&report, false);
     assert_eq!((summary.unscheduled, summary.scheduled, summary.deferred), (1, 0, 1));
+}
+
+/// radarr-1 was announced into Leaving Soon and is still evicted, but no
+/// longer announced: its route is now the delete collection.
+async fn reroute(maintainerr: &mut Fake, owned: &mut OwnedState) -> SyncReport {
+    maintainerr.collections.push(leaving(LEAVING_MOVIES, "movie", "1"));
+    maintainerr.members.entry(LEAVING_MOVIES).or_default().insert("100".into());
+    owned.scheduled.insert("radarr-1".into(), ScheduledEntry { target: movie("100"), collection_id: LEAVING_MOVIES, added_at: 1 });
+    let mut want = desired(&[], &[a_movie("radarr-1", "100")]);
+    want.collections.leaving = "Leaving Soon".into();
+    cycle(maintainerr, &want, owned).await
+}
+
+#[tokio::test]
+async fn a_route_change_is_a_move_not_a_take_back() {
+    let (mut maintainerr, mut owned) = (fake(), OwnedState::default());
+
+    let report = reroute(&mut maintainerr, &mut owned).await;
+
+    assert_eq!(report.outcomes, [Outcome::Done, Outcome::Done], "{:?}", outcomes(&report));
+    assert_eq!(report.scheduled().collect::<Vec<_>>(), [("radarr-1", 3 * GIB)]);
+    assert_eq!(report.taken_back().count(), 0, "still on its way out: the ledger keeps its hand-over");
+    let entry = &owned.scheduled["radarr-1"];
+    assert_eq!((entry.collection_id, entry.added_at), (MOVIES, 42), "its window restarts at the move");
+}
+
+#[tokio::test]
+async fn a_move_whose_add_fails_is_a_take_back() {
+    let (mut maintainerr, mut owned) = (fake(), OwnedState::default());
+    maintainerr.fail(Op::AddToCollection, Fault::Status(409));
+
+    let report = reroute(&mut maintainerr, &mut owned).await;
+
+    assert!(matches!(report.outcomes[..], [Outcome::Done, Outcome::Failed(_)]), "{:?}", outcomes(&report));
+    assert_eq!(report.taken_back().collect::<Vec<_>>(), ["radarr-1"], "in no collection: nothing is on its way out");
+    assert!(owned.scheduled.is_empty());
 }

@@ -94,7 +94,7 @@ impl SyncReport {
     }
 
     /// Cards newly added to a collection and verified this cycle, with their
-    /// bytes: exactly what the eviction ledger records.
+    /// bytes.
     pub fn scheduled(&self) -> impl Iterator<Item = (&str, u64)> {
         self.results().filter_map(|(action, outcome)| match (action, outcome) {
             (SyncAction::Schedule { card_id, bytes, .. }, Outcome::Done) => Some((card_id.as_str(), *bytes)),
@@ -103,10 +103,12 @@ impl SyncReport {
     }
 
     /// Cards taken back out of a collection and verified this cycle: nothing
-    /// of theirs is on its way out any more.
-    pub fn unscheduled(&self) -> impl Iterator<Item = &str> {
-        self.results().filter_map(|(action, outcome)| match (action, outcome) {
-            (SyncAction::Unschedule { card_id, .. }, Outcome::Done) => Some(card_id.as_str()),
+    /// of theirs is on its way out any more. A card also added to another
+    /// collection this cycle moved, and is still on its way out.
+    pub fn taken_back(&self) -> impl Iterator<Item = &str> {
+        let moved: BTreeSet<&str> = self.scheduled().map(|(card_id, _)| card_id).collect();
+        self.results().filter_map(move |(action, outcome)| match (action, outcome) {
+            (SyncAction::Unschedule { card_id, .. }, Outcome::Done) if !moved.contains(card_id.as_str()) => Some(card_id.as_str()),
             _ => None,
         })
     }

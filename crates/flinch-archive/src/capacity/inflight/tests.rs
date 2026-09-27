@@ -23,6 +23,11 @@ fn hand(ledger: &mut EvictionLedger, id: &str, gb: u64, now: u64) {
     ledger.record(HandedOver { id, title: id, app: App::Radarr, volume: "/media", bytes: gb * GB }, now);
 }
 
+/// A 1 GB membership added at `added_at`, booked by the cycle at `now`.
+fn book(ledger: &mut EvictionLedger, id: &str, added_at: u64, now: u64) {
+    ledger.book(HandedOver { id, title: id, app: App::Radarr, volume: "/media", bytes: GB }, added_at, now);
+}
+
 fn credit(ledger: &EvictionLedger) -> Credit {
     ledger.credits().get("/media").copied().unwrap_or_default()
 }
@@ -212,4 +217,75 @@ fn the_ledger_round_trips_and_a_corrupt_file_reads_empty() {
     std::fs::write(&path, b"[").expect("corrupt it");
     assert_eq!(EvictionLedger::read(&path), EvictionLedger::default(), "a corrupt ledger is no credit, not phantom credit");
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_membership_the_ledger_lost_is_booked_again_at_its_add() {
+    // Added on day 5; the ledger was lost before day 9's cycle.
+    let mut ledger = EvictionLedger::default();
+    book(&mut ledger, "radarr-1", 5 * DAY, 9 * DAY);
+    assert_eq!((ledger.entries["radarr-1"].handed_at, ledger.handoffs["radarr-1"]), (5 * DAY, 5 * DAY));
+    ledger.observe(|_| false, three_days, &BTreeMap::new(), 10 * DAY);
+    assert_eq!(credit(&ledger).pending, GB, "its deletion is credited");
+}
+
+#[test]
+fn booking_a_tracked_membership_keeps_its_first_hand_over() {
+    let mut ledger = EvictionLedger::default();
+    hand(&mut ledger, "radarr-1", 1, DAY);
+    // Moved to another collection on day 40.
+    book(&mut ledger, "radarr-1", 40 * DAY, 41 * DAY);
+    assert_eq!((ledger.entries["radarr-1"].handed_at, ledger.handoffs["radarr-1"]), (DAY, DAY));
+}
+
+#[test]
+fn a_membership_past_the_stale_limit_is_not_tracked_again() {
+    let mut ledger = EvictionLedger::default();
+    book(&mut ledger, "radarr-1", 0, STALE_ON_DISK_SECS);
+    book(&mut ledger, "radarr-2", 1, STALE_ON_DISK_SECS);
+    assert_eq!(ledger.entries.keys().collect::<Vec<_>>(), ["radarr-2"], "one second short of the limit is still tracked");
+    assert!(!ledger.handoffs.contains_key("radarr-1"));
+}
+
+#[test]
+fn a_moved_item_dropped_as_stale_is_tracked_again_from_its_move() {
+    let mut ledger = EvictionLedger::default();
+    hand(&mut ledger, "radarr-1", 1, 0);
+    // Moved on day 60: Maintainerr's window restarts; the ledger keeps the first hand-over.
+    book(&mut ledger, "radarr-1", 60 * DAY, 60 * DAY);
+    ledger.observe(|_| true, three_days, &BTreeMap::new(), STALE_ON_DISK_SECS);
+    assert!(ledger.entries.is_empty(), "90 days after the first hand-over");
+    book(&mut ledger, "radarr-1", 60 * DAY, STALE_ON_DISK_SECS);
+    assert_eq!((ledger.entries["radarr-1"].handed_at, ledger.handoffs["radarr-1"]), (60 * DAY, 0));
+}
+
+#[test]
+fn a_move_to_another_volume_credits_the_new_one() {
+    let mut ledger = EvictionLedger::default();
+    hand(&mut ledger, "radarr-1", 1, DAY);
+    // Its files moved to another disk, and grew, before Maintainerr deleted it.
+    ledger.book(HandedOver { id: "radarr-1", title: "radarr-1", app: App::Radarr, volume: "/other", bytes: 2 * GB }, DAY, 40 * DAY);
+    ledger.observe(|_| false, three_days, &BTreeMap::new(), 41 * DAY);
+    let credits = ledger.credits();
+    assert_eq!((credits["/other"].pending, credits.contains_key("/media")), (2 * GB, false));
+    assert_eq!(ledger.entries["radarr-1"].handed_at, DAY, "the first hand-over is kept");
+}
+
+#[test]
+fn a_smaller_size_on_the_same_disk_keeps_the_larger_credit() {
+    let mut ledger = EvictionLedger::default();
+    hand(&mut ledger, "radarr-1", 2, DAY);
+    // Read partway through its deletion: half its files are in the recycle bin.
+    book(&mut ledger, "radarr-1", DAY, 40 * DAY);
+    ledger.observe(|_| false, three_days, &BTreeMap::new(), 41 * DAY);
+    assert_eq!(credit(&ledger).pending, 2 * GB);
+}
+
+#[test]
+fn a_membership_already_gone_keeps_its_credit_where_it_left() {
+    let mut ledger = EvictionLedger::default();
+    hand(&mut ledger, "radarr-1", 2, DAY);
+    ledger.observe(|_| false, three_days, &BTreeMap::new(), 40 * DAY);
+    ledger.book(HandedOver { id: "radarr-1", title: "radarr-1", app: App::Radarr, volume: "/other", bytes: GB }, DAY, 40 * DAY);
+    assert_eq!(credit(&ledger).pending, 2 * GB);
 }
