@@ -208,7 +208,7 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
 
 ## 🚧 Status
 
-- **587 tests pass**, with table-driven cases and property tests on everything
+- **680 tests pass**, with table-driven cases and property tests on everything
   that decides a deletion: eviction order, watermark latching, recycle-bin
   credit and the freed-bytes check, identity joins, Maintainerr sync and
   exclusion releases, Leaving Soon routing and the forecast's no-leakage rules,
