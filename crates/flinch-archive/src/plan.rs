@@ -3,8 +3,11 @@
 //! The sharpness contract is explicit here, not aspirational:
 //!
 //! - An item is proposed for deletion only when the DETERMINISTIC policy says
-//!   safe AND the model's probability is at least `delete_floor` (default 0.95).
-//! - Anything below that floor is kept. Reconstruction from trash is cheap;
+//!   safe AND, when the card has a calibrated verdict, its P(safe) is at least
+//!   `policy.score_floor`. The model's answer must also reach `delete_floor`
+//!   (default 0.95), but the shipped [`Baseline`] answers 1.0 for every delete
+//!   the policy permits, so that floor never sees a probability.
+//! - Anything below a floor is kept. Reconstruction from trash is cheap;
 //!   reconstructing a season that was actually still wanted is not.
 //! - `flinch-archive` never deletes anything. It writes a candidate list; a
 //!   separate, explicit command (`apply`) moves candidates to a trash location
@@ -127,9 +130,10 @@ pub struct QualityReport {
 }
 
 /// The interface the sharp head slots into. `Baseline` is the shipped,
-/// complete implementation; `CalibratedHead` is where a trained model lands
-/// once watch-history labels exist. It is a real boundary, not a stub: the
-/// plan honours it even when every bias is a baseline rule.
+/// complete implementation, and the only one: the daily fit's trained model
+/// reaches the plan as each card's [`ScoreVerdict`] P(safe), gated by
+/// `policy.score_floor`, not through this trait. It is a real boundary, not a
+/// stub: the plan honours it even when every bias is a baseline rule.
 pub trait ArchiveModel {
     /// `reason` is the policy's decision for this card *with* its score verdict.
     /// A model must judge that decision, not re-derive one without the verdict:

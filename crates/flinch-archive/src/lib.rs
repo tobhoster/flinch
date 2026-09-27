@@ -8,8 +8,10 @@
 //!   newest aired season) are never overridden by any model.
 //! - Nothing is deleted. This crate produces a plan; a separate explicit
 //!   `apply` step moves candidates to trash with a TTL.
-//! - A delete requires BOTH the deterministic rule AND model probability at or
-//!   above 0.95. Below that: keep.
+//! - A delete requires BOTH the deterministic rule AND, when the card has a
+//!   calibrated verdict, P(safe) at or above the policy's `score_floor`. The
+//!   plan's 0.95 `delete_floor` sees only the shipped `Baseline`'s answer, 1.0
+//!   for every delete the rule permits (see [`plan`]). Below a floor: keep.
 
 pub mod arr;
 pub mod body;

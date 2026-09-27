@@ -83,18 +83,25 @@ a calibrated forecast; nothing below a floor is ever touched.
   forecast alone, with a lock beside any item a rule keeps. Folding the rules
   into the displayed number used to make a guarded season read "99% sure to be
   played" whether or not anyone would.
-- **Two floors, both enforced in the plan.** The model's delete floor (0.95) and
-  the operator's calibrated `score_floor` (P(safe), default 0.75) must both clear
-  before an item is even eligible.
+- **The floors are on P(safe).** An item the rules allow is eligible only when
+  its P(safe), the score that carries the rules, is at least the operator's
+  `score_floor` (default 0.75). The rules allow a never-played item only while
+  never-played reclaim is armed (by its switch, or by default while eviction is
+  latched on a disk), after 90 days on disk by default, while no other season
+  of the show has been played, and when its P(safe) also clears that rule's own
+  floor (`unwatched_reclaim_floor`, default 0.75). The plan's model delete floor
+  (0.95) never sees a probability: it is checked against the rules' own answer,
+  1.0 for every delete they allow, so it adds no gate of its own.
 - **Watch state is external and fail-closed.** *arr knows files; only the media
   server knows "watched". Missing or partial evidence protects; it never
   deletes. Never-played reclaim arms only when every configured watch source was
   read completely this cycle.
 - **Dwell starts when the file arrived**, not when the title was requested.
-- **Never a delete path for a model.** A model can only rank what the rules
-  already permit.
+- **Never a delete path for a model.** A model never deletes and never
+  overrides a protection. Its P(safe) is checked against the floors above and
+  orders what passes.
 
-## Leaving Soon: nothing unwatched goes without a warning
+## Leaving Soon: nothing unwatched goes without a warning (one exception: see Known limits)
 
 Every eviction leaves by one of two routes, chosen by why it is safe:
 
@@ -278,13 +285,17 @@ FLINCH minus the other model, 95% over resampled titles:
 | JEV | better [−0.061, −0.028] | better [−0.225, −0.125] | no clear difference [+0.000, +0.283] |
 | Laya | better [−0.191, −0.098] | better [−0.511, −0.304] | no clear difference [−0.038, +0.539] |
 
-**What this does and does not show.** FLINCH's probabilities are clearly better
-than JEV's and Laya's for this household. Only 2 of the 13 titles were played
-within 30 days of a cut, and FLINCH knows that base rate while a zero-shot model
-cannot. Ranking is no clear difference with that few played titles, though
-FLINCH leads on the point estimate. The full fit alone loses to JEV at ranking
-(AUC 0.45); that is why recalibration comes first. The comparison reruns as the
-record grows.
+**What this does and does not show.** These tables are a snapshot from
+2026-09-23 on 79 questions, with only 2 of the 13 titles played within 30 days
+of a cut. The recalibrated row is a candidate: the daily fit may or may not
+adopt it, and the Forecast model card shows which model runs. Its Brier and
+log-loss are better than JEV's and Laya's for this household, but on the same
+rows a constant forecast of the base rate scores Brier 0.0247 and log-loss
+0.118. So most of FLINCH's lead on probabilities is knowing this household's
+base rate, which a zero-shot model cannot know. Ranking is no clear difference
+with that few played titles, though FLINCH leads on the point estimate. The
+full fit alone loses to JEV at ranking (AUC 0.45); that is why recalibration
+comes first. The comparison reruns as the record grows.
 
 How FLINCH relates to the System-One models:
 
@@ -394,7 +405,19 @@ preferred; below the confidence floor nothing happens.
 
 ## Known limits
 
-All of these fail closed: the affected items are kept, never deleted.
+One of these can delete without a warning:
+
+- A season whose watched episodes were deleted outside FLINCH (by hand, or
+  by Plex's "Delete episodes after playing") while its unwatched ones stay on
+  disk can read as completed. Plex's and Tautulli's play histories still
+  count the finished plays of the episodes that are gone, against the files
+  that are left, so every file looks watched. The season can then leave
+  through its delete collection with no Leaving Soon warning, unwatched
+  episodes included. Until a fix counts only the episodes on disk, keep
+  watched episodes on disk, or keep such a season with the keep tag on its
+  show or with a keep collection.
+
+The rest fail closed: the affected items are kept, never deleted.
 
 - A root folder on a disk its app does not report is never evicted until the
   app reports it. On the homelab FLINCH was built on, Sonarr's disk report left

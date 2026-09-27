@@ -174,14 +174,16 @@ export default function Settings({ status }) {
 
         <Section title="Never-played reclaim">
           <Row label="Never-played items" htmlFor="unwatched_reclaim_enabled" term="never_played"
-            help="Off: anything nobody has played is held. On: never-played items that pass the floor and time on disk can become candidates.">
+            help="Off: anything nobody finished (a season: nobody played) is held, unless “While evicting” arms this rule while eviction is latched. On: items nobody finished that pass the floor and time on disk can become candidates.">
             <Toggle id="unwatched_reclaim_enabled" checked={!!form.unwatched_reclaim_enabled} onChange={set('unwatched_reclaim_enabled')}>
               Allow as candidates
             </Toggle>
             <span className="text-fg-muted">
               {form.unwatched_reclaim_enabled
                 ? <><span className="text-state-warn">On</span> — never-played items can be deleted</>
-                : 'Off — never-played items are held'}
+                : form.capacity_arm_never_played
+                  ? 'Off — held unless “While evicting” arms it'
+                  : 'Off — items nobody finished are held'}
             </span>
           </Row>
           <Row label="Floor" htmlFor="unwatched_reclaim_floor" term="p_safe" help="Minimum P(safe) for a never-played item.">
