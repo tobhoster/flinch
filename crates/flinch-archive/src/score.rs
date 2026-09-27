@@ -102,7 +102,8 @@ pub struct ReclaimScore {
     /// The probability the plan gates on: policy terms included, and capped
     /// under a hard guard so no weighting can talk past a rule. The daemon
     /// also caps it at the priors' ([`score_fenced`]), so adopting a fit never
-    /// makes more items eligible.
+    /// makes more items eligible, and caps a started movie's at the same
+    /// movie's read as finished.
     pub p_safe: f32,
     /// The forecast behind it: the probability that nobody plays the item
     /// within the horizon, from the household's evidence alone. The frozen
@@ -170,14 +171,43 @@ pub fn score(card: &ArchiveCard, ctx: HouseholdContext, weights: &ScoreWeights, 
 }
 
 /// Score one item under the running scorecard, gated no higher than the
-/// hand-set priors gate it.
+/// hand-set priors gate it, and a started movie no higher than it would be
+/// gated finished.
 ///
 /// A fitted model sets the forecast and can narrow what the floors pass, never
 /// widen it: `p_safe` is the lower of its P(safe) and the priors' at
 /// `prior_temperature`, the operator's temperature, and NaN when either is.
-/// Both sides carry the hard-guard ceiling. While the priors run, both sides
-/// are the same call, so every number is bit-identical to [`score`]'s.
+/// Both sides carry the hard-guard ceiling.
+///
+/// A dated start, a movie nobody finished whose play is dated, is then gated
+/// no higher than the same card read as finished, through the same fence, and
+/// NaN when that is. The priors already score a start no higher than its
+/// finish; a fit need not, since its weights carry no sign constraint and the
+/// panel trains such a movie as finished. So under any weights, reading a play
+/// as a start can hold a movie the finished reading passes, and never pass one
+/// it holds. The forecast, logit and reasons stay the start's.
+///
+/// While the priors run, the fence compares a score with itself and the start
+/// already scores no higher than its finish, so every number is bit-identical
+/// to [`score`]'s.
 pub fn score_fenced(
+    card: &ArchiveCard,
+    ctx: HouseholdContext,
+    running: &ScoreWeights,
+    temperature: f32,
+    prior_temperature: f32,
+) -> ReclaimScore {
+    let mut scored = fenced_at_priors(card, ctx, running, temperature, prior_temperature);
+    if dated_start(card) {
+        let finished = ArchiveCard { is_watched: Some(true), ..card.clone() };
+        scored.p_safe = fenced(scored.p_safe, fenced_at_priors(&finished, ctx, running, temperature, prior_temperature).p_safe);
+    }
+    scored
+}
+
+/// [`score_fenced`] before the started-movie cap: the running P(safe), no
+/// higher than the priors'.
+fn fenced_at_priors(
     card: &ArchiveCard,
     ctx: HouseholdContext,
     running: &ScoreWeights,
@@ -190,9 +220,16 @@ pub fn score_fenced(
     scored
 }
 
-/// The lower of the running model's P(safe) and the priors', and NaN when
-/// either is: `f32::min` returns the other side, which would let a failed
-/// score clear a floor.
+/// A movie nobody finished whose play is dated: somebody started it. The one
+/// predicate [`features`] and [`score_fenced`] both read, so the cap covers
+/// exactly what is scored as a start.
+fn dated_start(card: &ArchiveCard) -> bool {
+    card.season_state.is_none() && card.is_watched == Some(false) && card.last_watched_days.is_some()
+}
+
+/// The lower of two P(safe)s, the running model's and the priors' or a start's
+/// and its finish's, and NaN when either is: `f32::min` returns the other
+/// side, which would let a failed score clear a floor.
 fn fenced(running: f32, priors: f32) -> f32 {
     if running.is_nan() {
         running
@@ -235,6 +272,21 @@ pub fn features(card: &ArchiveCard, ctx: HouseholdContext) -> Vec<Feature> {
     // nothing: an item with no watch data is undecidable, not safe.
     let source = ctx.watch_source;
     match (card.season_state, card.is_watched) {
+        // Nobody finished it, but a play is dated: the movie was started, and is
+        // not zero playback. Under the priors it scores no higher than the same
+        // movie read as finished, which is how an uncounted Plex stamp used to
+        // read: it is named partly played only once a finish would be cold and
+        // carry `completed_cold`; before that, the recency signals already
+        // record the play, and the finished reading has no question-1 term
+        // either. A fit's weights keep no such order, so `score_fenced` caps
+        // the gate at the finished reading.
+        _ if dated_start(card) => match source {
+            Some(source) if card.last_watched_days.is_some_and(|days| days >= COMPLETED_COLD_DAYS) => {
+                push("partially_played", source.evidence_factor(), format!("{}: started, not finished", source.label()), &mut out)
+            }
+            Some(_) => {}
+            None => push("no_evidence", 1.0, "no watch evidence — undecidable, fail-closed".into(), &mut out),
+        },
         (Some(SeasonState::Empty), _) | (_, Some(false)) => match source {
             Some(source) => push("never_played", source.evidence_factor(), format!("{}: zero playback", source.label()), &mut out),
             None => push("no_evidence", 1.0, "no watch evidence — undecidable, fail-closed".into(), &mut out),

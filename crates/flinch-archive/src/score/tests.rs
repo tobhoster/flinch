@@ -154,6 +154,7 @@ fn stale_export_evidence_is_worth_less_than_a_live_query() {
 fn reasons_name_the_signals_that_moved_the_score() {
     let mut card = golden_movie();
     card.is_watched = Some(false);
+    card.last_watched_days = None;
     card.added_days_ago = 1200.0;
     let live = HouseholdContext { watch_source: Some(WatchSource::Plex), ..Default::default() };
     let scored = score(&card, live, &ScoreWeights::default(), 1.0);
@@ -341,6 +342,92 @@ fn a_recently_finished_title_stays_below_the_default_floor() {
     assert!(p < floor, "finished 60 d ago must be held, got {p:.3}");
 }
 
+#[rstest]
+#[case::played_this_month(10.0)]
+#[case::played_within_the_recency_band(100.0)]
+#[case::played_long_ago(250.0)]
+fn a_started_movie_scores_no_higher_than_finished_and_below_zero_playback(#[case] days: f32) {
+    // Plex dated a play it did not count, or a stream stopped early: somebody
+    // played the film. Zero playback's weight lifted such a film past the
+    // floor its finished reading was held under. An uncounted stamp used to
+    // read as finished: the start may hold what that reading passed, never
+    // pass what it held.
+    let temperature = crate::daemon::RuntimeSettings::default().score_temperature;
+    let read = |is_watched: bool, played: Option<f32>| {
+        let card = ArchiveCard { is_watched: Some(is_watched), last_watched_days: played, added_days_ago: 1095.0, ..watched_film(days) };
+        score(&card, plex_context(), &ScoreWeights::default(), temperature)
+    };
+    let (started, finished, unplayed) = (read(false, Some(days)), read(true, Some(days)), read(false, None));
+
+    assert!(!started.signals.iter().any(|s| s.name == "never_played"), "somebody played it: {:?}", started.signals);
+    assert!(started.p_safe < unplayed.p_safe, "a start ({}) must score below zero playback ({})", started.p_safe, unplayed.p_safe);
+    assert!(started.p_safe <= finished.p_safe, "a start ({}) must not score above the finish ({})", started.p_safe, finished.p_safe);
+    // Named as partly played once a finish would be cold; before that the
+    // recency signals are what say somebody played it.
+    let partly = started.signals.iter().find(|s| s.name == "partially_played");
+    if days >= COMPLETED_COLD_DAYS {
+        assert_eq!(partly.map(|s| s.detail.as_str()), Some("plex: started, not finished"), "{:?}", started.signals);
+        assert!(started.p_safe < finished.p_safe, "a start ({}) must score below a cold finish ({})", started.p_safe, finished.p_safe);
+    } else {
+        assert!(partly.is_none(), "{:?}", started.signals);
+        assert!(started.signals.iter().any(|s| s.name == "recent_play"), "{:?}", started.signals);
+    }
+}
+
+#[test]
+fn a_start_stays_held_where_its_finished_reading_was() {
+    // Four years on disk, 70 GB, played 120 d ago. Read as finished, as an
+    // uncounted Plex stamp used to read, it sits under the default floor.
+    // Naming the start partly played lifted it over the floor and, with
+    // never-played reclaim armed, into Leaving Soon.
+    let floor = crate::daemon::RuntimeSettings::default().score_floor;
+    let film = |is_watched: bool| ArchiveCard {
+        is_watched: Some(is_watched),
+        added_days_ago: 1460.0,
+        size_bytes: 70_000_000_000,
+        ..watched_film(120.0)
+    };
+    let finished = under_defaults(&film(true), plex_context());
+    let started = under_defaults(&film(false), plex_context());
+    assert!(finished < floor, "fixture: the finished reading must be held, got {finished:.4}");
+    assert!(started < floor, "a start must be held where its finish was ({finished:.4}), got {started:.4}");
+}
+
+proptest! {
+    /// Reading a dated play as a start, not a finish, may hold a movie the
+    /// finished reading would pass and never the reverse: whatever the play's
+    /// age, dwell, size, household or watch source, the priors never score the
+    /// start above the finish.
+    #[test]
+    fn a_dated_start_never_scores_above_its_finished_reading(
+        card in any_card(),
+        days in 0.0f32..800.0,
+        ctx in any_context(),
+        temperature in 0.4f32..4.0,
+    ) {
+        let priors = ScoreWeights::default();
+        let read = |is_watched: bool| {
+            let movie = ArchiveCard {
+                kind: LibraryKind::Movie,
+                season_state: None,
+                is_watched: Some(is_watched),
+                last_watched_days: Some(days),
+                ..card.clone()
+            };
+            score(&movie, ctx, &priors, temperature)
+        };
+        let (started, finished) = (read(false), read(true));
+        prop_assert!(
+            started.p_safe <= finished.p_safe,
+            "played {} d ago: a start scored {} over the finish's {} ({:?})",
+            days,
+            started.p_safe,
+            finished.p_safe,
+            started.signals
+        );
+    }
+}
+
 #[test]
 fn a_finished_season_is_not_kept_alive_by_its_own_show() {
     // A completed sibling argues for an *unfinished* season; for a finished one
@@ -375,7 +462,108 @@ fn fenced_is_nan_when_either_side_is() {
     assert_eq!(fenced(nan, nan).to_bits(), nan.to_bits());
 }
 
+prop_compose! {
+    /// Any scorecard a fit could leave running: every weight, the bias
+    /// included, anywhere in a sane range and of either sign. So a fit may
+    /// weigh a start's `partially_played` over a finish's `completed_cold`, or
+    /// read a played sibling as a reason to reclaim.
+    fn any_weights()(
+        bias in -4.0f32..4.0,
+        values in proptest::collection::vec(-4.0f32..4.0, ScoreWeights::names().len()),
+    ) -> ScoreWeights {
+        let mut weights = ScoreWeights { bias, ..ScoreWeights::default() };
+        for (name, value) in ScoreWeights::names().iter().zip(values) {
+            weights.set(name, value);
+        }
+        weights
+    }
+}
+
+/// Four years on disk, 70 GB, played 200 d ago, read as a start or a finish.
+fn cold_film(is_watched: bool) -> ArchiveCard {
+    ArchiveCard { is_watched: Some(is_watched), added_days_ago: 1460.0, size_bytes: 70_000_000_000, ..watched_film(200.0) }
+}
+
+#[test]
+fn an_adopted_fit_cannot_gate_a_start_above_its_finished_reading() {
+    // A fit a little below the priors that weighs a start over a cold finish
+    // (partially_played 0.5, completed_cold 0.2). Capped only at the priors'
+    // reading of the start, the start gated at 0.7958 against the finish's
+    // 0.7427: over both default floors where the finished reading is held,
+    // and with never-played reclaim armed, into Leaving Soon.
+    let defaults = crate::daemon::RuntimeSettings::default();
+    let fit = ScoreWeights { bias: -1.5, partially_played: 0.5, completed_cold: 0.2, ..ScoreWeights::default() };
+    let gate = |card: &ArchiveCard| score_fenced(card, plex_context(), &fit, 1.0, defaults.score_temperature);
+    let (started, finished) = (gate(&cold_film(false)), gate(&cold_film(true)));
+    for floor in [defaults.score_floor, defaults.unwatched_reclaim_floor] {
+        assert!(finished.p_safe < floor, "fixture: the finished reading must be held, got {}", finished.p_safe);
+        assert!(started.p_safe < floor, "a start must be held where its finish was ({}), got {}", finished.p_safe, started.p_safe);
+    }
+    assert!(started.p_safe <= finished.p_safe, "a start ({}) gated above its finish ({})", started.p_safe, finished.p_safe);
+
+    // Only the gate moves: what the row shows and explains is the start's.
+    let shown = score(&cold_film(false), plex_context(), &fit, 1.0);
+    assert_eq!(started.forecast.to_bits(), shown.forecast.to_bits());
+    assert_eq!(started.raw_logit.to_bits(), shown.raw_logit.to_bits());
+    assert_eq!(started.signals, shown.signals);
+}
+
+#[test]
+fn a_start_is_held_when_its_finished_reading_fails() {
+    // `completed_cold` reaches only the finished reading: a NaN there leaves
+    // the start's own score finite, and `f32::min` would hand that back.
+    let fit = ScoreWeights { completed_cold: f32::NAN, ..ScoreWeights::default() };
+    let gated = |card: &ArchiveCard| score_fenced(card, plex_context(), &fit, 1.0, 1.6);
+    assert!(gated(&cold_film(true)).p_safe.is_nan(), "fixture: the finished reading must fail");
+    assert!(score(&cold_film(false), plex_context(), &fit, 1.0).p_safe.is_finite(), "fixture: the start's own score is finite");
+    assert!(gated(&cold_film(false)).p_safe.is_nan(), "a start must not clear a floor its finish could not be scored against");
+}
+
+#[test]
+fn a_guarded_start_keeps_the_guard_ceiling_under_the_cap() {
+    let fit = ScoreWeights { bias: 4.0, partially_played: 4.0, ..ScoreWeights::default() };
+    let favorite = ArchiveCard { is_favorite: true, ..cold_film(false) };
+    let gated = score_fenced(&favorite, plex_context(), &fit, 1.0, 1.6);
+    assert_eq!(gated.hard_guard, Some("favorite"));
+    assert!(gated.p_safe <= HARD_GUARD_CEILING, "got {}", gated.p_safe);
+}
+
 proptest! {
+    /// Whatever a running fit weighs, and at whatever temperature either side
+    /// runs, the gate never passes a dated start where it holds the same
+    /// movie read as finished. The priors keep that order on their own; a fit
+    /// keeps it only through the cap.
+    #[test]
+    fn under_any_fit_a_dated_start_is_never_gated_above_its_finished_reading(
+        card in any_card(),
+        days in 0.0f32..800.0,
+        ctx in any_context(),
+        running in any_weights(),
+        temperature in 0.4f32..4.0,
+        prior_temperature in 0.4f32..4.0,
+    ) {
+        let gate = |is_watched: bool| {
+            let movie = ArchiveCard {
+                kind: LibraryKind::Movie,
+                season_state: None,
+                is_watched: Some(is_watched),
+                last_watched_days: Some(days),
+                ..card.clone()
+            };
+            score_fenced(&movie, ctx, &running, temperature, prior_temperature)
+        };
+        let (started, finished) = (gate(false), gate(true));
+        prop_assert!(
+            started.p_safe <= finished.p_safe,
+            "played {} d ago: a start gated at {} over the finish's {} ({:?} under {:?})",
+            days,
+            started.p_safe,
+            finished.p_safe,
+            started.signals,
+            running
+        );
+    }
+
     /// While the priors run, the fence compares a score with itself: not a bit
     /// of what the plan gates on, or of what the UI shows, may move.
     #[test]

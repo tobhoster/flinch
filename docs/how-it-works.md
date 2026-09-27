@@ -105,9 +105,13 @@ floor is ever touched.
   differ. To free more, lower the score floor, and for items nobody played the
   never-played floor as well.
 - **Watch state is external and fail-closed.** *arr knows files; only the media
-  server knows "watched". Missing or partial evidence protects; it never
-  deletes. Never-played reclaim arms only when every configured watch source was
-  read completely this cycle.
+  server knows "watched". A movie counts as watched when Plex counted a view or
+  Tautulli recorded a stream of at least 85%, or one with no percentage; a play
+  that stopped sooner counts as started, not watched. Where Plex's and
+  Tautulli's records disagree, the newest decides, so a later start that Plex
+  did not count outweighs an earlier finished play. Missing or partial evidence
+  protects; it never deletes. Never-played reclaim arms only when every
+  configured watch source was read completely this cycle.
 - **Dwell starts when the file arrived**, not when the title was requested.
 - **Never a delete path for a model.** A model never deletes and never
   overrides a protection. Its P(safe), capped at the priors, is checked
@@ -120,9 +124,9 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
 - **Finished or duplicated: straight to deletion.** A watched movie, a
   completed season nobody reopened, or a second copy goes to its kind's delete
   collection.
-- **Nobody finished it: Leaving Soon first.** An item the household never
-  played joins a Maintainerr collection titled `Leaving Soon` (Settings →
-  Maintainerr collections). Plex shows it on the home screen, and Maintainerr
+- **Nobody finished it: Leaving Soon first.** An item nobody finished joins a
+  Maintainerr collection titled `Leaving Soon` (Settings → Maintainerr
+  collections). Plex shows it on the home screen, and Maintainerr
   deletes the item only after the collection's window. Play it during the
   window and FLINCH takes it back on the next cycle.
 - **A warning or nothing.** If the Leaving Soon collection is missing, inactive,
