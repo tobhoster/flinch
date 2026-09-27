@@ -428,6 +428,71 @@ fn a_started_movie_is_announced_or_kept_never_silently_deleted() {
     );
 }
 
+#[test]
+fn armed_reclaim_takes_a_movie_seen_unplayed_but_keeps_one_without_evidence() {
+    // Two large movies, four years on disk. A watch source reported zero
+    // playback for one; nothing at all is known about the other.
+    let movie = |id: u32, title: &str| ArrMovie {
+        id,
+        title: title.to_string(),
+        size_on_disk: 300_000_000_000,
+        has_file: true,
+        movie_file: Some(crate::arr::MovieFile { quality: None, date_added: Some("2022-09-01T00:00:00Z".to_string()) }),
+        ..Default::default()
+    };
+    let movies = [movie(8, "Unseen Eight"), movie(9, "Unknown Nine")];
+    let unplayed = watch::WatchEntry {
+        id: "radarr-8".to_string(),
+        last_watched_epoch: None,
+        progress: 0.0,
+        rewatch_score: None,
+        source: watch::WatchSource::Plex,
+    };
+    let watch = HashMap::from([(unplayed.id.clone(), unplayed)]);
+    let policy = ArchivePolicy {
+        unwatched_reclaim: crate::policy::UnwatchedReclaim { enabled: true, ..Default::default() },
+        ..ArchivePolicy::default()
+    };
+    let verdict = ScoreVerdict { p_safe: 0.99, hard_guard: false, sibling_played: false };
+    let verdicts = HashMap::from([("radarr-8".to_string(), verdict), ("radarr-9".to_string(), verdict)]);
+
+    let report = reconcile(&movies, &[], &watch, &BTreeSet::new(), &policy, &verdicts, &ReclaimGoal::AllSafe);
+
+    assert_eq!(report.deleted_ids, ["radarr-8"]);
+    assert_eq!(report.announced_ids, BTreeSet::from(["radarr-8".to_string()]));
+    assert_eq!(report.kept_ids, ["radarr-9"], "no watch evidence keeps, however safe the score");
+}
+
+#[test]
+fn armed_reclaim_takes_a_season_seen_unplayed_but_keeps_one_without_evidence() {
+    // Two large seasons, four years on disk, and the newest. A watch source
+    // reported zero playback for S1; nothing at all is known about S2.
+    let mut series = golden_series(&[300_000_000_000, 300_000_000_000, 1_600_000_000]);
+    for season in &mut series[0].seasons[..2] {
+        season.files_added = Some("2022-09-01T00:00:00Z".to_string());
+    }
+    let unplayed = watch::WatchEntry {
+        id: "sonarr-5-s1".to_string(),
+        last_watched_epoch: None,
+        progress: 0.0,
+        rewatch_score: None,
+        source: watch::WatchSource::Plex,
+    };
+    let watch = HashMap::from([(unplayed.id.clone(), unplayed)]);
+    let policy = ArchivePolicy {
+        unwatched_reclaim: crate::policy::UnwatchedReclaim { enabled: true, ..Default::default() },
+        ..ArchivePolicy::default()
+    };
+    let verdict = ScoreVerdict { p_safe: 0.99, hard_guard: false, sibling_played: false };
+    let verdicts = HashMap::from([("sonarr-5-s1".to_string(), verdict), ("sonarr-5-s2".to_string(), verdict)]);
+
+    let report = reconcile(&[], &series, &watch, &BTreeSet::new(), &policy, &verdicts, &ReclaimGoal::AllSafe);
+
+    assert_eq!(report.deleted_ids, ["sonarr-5-s1"]);
+    assert_eq!(report.announced_ids, BTreeSet::from(["sonarr-5-s1".to_string()]));
+    assert_eq!(report.kept_ids, ["sonarr-5-s2", "sonarr-5-s3"], "no watch evidence keeps, however safe the score");
+}
+
 /// The run (by index) at which one steady candidate first becomes eligible.
 fn first_eligible(runs: u32, at: &[u64]) -> Option<usize> {
     let mut state = CandidateState::default();

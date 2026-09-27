@@ -192,16 +192,19 @@ impl EvidenceHealth {
 
 /// Apply watch state to cards in place.
 ///
-/// Fail-closed: when media server data is missing the item stays "not watched &
-/// not completed", and the policy then refuses to delete it. A daemon with a
-/// dead media-server export protects everything until it is healthy again,
-/// which is the safe direction.
+/// Fail-closed: when media server data is missing the item's watch state stays
+/// unknown, and the policy then refuses to delete it as unwatched. A daemon
+/// with a dead media-server export protects everything until it is healthy
+/// again, which is the safe direction.
 pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
     for card in cards.iter_mut() {
         let Some(entry) = watch.get(&card.id) else {
             card.last_watched_days = None;
-            card.is_watched = Some(false);
-            card.season_state = Some(SeasonState::Empty);
+            // Unknown, not unplayed: `Some(false)` or `Empty` would read as a
+            // source that saw the item unplayed, which never-played reclaim
+            // acts on.
+            card.is_watched = None;
+            card.season_state = None;
             continue;
         };
         card.last_watched_days = entry.last_watched_epoch.map(|epoch| (now_epoch().saturating_sub(epoch)) as f32 / 86_400.0);
@@ -326,9 +329,27 @@ mod tests {
     fn missing_media_server_entry_fails_closed() {
         let mut cards = vec![golden_season(), golden_movie()];
         apply(&mut cards, &HashMap::new());
+        assert_eq!(cards[0].season_state, None, "no source reported on the season: unknown, not unplayed");
+        assert_eq!(cards[1].is_watched, None, "no source reported on the movie: unknown, not unwatched");
+        assert!(cards[1].last_watched_days.is_none());
+    }
+
+    #[rstest::rstest]
+    #[case::plex_zero(WatchSource::Plex)]
+    #[case::tautulli_never_streamed(WatchSource::TautulliAbsence)]
+    #[case::export(WatchSource::Export)]
+    fn an_item_a_source_saw_unplayed_reads_as_unplayed(#[case] source: WatchSource) {
+        let mut cards = vec![golden_season(), golden_movie()];
+        let watch = cards
+            .iter()
+            .map(|card| {
+                let entry = WatchEntry { id: card.id.clone(), last_watched_epoch: None, progress: 0.0, rewatch_score: None, source };
+                (entry.id.clone(), entry)
+            })
+            .collect();
+        apply(&mut cards, &watch);
         assert_eq!(cards[0].season_state, Some(SeasonState::Empty));
         assert_eq!(cards[1].is_watched, Some(false));
-        assert!(cards[1].last_watched_days.is_none());
     }
 
     #[test]

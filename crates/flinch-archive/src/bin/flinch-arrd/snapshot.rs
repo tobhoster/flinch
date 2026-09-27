@@ -92,14 +92,21 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 let below_floor = verdict.filter(|v| permitted && !(v.p_safe >= policy.score_floor));
                 // No watch entry at all is missing evidence, not "never played":
                 // saying so would send the operator hunting for plays that exist.
-                let no_evidence = watch.get(&card.id).is_none();
+                let no_evidence = matches!(decision, flinch_archive::policy::Reason::KeepBecauseNoWatchEvidence);
+                // A movie somebody started and nobody finished has a play date,
+                // which the row shows: "never played" would be the same false lead.
+                let unplayed = if card.is_watched == Some(false) && card.last_watched_days.is_some() {
+                    "Started, never finished"
+                } else {
+                    "Never played"
+                };
                 match (never_played, policy.unwatched_reclaim.enabled) {
-                    (true, _) if no_evidence => "No watch evidence (not found in Plex or Tautulli this run), so it is held".to_string(),
+                    _ if no_evidence => "No watch evidence (no usable Plex or Tautulli record this run), so it is held".to_string(),
                     (true, false) => match never_played_held {
-                        Some(hold) => format!("Never played; never-played reclaim is held {}", hold.until()),
-                        None => "Never played; never-played reclaim is off".to_string(),
+                        Some(hold) => format!("{unplayed}; never-played reclaim is held {}", hold.until()),
+                        None => format!("{unplayed}; never-played reclaim is off"),
                     },
-                    (true, true) => "Never played, outside the never-played reclaim terms".to_string(),
+                    (true, true) => format!("{unplayed}, outside the never-played reclaim terms"),
                     (false, _) if is_delete => decision.describe(),
                     (false, _) => match below_floor {
                         Some(v) => format!("Below the score floor: P(safe) {:.0}% < {:.0}%", v.p_safe * 100.0, policy.score_floor * 100.0),
@@ -277,5 +284,94 @@ fn presence(card: &ArchiveCard, movie: Option<&ArrMovie>, show: Option<&ArrSerie
             season.map(|season| season.on_disk.clone()).unwrap_or_default()
         }
         (None, None) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flinch_archive::capacity::{Latch, LibraryVolumes, OnDisk};
+    use flinch_archive::daemon::RuntimeSettings;
+    use flinch_archive::policy::UnwatchedReclaim;
+    use flinch_archive::score::{HouseholdContext, ScoreWeights};
+    use flinch_archive::watch::WatchSource;
+    use std::collections::BTreeSet;
+
+    /// The reason the row of a movie nobody finished gives, for one played
+    /// `played` days ago or never, with never-played reclaim `enabled` and `hold`.
+    fn reason(played: Option<f32>, enabled: bool, hold: Option<NeverPlayedHold>) -> String {
+        let card = ArchiveCard {
+            id: "radarr-1".to_string(),
+            is_watched: Some(false),
+            last_watched_days: played,
+            ..flinch_archive::golden::golden_movie()
+        };
+        row_reason(card, enabled, hold)
+    }
+
+    /// The reason `card`'s row gives, with never-played reclaim `enabled` and
+    /// `hold`.
+    fn row_reason(card: ArchiveCard, enabled: bool, hold: Option<NeverPlayedHold>) -> String {
+        let settings = RuntimeSettings::default();
+        let mut policy =
+            ArchivePolicy { unwatched_reclaim: UnwatchedReclaim { enabled, ..Default::default() }, ..ArchivePolicy::default() };
+        let live = HouseholdContext { watch_source: Some(WatchSource::Plex), ..Default::default() };
+        let scored = [flinch_archive::score::score(&card, live, &ScoreWeights::default(), settings.score_temperature)];
+        let governance = flinch_archive::govern::govern(
+            LibraryVolumes::default(),
+            HashMap::new(),
+            |_| false,
+            &settings,
+            &Latch::default(),
+            OnDisk::default(),
+            &mut policy,
+        );
+        let report = flinch_archive::reconcile(&[], &[], &HashMap::new(), &BTreeSet::new(), &policy, &HashMap::new(), &governance.goal);
+        let items = build_items(ItemInputs {
+            cards: std::slice::from_ref(&card),
+            scored: &scored,
+            movies: &[],
+            series: &[],
+            policy: &policy,
+            verdicts: &HashMap::new(),
+            governance: &governance,
+            owned: &OwnedState::default(),
+            titles: &settings.collection_titles(),
+            destinations: &BTreeMap::new(),
+            watch: &HashMap::new(),
+            report: &report,
+            plex_ids: &HashMap::new(),
+            play_keys: &HashMap::new(),
+            never_played_held: hold,
+        });
+        items[0].reason.clone()
+    }
+
+    #[rstest::rstest]
+    #[case::off(false, None, "; never-played reclaim is off")]
+    #[case::held(false, Some(NeverPlayedHold::IncompleteEvidence), "; never-played reclaim is held until the watch evidence is complete")]
+    #[case::held_untitled(
+        false,
+        Some(NeverPlayedHold::LeavingSoonUntitled),
+        "; never-played reclaim is held until a Leaving Soon collection is named"
+    )]
+    #[case::armed(true, None, ", outside the never-played reclaim terms")]
+    fn a_started_movie_is_never_called_never_played(#[case] enabled: bool, #[case] hold: Option<NeverPlayedHold>, #[case] why: &str) {
+        // The row's Watched column shows the play. Why it is not reclaimed
+        // reads as before: the Overview buckets on it.
+        assert_eq!(reason(Some(200.0), enabled, hold), format!("Started, never finished{why}"));
+        assert_eq!(reason(None, enabled, hold), format!("Never played{why}"));
+    }
+
+    #[rstest::rstest]
+    #[case::off(false)]
+    #[case::armed(true)]
+    fn an_item_with_no_watch_evidence_is_not_said_to_be_missing_from_plex(#[case] enabled: bool) {
+        // Plex may well list it: on a shared server the only record can be one
+        // account's zero, dropped as not evidence. The Overview buckets on the
+        // "No watch evidence" prefix.
+        let card =
+            ArchiveCard { id: "radarr-1".to_string(), is_watched: None, last_watched_days: None, ..flinch_archive::golden::golden_movie() };
+        assert_eq!(row_reason(card, enabled, None), "No watch evidence (no usable Plex or Tautulli record this run), so it is held");
     }
 }

@@ -107,6 +107,10 @@ pub enum Reason {
     KeepBecauseNewestSeason,
     KeepBecauseNotCompleted,
     KeepBecauseNeverWatchedIsSoleCopy,
+    /// An item no watch source reported on. Never-played reclaim acts on what
+    /// a source saw (no finished play of a movie, no play at all of a season),
+    /// so an item nobody has evidence about is unknown, not unplayed.
+    KeepBecauseNoWatchEvidence,
     /// Watched, but the media server never recorded when. Held rather than
     /// treated as stale: an undated "watched" is what a manual mark or a client
     /// that never scrobbled leaves behind, and guessing that it was long ago is
@@ -176,6 +180,11 @@ fn decide_season(card: &ArchiveCard, policy: &ArchivePolicy, recency: Recency, v
         return Reason::KeepBecauseNewestSeason;
     }
     if card.season_state != Some(SeasonState::Completed) {
+        // No source reported on it: unknown is not zero playback, and size and
+        // dwell alone can lift a large, old season past the floor.
+        if card.season_state.is_none() {
+            return Reason::KeepBecauseNoWatchEvidence;
+        }
         // Proven zero playback is the one un-completed state the score may act
         // on: nothing was ever watched, so there is no language-track
         // ambiguity to resolve.
@@ -216,6 +225,11 @@ fn decide_movie(card: &ArchiveCard, policy: &ArchivePolicy, recency: Recency, ve
             // sole copy of something the household may still intend to watch is
             // the one mistake this policy exists to prevent.
             if card.is_watched != Some(true) {
+                // No score can stand in for the evidence: size and dwell alone
+                // can lift a large, old file past the floor.
+                if card.is_watched.is_none() {
+                    return Reason::KeepBecauseNoWatchEvidence;
+                }
                 if verdict.is_some_and(|v| v.permits_unwatched_reclaim(policy.unwatched_reclaim, card.added_days_ago)) {
                     return Reason::DeleteUnwatchedByScore {
                         p_safe: verdict.map(|v| v.p_safe).unwrap_or(0.0),
@@ -260,6 +274,7 @@ pub fn announces(reason: &Reason) -> bool {
         | Reason::KeepBecauseNewestSeason
         | Reason::KeepBecauseNotCompleted
         | Reason::KeepBecauseNeverWatchedIsSoleCopy
+        | Reason::KeepBecauseNoWatchEvidence
         | Reason::KeepBecauseWatchedUndated
         | Reason::KeepBecauseLowDuplicateValue => false,
     }
@@ -278,6 +293,7 @@ impl Reason {
             Reason::KeepBecauseNewestSeason => "Newest aired season".into(),
             Reason::KeepBecauseNotCompleted => "Not fully watched".into(),
             Reason::KeepBecauseNeverWatchedIsSoleCopy => "Never played".into(),
+            Reason::KeepBecauseNoWatchEvidence => "No watch evidence".into(),
             Reason::KeepBecauseWatchedUndated => "Watched, no date recorded".into(),
             Reason::KeepBecauseLowDuplicateValue => "Likely to be rewatched".into(),
             Reason::DeleteCompletedUntouched { days, .. } | Reason::DeleteWatchedUntouched { days, .. } => {

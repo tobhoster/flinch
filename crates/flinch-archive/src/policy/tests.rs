@@ -1,6 +1,7 @@
 use super::*;
 use crate::card::LibraryKind;
 use crate::golden::{golden_movie, golden_season};
+use proptest::prelude::*;
 
 fn card(kind: LibraryKind, title: &str) -> ArchiveCard {
     match kind {
@@ -96,6 +97,73 @@ fn armed_score_still_cannot_talk_past_a_guard_or_a_thin_dwell() {
     old.is_watched = Some(false);
     old.added_days_ago = 400.0;
     assert!(matches!(decide(&old, &armed, Some(weak)), Reason::KeepBecauseNeverWatchedIsSoleCopy));
+}
+
+#[rstest::rstest]
+#[case::movie(LibraryKind::Movie)]
+#[case::season(LibraryKind::Season)]
+fn an_item_without_watch_evidence_is_kept_however_large_old_and_safe_it_scores(#[case] kind: LibraryKind) {
+    // Size is uncapped in the score and dwell counts up to four years, so a
+    // large, old file with no evidence can clear the floor on the priors alone.
+    let armed = ArchivePolicy {
+        unwatched_reclaim: UnwatchedReclaim { enabled: true, floor: 0.75, min_dwell_days: 90.0 },
+        ..ArchivePolicy::default()
+    };
+    let strong = ScoreVerdict { p_safe: 0.99, hard_guard: false, sibling_played: false };
+    // What `watch::apply` leaves on an item no source reported on.
+    let mut item = card(kind, "unknown");
+    item.is_watched = None;
+    item.season_state = None;
+    item.last_watched_days = None;
+    item.added_days_ago = 4.0 * 365.0;
+    item.size_bytes = 300_000_000_000;
+    assert_eq!(decide(&item, &armed, Some(strong)), Reason::KeepBecauseNoWatchEvidence);
+
+    // A source that saw it and found no play is the evidence the rule acts on.
+    match kind {
+        LibraryKind::Movie => item.is_watched = Some(false),
+        LibraryKind::Season => item.season_state = Some(SeasonState::Empty),
+    }
+    assert!(matches!(decide(&item, &armed, Some(strong)), Reason::DeleteUnwatchedByScore { .. }));
+}
+
+proptest! {
+    #[test]
+    fn an_item_without_watch_evidence_never_leaves_as_unplayed(
+        season in any::<bool>(),
+        p_safe in 0.0f32..=1.0,
+        verdict_flags in (any::<bool>(), any::<bool>(), any::<bool>()),
+        terms in (0.0f32..=1.0, 0.0f32..400.0),
+        added_days_ago in 0.0f32..3000.0,
+        size_bytes in 0u64..2_000_000_000_000,
+        last_watched_days in proptest::option::of(0.0f32..800.0),
+        is_newest_season in proptest::option::of(any::<bool>()),
+        duplicates in (any::<bool>(), 0u32..3),
+    ) {
+        let (has_verdict, hard_guard, sibling_played) = verdict_flags;
+        let (floor, min_dwell_days) = terms;
+        let (dedupe_movies, duplicate_count) = duplicates;
+        let armed = ArchivePolicy {
+            unwatched_reclaim: UnwatchedReclaim { enabled: true, floor, min_dwell_days },
+            dedupe_movies,
+            ..ArchivePolicy::default()
+        };
+        let mut item = card(if season { LibraryKind::Season } else { LibraryKind::Movie }, "unknown");
+        // No source reported on it: whatever the card said, the watch state is
+        // what `watch::apply` leaves.
+        crate::watch::apply(std::slice::from_mut(&mut item), &std::collections::HashMap::new());
+        item.added_days_ago = added_days_ago;
+        item.size_bytes = size_bytes;
+        item.last_watched_days = last_watched_days;
+        item.is_newest_season = is_newest_season;
+        item.duplicate_count = duplicate_count;
+        let verdict = has_verdict.then_some(ScoreVerdict { p_safe, hard_guard, sibling_played });
+
+        let reason = decide(&item, &armed, verdict);
+        prop_assert!(!matches!(reason, Reason::DeleteUnwatchedByScore { .. }), "{reason:?}");
+        // The one way out without evidence is as a duplicate, whose other copy stays.
+        prop_assert!(reclaims_bytes(&reason) == 0 || matches!(reason, Reason::DeleteDuplicate { .. }), "{reason:?}");
+    }
 }
 
 #[test]
