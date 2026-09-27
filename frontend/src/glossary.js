@@ -77,7 +77,7 @@ export const GLOSSARY = {
   },
   held_no_evidence: {
     term: 'No watch evidence',
-    body: 'Neither Plex nor Tautulli has any record of it this run: not matched by catalogue id, or a source could not be read. FLINCH holds it rather than guess that nobody watched it.',
+    body: 'Neither Plex nor Tautulli has a usable record of it this run: not matched by catalogue id, a source could not be read, or the only record is one account’s “no plays” on a shared Plex server, which does not speak for the others. FLINCH holds it rather than guess that nobody watched it.',
   },
   held_evidence: {
     term: 'Waiting for complete evidence',

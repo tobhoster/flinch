@@ -703,7 +703,7 @@
   "kind": "movie",
   "size_bytes": 2254857830,
   "decision": "keep",
-  "reason": "No watch evidence (not found in Plex or Tautulli this run), so it is held",
+  "reason": "No watch evidence (no usable Plex or Tautulli record this run), so it is held",
   "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,

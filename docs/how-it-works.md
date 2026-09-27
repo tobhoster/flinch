@@ -111,7 +111,10 @@ floor is ever touched.
   Tautulli's records disagree, the newest decides, so a later start that Plex
   did not count outweighs an earlier finished play. Missing or partial evidence
   protects; it never deletes. Never-played reclaim arms only when every
-  configured watch source was read completely this cycle.
+  configured watch source was read completely this cycle. Even then, an item
+  needs positive evidence: a watch source that reported on it and found no
+  finished play of a movie, or no play at all of a season. An item no source
+  reported on is never reclaimed as unplayed, however large or old it is.
 - **Dwell starts when the file arrived**, not when the title was requested.
 - **Never a delete path for a model.** A model never deletes and never
   overrides a protection. Its P(safe), capped at the priors, is checked
