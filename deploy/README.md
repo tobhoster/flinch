@@ -30,12 +30,11 @@ With the published image:
 
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
-  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo -e FLINCH_WEB_TOKEN=demo \
-  ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
+  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo \
+  ghcr.io/tobhoster/flinch:0.2.0 sh -c 'flinch-demo && flinch-web'
 ```
 
-Log in as `demo` with the password `demo`. Release 0.1.1 predates the login
-and asks for a token instead: enter `demo`.
+Log in as `demo` with the password `demo`.
 
 From source:
 
@@ -70,7 +69,7 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 
 | Tag | What it is |
 | --- | --- |
-| `0.1.1` | a release; `deploy/kustomization.yaml` pins one |
+| `0.2.0` | a release; `deploy/kustomization.yaml` pins one |
 | `0.1`, `latest` | the newest release of that line, or overall |
 | `edge` | the main branch |
 | `sha-<commit>` | one build of main |
@@ -80,8 +79,8 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 From the repository root:
 
 ```bash
-docker build -t registry.example.com/flinch:0.1.1 -f deploy/Dockerfile .
-docker push registry.example.com/flinch:0.1.1
+docker build -t registry.example.com/flinch:0.2.0 -f deploy/Dockerfile .
+docker push registry.example.com/flinch:0.2.0
 ```
 
 Then point `images:` in `deploy/kustomization.yaml` at it. The manifests use
@@ -172,14 +171,6 @@ only. To change the login, update the Secret and restart `flinch-web`
 (`kubectl -n media rollout restart deploy/flinch-web`), which also logs every
 browser out.
 
-Release 0.1.1, which `deploy/kustomization.yaml` pins until the next release,
-predates the login: it asks for the token in `FLINCH_WEB_TOKEN` instead. To
-read it back:
-
-```bash
-kubectl -n media get secret flinch-secrets -o jsonpath='{.data.FLINCH_WEB_TOKEN}' | base64 -d
-```
-
 To publish the UI through your ingress controller, turn on the `ingress`
 component in `deploy/kustomization.yaml` and set its host (the commented
 `patches:` example) and certificate (`deploy/ingress/flinch-web-ingress.yaml`).
@@ -193,14 +184,15 @@ schedule deletions.
 ### Upgrading from the access token
 
 Up to 0.1.1, one token in `FLINCH_WEB_TOKEN` opened both the UI and the API.
-From the release with the login on:
+From 0.2.0 on:
 
 - Automations keep working unchanged: the token is now the API key.
   `Authorization: Bearer <FLINCH_WEB_TOKEN>` is still accepted everywhere,
   `POST /v1/systemone` included, and `X-Api-Key: <FLINCH_WEB_TOKEN>` now is
   too.
 - The UI asks for a username and password, and deletes the token the browser
-  kept. Until both are in the Secret it shows **No login set**.
+  kept. Until both are in the Secret and `flinch-web` runs the new release's
+  manifests, it shows **No login set**.
 
 Add the login to the Secret you have from a file only you can read
 (`kubectl create secret` fails on a Secret that exists):
@@ -221,10 +213,13 @@ stringData:
 ```
 
 Keep the single quotes, so YAML takes each value as written; a `'` inside one
-is written `''`. Then apply the new release's manifests, with
-`kubectl apply -k deploy/` from a checkout of it or your overlay with its
-`newTag` moved: they pass the two new keys to `flinch-web` and restart it. If
-it already runs the new release, restart it instead:
+is written `''`. Then update your checkout to the new release
+(`git fetch --tags && git checkout v0.2.0`) and apply its manifests:
+`kubectl apply -k deploy/`, or your overlay with its `newTag` moved. They pass
+the two new keys to `flinch-web` and restart it. Moving `newTag` in an overlay
+of an older checkout is not enough: its `../base` is still the old one, which
+never passes the login, so the UI keeps saying **No login set**. If
+`flinch-web` already runs the new release's manifests, restart it instead:
 `kubectl -n media rollout restart deploy/flinch-web`.
 
 ## First run
@@ -469,7 +464,7 @@ namespace: media
 resources: ["../base"]
 components: ["../ingress"]   # only if you publish the UI through an Ingress
 images:
-  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.1.1" }
+  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.2.0" }
 patches:
   - target: { kind: Ingress, name: flinch-web }
     patch: |

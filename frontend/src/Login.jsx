@@ -75,7 +75,8 @@ export default function Login({ loginConfigured, reason = '', onLogin }) {
             <p className="inline-flex items-center gap-1.5 font-medium text-state-bad"><Lock size={13} /> No login set</p>
             <p className="text-fg-muted">
               The server has no FLINCH_WEB_USERNAME and FLINCH_WEB_PASSWORD, so nobody can log in. Add both to the
-              {' '}<code className="text-fg">flinch-secrets</code> Secret, then restart flinch-web. Automations
+              {' '}<code className="text-fg">flinch-secrets</code> Secret, apply the release's manifests (they pass
+              both to flinch-web), then restart flinch-web. Automations
               keep working with the API key (FLINCH_WEB_TOKEN) when one is set.
             </p>
           </div>

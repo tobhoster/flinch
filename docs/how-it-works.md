@@ -382,10 +382,10 @@ No model server, no network, no settings.
 `flinch-web` also serves TypeSafe's System One API at `POST /v1/systemone`. It
 is read-only and, like the rest of the JSON API, takes FLINCH's API key
 (`FLINCH_WEB_TOKEN`) the way Sonarr takes its own: as `X-Api-Key`, or as
-`Authorization: Bearer` for clients that only send that. So TypeSafe's Python
-SDK, a Home Assistant `rest_command` or n8n can ask FLINCH about an item the
-way they ask JEV, Kev or Laya. The answer comes from the latest snapshot the
-daemon published.
+`Authorization: Bearer` for clients that only send that. So a Home Assistant
+`rest_command`, n8n or any HTTP client can ask FLINCH about an item the way it
+asks JEV, Kev or Laya. (TypeSafe's Python SDK is not supported yet.) The answer
+comes from the latest snapshot the daemon published.
 
 ```bash
 curl -s -X POST https://flinch.example.com/v1/systemone -H "X-Api-Key: $FLINCH_WEB_TOKEN" \
@@ -403,6 +403,12 @@ question key picks the meaning:
 - `played` (noul): 1 − `safe`
 - `decision` (choice): the plan's verdict with probability 1.0; your
   `criteria` must include it
+
+`safe` and `played` are the forecast alone: favorites, the keep tag and your
+Maintainerr exclusions do not enter it and no rule caps it, so a favorite can
+read `safe` 0.99. For the plan's verdict, ask `decision`. The endpoint only
+reports: a `decision` of `delete` is carried out by Maintainerr alone, and only
+while Enforcement is on, so an automation should never delete on any answer.
 
 Any other key, a wrong type, or an item with no forecast returns 400
 `{"error": …}` saying why.
