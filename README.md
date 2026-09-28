@@ -129,6 +129,47 @@ Then open <http://localhost:7911> and log in as `demo` with the password `demo`.
   <img src="docs/screenshots/movies.png" alt="The Movies table with one title open: its P(safe), its decision and the reasons behind it" width="900">
 </p>
 
+## ⬆️ Upgrading from 0.1.x
+
+0.2.0 replaces the UI's token with a username and password. Before you change
+the image tag in production (if you run `latest`, pin `0.1.1` first: `latest`
+moves to 0.2.0 when it is published, and any restart pulls it):
+
+1. **Add the login** to `flinch-secrets`: `FLINCH_WEB_USERNAME` and
+   `FLINCH_WEB_PASSWORD`
+   ([how, without a password in your shell history](deploy/README.md#upgrading-from-the-access-token)).
+2. **Apply the 0.2.0 manifests**, which pass the two new keys to `flinch-web`:
+   update your checkout to the release (`git fetch --tags && git checkout
+   v0.2.0`), set `newTag: "0.2.0"` in your overlay if you have one, and run
+   `kubectl apply -k`. An overlay reads `../base` from the checkout it sits in,
+   so moving `newTag` alone runs 0.2.0 on 0.1.1's manifests, which never pass
+   the login to the pod.
+3. **Log in.** Until the Secret has both keys and `flinch-web` runs the 0.2.0
+   manifests, the UI says "No login set" (added the keys after the rollout?
+   `kubectl -n media rollout restart deploy/flinch-web`). Nothing is left open
+   meanwhile, and the API key keeps working.
+
+Automations keep working unchanged: `FLINCH_WEB_TOKEN` is now the API key,
+still accepted as `Authorization: Bearer` and now as `X-Api-Key` too. No state
+migration. Every behaviour change is toward keeping; these are the ones you
+may notice on the first cycle:
+
+- With no *Leaving Soon* collection named, unwatched items and never-played
+  reclaim are **held**, not sent to a delete collection.
+- A movie read as watched only from Plex's view stamp (no counted view), or
+  only from Tautulli streams with no readable percentage, now counts as
+  started: it waits for never-played reclaim and a *Leaving Soon* warning.
+- An item no watch source reported on is kept; never-played reclaim no longer
+  reaches it.
+- An unwatched item FLINCH put in a delete collection earlier is taken back
+  out and moves to *Leaving Soon*, whose window starts then. One in a delete
+  collection FLINCH has no record of adding it to gets a FLINCH exclusion
+  until you take it out.
+- Adopting a fitted model can no longer make an item eligible that the
+  hand-set priors hold.
+
+The full list is in the [0.2.0 release notes](https://github.com/tobhoster/flinch/releases/tag/v0.2.0).
+
 ## 📦 Install
 
 You need Radarr, Sonarr, Plex and Maintainerr 3.10 or newer; Tautulli is
@@ -172,9 +213,18 @@ own image, and keeping your own values out of git.
   Radarr/Sonarr tag, a Plex label or a Plex collection), the newest aired
   season, anything played in the last 30 days and your own Maintainerr
   exclusions are never evicted, whatever the forecast says.
-- **Missing evidence keeps.** An item FLINCH cannot match, a watch source it
-  could not read in full, or a disk it cannot measure means *keep*, never
-  *delete*.
+- **A learned model can only narrow.** Adopting a fitted model never makes
+  more items eligible: the P(safe) the floors and the eviction order read is
+  capped at the hand-set priors. To free more, lower your Score floor (and,
+  for items nobody finished, the Never-played floor).
+- **Missing evidence keeps.** An item FLINCH cannot match, an item no watch
+  source reported on, a watch source it could not read in full, or a disk it
+  cannot measure means *keep*, never *delete*.
+- **No warning, no unwatched deletion.** Anything nobody finished leaves only
+  through *Leaving Soon* (one exception: see
+  [Known limits](docs/how-it-works.md#known-limits)). With no *Leaving Soon*
+  collection named, such items are held rather than sent to a delete
+  collection.
 - **A floor on P(safe).** An item the rules allow must also clear your Score
   floor (P(safe) ≥ 0.75 by default) before it can even be a candidate. One
   nobody finished (a season: nobody played) is allowed only while never-played
@@ -201,10 +251,13 @@ it over HTTPS and keep it off the internet; see
 
 ## 🔌 Extras
 
-- **Ask FLINCH from your automations.** `POST /v1/systemone` answers "is this
-  safe to delete?" in TypeSafe's System One format, so Home Assistant, n8n or
-  the TypeSafe SDK can ask it the way they ask JEV, with your FLINCH API key
-  (`FLINCH_WEB_TOKEN`) in `X-Api-Key`, as Sonarr takes its own.
+- **Ask FLINCH from your automations.** `POST /v1/systemone` answers in
+  TypeSafe's System One format, so a Home Assistant `rest_command` or n8n can
+  ask about any item the way they ask JEV, with your FLINCH API key
+  (`FLINCH_WEB_TOKEN`) in `X-Api-Key`, as Sonarr takes its own. `decision` is
+  the plan's verdict for the item; `safe` is the forecast alone and ignores
+  your keep rules, so never delete on it. The endpoint only reports: it changes
+  nothing, and only Maintainerr deletes.
   [Details](docs/how-it-works.md#ask-flinch-like-any-system-one-model).
 - **Grade any model.** `flinch-fit --against <url>` benchmarks a System One
   server on your own history.
@@ -224,10 +277,11 @@ it over HTTPS and keep it off the internet; see
 - **Checked on every change**: nothing merges into `main` without the tests,
   CodeQL and the Security workflow (secrets, dependency advisories and
   licenses, workflow linting, and a scan and smoke test of the image).
-- **Running on one homelab** with enforcement on since 2026-09-22. All 34
-  keep-exclusions FLINCH wrote are found in Maintainerr every cycle. Which
-  model runs is not fixed: the daily fit adopts a fitted model only while it
-  beats the hand-set priors out of fold, and the Forecast model card on the
+- **In production on one homelab**, with enforcement on since 2026-09-22 (on
+  0.1.x; 0.2.0's changes merged on 2026-09-27).
+  Every keep-exclusion FLINCH writes is read back from Maintainerr each cycle.
+  Which model runs is not fixed: the daily fit adopts a fitted model only while
+  it beats the hand-set priors out of fold, and the Forecast model card on the
   Overview shows which one is running.
 - **TV on NFS can go ungoverned.** On that homelab, Sonarr's disk report left
   out all three of its NFS mounts, so FLINCH cannot measure those disks and never
