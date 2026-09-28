@@ -17,11 +17,23 @@ Only the latest release gets fixes.
 
 ## How FLINCH protects itself
 
-- **The UI needs a token.** `flinch-web` refuses every API request without
-  `Authorization: Bearer <FLINCH_WEB_TOKEN>`, and refuses everything when no
-  token is set. The token grants everything the UI can do, including turning
-  on Enforcement, so treat it like an *arr API key. Serve the UI over HTTPS,
-  and never publish it to the internet.
+- **The UI needs a login; automations need the API key.** `flinch-web`
+  refuses every API request without a session from logging in
+  (`FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD`) or the API key
+  (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or `Authorization: Bearer`), and refuses
+  everything when neither is set. Both grant everything the UI can do,
+  including turning on Enforcement, so treat them like an *arr API key. Serve
+  the UI over HTTPS, and never publish it to the internet. Upgrading from the
+  token alone: see
+  [Upgrading from the access token](deploy/README.md#upgrading-from-the-access-token).
+- **Sessions are guarded.** The session cookie is `HttpOnly`,
+  `SameSite=Strict`, and `Secure` behind an HTTPS ingress, and no cache may
+  keep an answer behind the login. A login, a logout and every write made with
+  the cookie need the `X-Flinch-Request: 1` header, which a page on another
+  site cannot add, so no other site can guess the password through your
+  browser or log you out. Five failed logins in a row pause logging in, for up
+  to 15 minutes. Sessions live in memory: restarting `flinch-web` ends them
+  all, and clears the pause.
 - **The Plex URL and token are one credential.** They always come from the same
   place, the Secret or Settings, and a changed URL needs the token again, so a
   saved token is never sent to a new address. It is never sent back to the
@@ -51,7 +63,8 @@ every week:
 - npm audit of the UI's packages, and their registry signatures;
 - actionlint and zizmor over the workflows, whose actions are pinned by SHA;
 - Trivy over the image, the Dockerfile and the manifests, then the image run
-  as the manifests run it, checking the token and the security headers.
+  as the manifests run it, checking the login, the API key and the security
+  headers.
 
 Release tags cannot be moved or deleted, and each release image carries a
 build provenance attestation and an SBOM.

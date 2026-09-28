@@ -24,11 +24,11 @@ To try a change in the UI, serve the demo snapshot:
 
 ```bash
 FLINCH_STATE_DIR=/tmp/flinch-demo cargo run -p flinch-web --bin flinch-demo
-FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist FLINCH_WEB_TOKEN=demo \
-  cargo run -p flinch-web --bin flinch-web
+FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist \
+  FLINCH_WEB_USERNAME=demo FLINCH_WEB_PASSWORD=demo cargo run -p flinch-web --bin flinch-web
 ```
 
-Open <http://localhost:7911> and unlock it with `demo`.
+Open <http://localhost:7911> and log in as `demo` with the password `demo`.
 
 ## Rules for changes
 
@@ -39,8 +39,8 @@ Open <http://localhost:7911> and unlock it with `demo`.
   property tests (`proptest`), in the module's `tests.rs`.
 - **Formatting.** `cargo fmt --all` applies the style in `rustfmt.toml`; CI
   fails on unformatted code.
-- **No real data.** Never commit API keys, tokens, hostnames or anything from
-  your own library. The demo snapshot is made with
+- **No real data.** Never commit API keys, tokens, passwords, hostnames or
+  anything from your own library. The demo snapshot is made with
   `crates/flinch-web/demo/anonymize.py`, which renames titles and randomizes
   sizes, dates and ids.
 

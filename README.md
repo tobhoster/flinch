@@ -118,11 +118,13 @@ No homelab needed. The demo is a snapshot of a real library with every title
 renamed and every size, date and id randomized:
 
 ```bash
-docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo -e FLINCH_WEB_TOKEN=demo \
+docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
+  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo -e FLINCH_WEB_TOKEN=demo \
   ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
 ```
 
-Then open <http://localhost:7911> and unlock it with `demo`.
+Then open <http://localhost:7911> and log in as `demo` with the password `demo`.
+Release 0.1.1 predates the login and asks for a token instead: enter `demo`.
 
 <p align="center">
   <img src="docs/screenshots/movies.png" alt="The Movies table with one title open: its P(safe), its decision and the reasons behind it" width="900">
@@ -140,17 +142,22 @@ optional. FLINCH runs as two small pods on Kubernetes from one published image
    key lands in your shell history:
    ```bash
    install -m 600 /dev/null flinch.env                              # readable only by you
-   echo "FLINCH_WEB_TOKEN=$(openssl rand -hex 32)" >> flinch.env   # the UI's login
-   $EDITOR flinch.env   # add RADARR_API_KEY=..., SONARR_API_KEY=..., one per line
+   echo "FLINCH_WEB_TOKEN=$(openssl rand -hex 32)" >> flinch.env   # the API key, for automations
+   $EDITOR flinch.env   # add FLINCH_WEB_USERNAME=..., FLINCH_WEB_PASSWORD=...,
+                        # RADARR_API_KEY=..., SONARR_API_KEY=..., one per line
    kubectl -n media create secret generic flinch-secrets --from-env-file=flinch.env
    rm flinch.env
    ```
-   Plex goes in the same Secret or in **Settings → Plex** later; Tautulli and a
-   Maintainerr key are optional. See [Configure](deploy/README.md#configure).
+   `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD` are the UI's login; write
+   every value without quotes. Plex goes in the same Secret or in
+   **Settings → Plex** later; Tautulli and a Maintainerr key are optional. See
+   [Configure](deploy/README.md#configure). Already running FLINCH with only
+   the token? See [Upgrading from the access token](deploy/README.md#upgrading-from-the-access-token).
 3. **Install:** `kubectl apply -k deploy/`
 4. **Open the UI:** `kubectl -n media port-forward svc/flinch-web 7911:7911`,
-   then <http://localhost:7911>, and paste the token (read it back with
-   `kubectl -n media get secret flinch-secrets -o jsonpath='{.data.FLINCH_WEB_TOKEN}' | base64 -d`).
+   then <http://localhost:7911>, and log in with that username and password
+   (release 0.1.1 asks for the token instead; see
+   [Reach the UI](deploy/README.md#reach-the-ui)).
    Enforcement starts **off**: FLINCH plans and logs every write it would
    make, and sends nothing.
 5. **Set up Maintainerr** (two delete collections and two *Leaving Soon*
@@ -184,9 +191,11 @@ own image, and keeping your own values out of git.
   or a snapshot still holds after an eviction are reported and stay credited
   for up to 14 days, so FLINCH evicts nothing more for them.
 
-The UI asks for a token (`FLINCH_WEB_TOKEN`), because whoever can save
-Settings can turn on Enforcement. Serve it over HTTPS and keep it off the
-internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.md).
+The UI asks for a username and password (`FLINCH_WEB_USERNAME`,
+`FLINCH_WEB_PASSWORD`), because whoever can save Settings can turn on
+Enforcement; automations use the API key (`FLINCH_WEB_TOKEN`) instead. Serve
+it over HTTPS and keep it off the internet; see
+[Security](deploy/README.md#security) and [SECURITY.md](SECURITY.md).
 
 <p align="center">
   <img src="docs/screenshots/phone.png" alt="The Overview on a phone" width="300">
@@ -196,8 +205,8 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
 
 - **Ask FLINCH from your automations.** `POST /v1/systemone` answers "is this
   safe to delete?" in TypeSafe's System One format, so Home Assistant, n8n or
-  the TypeSafe SDK can ask it the way they ask JEV, with your FLINCH token as
-  the API key.
+  the TypeSafe SDK can ask it the way they ask JEV, with your FLINCH API key
+  (`FLINCH_WEB_TOKEN`) in `X-Api-Key`, as Sonarr takes its own.
   [Details](docs/how-it-works.md#ask-flinch-like-any-system-one-model).
 - **Grade any model.** `flinch-fit --against <url>` benchmarks a System One
   server on your own history.
@@ -208,11 +217,12 @@ internet; see [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.m
 
 ## 🚧 Status
 
-- **680 tests pass**, with table-driven cases and property tests on everything
+- **737 tests pass**, with table-driven cases and property tests on everything
   that decides a deletion: eviction order, watermark latching, recycle-bin
   credit and the freed-bytes check, identity joins, Maintainerr sync and
   exclusion releases, Leaving Soon routing and the forecast's no-leakage rules,
-  plus the API's token check, the settings bounds and the response-size limit.
+  plus the API's login, session and API key checks, the settings bounds and
+  the response-size limit.
 - **Checked on every change**: nothing merges into `main` without the tests,
   CodeQL and the Security workflow (secrets, dependency advisories and
   licenses, workflow linting, and a scan and smoke test of the image).
@@ -241,8 +251,8 @@ cargo test --workspace --locked            # the whole suite
 cd frontend && npm ci && npm run build     # the UI, into frontend/dist
 cd ..
 FLINCH_STATE_DIR=/tmp/flinch-demo cargo run -p flinch-web --bin flinch-demo
-FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist FLINCH_WEB_TOKEN=demo \
-  cargo run -p flinch-web --bin flinch-web
+FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist \
+  FLINCH_WEB_USERNAME=demo FLINCH_WEB_PASSWORD=demo cargo run -p flinch-web --bin flinch-web
 ```
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the rules for changes; report security

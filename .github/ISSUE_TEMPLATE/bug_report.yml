@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Never paste API keys, the Plex token or your FLINCH_WEB_TOKEN.** Remove them from logs and settings first.
+        **Never paste API keys, the Plex token, your FLINCH_WEB_PASSWORD or your FLINCH_WEB_TOKEN.** Remove them from logs and settings first.
         A security problem goes to a [private report](https://github.com/tobhoster/flinch/security/advisories/new), not here.
   - type: input
     id: version

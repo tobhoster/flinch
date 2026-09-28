@@ -9,7 +9,8 @@ name: Security
 #   npm-deps   npm audit, and the registry signatures of every UI package
 #   workflows  actionlint and zizmor over .github/workflows
 #   image      build the image, scan it and the manifests with Trivy, then run
-#              it as deploy/base does and check the token and the headers
+#              it as deploy/base does and check the login, the API key and
+#              the headers
 #
 # Tools that run as containers are pinned by digest: the images Dependabot
 # does not track (gitleaks, actionlint, Trivy) move by hand. Trivy's digest

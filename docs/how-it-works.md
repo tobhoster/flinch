@@ -380,13 +380,15 @@ No model server, no network, no settings.
 ## Ask FLINCH like any System One model
 
 `flinch-web` also serves TypeSafe's System One API at `POST /v1/systemone`. It
-is read-only and takes the FLINCH token as its API key (`Authorization: Bearer`),
-like the rest of the JSON API. So TypeSafe's Python SDK, a Home Assistant
-`rest_command` or n8n can ask FLINCH about an item the way they ask JEV, Kev or
-Laya. The answer comes from the latest snapshot the daemon published.
+is read-only and, like the rest of the JSON API, takes FLINCH's API key
+(`FLINCH_WEB_TOKEN`) the way Sonarr takes its own: as `X-Api-Key`, or as
+`Authorization: Bearer` for clients that only send that. So TypeSafe's Python
+SDK, a Home Assistant `rest_command` or n8n can ask FLINCH about an item the
+way they ask JEV, Kev or Laya. The answer comes from the latest snapshot the
+daemon published.
 
 ```bash
-curl -s -X POST https://flinch.example.com/v1/systemone -H "Authorization: Bearer $FLINCH_WEB_TOKEN" \
+curl -s -X POST https://flinch.example.com/v1/systemone -H "X-Api-Key: $FLINCH_WEB_TOKEN" \
   -d '{"state": {"title": "Heat", "year": 1995},
   "questions": {"safe": {"type": "noul"}, "decision": {"type": "choice", "criteria": ["keep", "delete"]}}}'
 ```
@@ -408,13 +410,15 @@ Any other key, a wrong type, or an item with no forecast returns 400
 ## The web UI
 
 `flinch-web` serves a React UI next to a JSON API over the files the daemon
-publishes. Every API call needs the FLINCH token (`FLINCH_WEB_TOKEN`, asked for
-once by the browser), and the only things it writes are `settings.json` and the
-run trigger: never the stack. It shows each disk against its watermarks, what
-is being freed, what is waiting on a recycle bin, what is held and what isn't
-library media, every item's forecast and decision in plain words, the forecast
-model's standing, the Maintainerr sync with its warnings, deletions FLINCH did
-not make, evidence health, and a glossary for every term.
+publishes. Every API call needs either a session, which the browser gets by
+logging in with `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD`, or the API key
+(`FLINCH_WEB_TOKEN`) that automations send. The only things it writes are
+`settings.json` and the run trigger: never the stack. It shows each disk
+against its watermarks, what is being freed, what is waiting on a recycle bin,
+what is held and what isn't library media, every item's forecast and decision
+in plain words, the forecast model's standing, the Maintainerr sync with its
+warnings, deletions FLINCH did not make, evidence health, and a glossary for
+every term.
 
 **Is it working?** The header says so on every tab: a green dot before
 "Last run …" when the last cycle succeeded on schedule, red "Overdue" when no
