@@ -30,12 +30,11 @@ With the published image:
 
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
-  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo -e FLINCH_WEB_TOKEN=demo \
-  ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
+  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo \
+  ghcr.io/tobhoster/flinch:0.2.0 sh -c 'flinch-demo && flinch-web'
 ```
 
-Log in as `demo` with the password `demo`. Release 0.1.1 predates the login
-and asks for a token instead: enter `demo`.
+Log in as `demo` with the password `demo`.
 
 From source:
 
@@ -70,7 +69,7 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 
 | Tag | What it is |
 | --- | --- |
-| `0.1.1` | a release; `deploy/kustomization.yaml` pins one |
+| `0.2.0` | a release; `deploy/kustomization.yaml` pins one |
 | `0.1`, `latest` | the newest release of that line, or overall |
 | `edge` | the main branch |
 | `sha-<commit>` | one build of main |
@@ -80,8 +79,8 @@ built UI; the two Deployments differ only in `command:`. It is about 35 MB
 From the repository root:
 
 ```bash
-docker build -t registry.example.com/flinch:0.1.1 -f deploy/Dockerfile .
-docker push registry.example.com/flinch:0.1.1
+docker build -t registry.example.com/flinch:0.2.0 -f deploy/Dockerfile .
+docker push registry.example.com/flinch:0.2.0
 ```
 
 Then point `images:` in `deploy/kustomization.yaml` at it. The manifests use
@@ -172,14 +171,6 @@ only. To change the login, update the Secret and restart `flinch-web`
 (`kubectl -n media rollout restart deploy/flinch-web`), which also logs every
 browser out.
 
-Release 0.1.1, which `deploy/kustomization.yaml` pins until the next release,
-predates the login: it asks for the token in `FLINCH_WEB_TOKEN` instead. To
-read it back:
-
-```bash
-kubectl -n media get secret flinch-secrets -o jsonpath='{.data.FLINCH_WEB_TOKEN}' | base64 -d
-```
-
 To publish the UI through your ingress controller, turn on the `ingress`
 component in `deploy/kustomization.yaml` and set its host (the commented
 `patches:` example) and certificate (`deploy/ingress/flinch-web-ingress.yaml`).
@@ -193,7 +184,7 @@ schedule deletions.
 ### Upgrading from the access token
 
 Up to 0.1.1, one token in `FLINCH_WEB_TOKEN` opened both the UI and the API.
-From the release with the login on:
+From 0.2.0 on:
 
 - Automations keep working unchanged: the token is now the API key.
   `Authorization: Bearer <FLINCH_WEB_TOKEN>` is still accepted everywhere,
@@ -469,7 +460,7 @@ namespace: media
 resources: ["../base"]
 components: ["../ingress"]   # only if you publish the UI through an Ingress
 images:
-  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.1.1" }
+  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.2.0" }
 patches:
   - target: { kind: Ingress, name: flinch-web }
     patch: |

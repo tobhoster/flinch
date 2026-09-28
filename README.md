@@ -119,12 +119,11 @@ renamed and every size, date and id randomized:
 
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
-  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo -e FLINCH_WEB_TOKEN=demo \
-  ghcr.io/tobhoster/flinch:0.1.1 sh -c 'flinch-demo && flinch-web'
+  -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo \
+  ghcr.io/tobhoster/flinch:0.2.0 sh -c 'flinch-demo && flinch-web'
 ```
 
 Then open <http://localhost:7911> and log in as `demo` with the password `demo`.
-Release 0.1.1 predates the login and asks for a token instead: enter `demo`.
 
 <p align="center">
   <img src="docs/screenshots/movies.png" alt="The Movies table with one title open: its P(safe), its decision and the reasons behind it" width="900">
@@ -156,8 +155,7 @@ optional. FLINCH runs as two small pods on Kubernetes from one published image
 3. **Install:** `kubectl apply -k deploy/`
 4. **Open the UI:** `kubectl -n media port-forward svc/flinch-web 7911:7911`,
    then <http://localhost:7911>, and log in with that username and password
-   (release 0.1.1 asks for the token instead; see
-   [Reach the UI](deploy/README.md#reach-the-ui)).
+   (see [Reach the UI](deploy/README.md#reach-the-ui)).
    Enforcement starts **off**: FLINCH plans and logs every write it would
    make, and sends nothing.
 5. **Set up Maintainerr** (two delete collections and two *Leaving Soon*
