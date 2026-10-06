@@ -5,7 +5,7 @@
 
 use super::history::{history_entries, merge_history};
 use super::*;
-use crate::card::{ArchiveCard, LibraryKind, SeasonState};
+use crate::card::{ArchiveCard, LibraryKind};
 use crate::ids::{ExternalIds, PlexIds};
 use crate::watch::{EvidenceHealth, WatchEntry, WatchSource};
 use proptest::prelude::*;
@@ -321,8 +321,7 @@ fn a_keep_marker_on_any_copy_the_show_or_the_season_keeps_the_item() {
 
 #[test]
 fn newer_history_overrides_silent_item_state_but_not_newer_evidence() {
-    let entry =
-        |epoch: Option<u64>, source| WatchEntry { id: "x".into(), last_watched_epoch: epoch, progress: 1.0, rewatch_score: None, source };
+    let entry = |epoch: Option<u64>, source| WatchEntry { id: "x".into(), last_watched_epoch: epoch, progress: 1.0, source };
     let mut entries = HashMap::from([("x".to_string(), entry(None, WatchSource::Plex))]);
     merge_history(&mut entries, HashMap::from([("x".to_string(), entry(Some(500), WatchSource::PlexHistory))]));
     assert_eq!(entries["x"].source, WatchSource::PlexHistory);
@@ -373,7 +372,7 @@ fn shared_server() -> EvidenceHealth {
 
 #[test]
 fn undated_rows_read_as_before() {
-    // Counted with no date: still watched, and the policy holds it as undated.
+    // Counted with no date: still watched, just undated.
     let counted = meta(r#"{"ratingKey":"1","title":"X","viewCount":1,"viewOffset":600000}"#).movie_watch();
     assert!(counted.is_watched());
     assert_eq!(counted.last_viewed_unix, None);
@@ -424,15 +423,7 @@ fn a_started_season_reads_partly_played_never_unplayed() {
 
     let mut cards = [ArchiveCard { id: "sonarr-7-s1".into(), episodes_total: Some(12), ..crate::golden::golden_season() }];
     crate::watch::apply(&mut cards, &entries);
-    assert_eq!(cards[0].season_state, Some(SeasonState::Partial), "started, not unplayed");
-
-    // Partial is never reclaimed, whatever the score.
-    let armed = crate::policy::ArchivePolicy {
-        unwatched_reclaim: crate::policy::UnwatchedReclaim { enabled: true, ..Default::default() },
-        ..Default::default()
-    };
-    let verdict = crate::policy::ScoreVerdict { p_safe: 0.99, hard_guard: false, sibling_played: false };
-    assert_eq!(crate::policy::decide(&cards[0], &armed, Some(verdict)), crate::policy::Reason::KeepBecauseNotCompleted);
+    assert!(cards[0].last_watched_days.is_some(), "started, not unplayed: dated, so never-played reclaim cannot take it");
 }
 
 #[test]
@@ -459,63 +450,6 @@ fn a_start_plex_dated_after_a_finished_play_reads_as_started() {
     merge_history(&mut entries, history_entries(&targets, &resolution, &history));
     assert_eq!(entries["radarr-1"].source, WatchSource::Plex);
     assert!(entries["radarr-1"].progress < 0.999, "a later start outweighs an earlier counted view");
-}
-
-#[test]
-fn the_fitter_trains_as_finished_a_movie_the_daemon_scores_as_started() {
-    // The known disagreement fit/panel.rs records: the daemon lets Plex's
-    // newer, uncounted stamp decide; the panel replays the play log, which
-    // holds only the finished play. Pinned, so that aligning the two sides
-    // flips these assertions on purpose rather than by drift.
-    let library = movies(&[r#"{"ratingKey":"1","title":"A","year":2020,"lastViewedAt":1700007200,"Guid":[{"id":"tmdb://1"}]}"#]);
-    let targets = [movie_target("radarr-1", "A", Some(2020), tmdb(1))];
-    let resolution = resolve(&targets, &library);
-    let stream: crate::tautulli::TautulliRow =
-        serde_json::from_str(r#"{"media_type":"movie","rating_key":"1","title":"A","date":"1700000000","percent_complete":"87"}"#)
-            .expect("stream fixture");
-    let view = meta(r#"{"type":"movie","ratingKey":"1","viewedAt":1690000000,"accountID":2}"#);
-
-    for (history, streams) in [(vec![], vec![stream]), (vec![view], vec![])] {
-        // The daemon: item state, then both play logs, and the newest record decides.
-        let mut entries = resolution.item_entries(&shared_server());
-        merge_history(&mut entries, history_entries(&targets, &resolution, &history));
-        merge_history(&mut entries, crate::tautulli::plays_by_target(&targets, &resolution, &streams));
-        let source = entries["radarr-1"].source;
-        let mut cards = [ArchiveCard { id: "radarr-1".into(), ..crate::golden::golden_movie() }];
-        crate::watch::apply(&mut cards, &entries);
-        let live = crate::score::HouseholdContext { watch_source: Some(source), ..Default::default() };
-        let scored: Vec<&str> = crate::score::features(&cards[0], live).into_iter().map(|feature| feature.name).collect();
-        assert_eq!(cards[0].is_watched, Some(false), "the daemon reads a start");
-        assert!(scored.contains(&"partially_played") && !scored.contains(&"completed_cold"), "{scored:?}");
-
-        // The fitter: the same plays, replayed at a cut after them.
-        let log = crate::fit::plays::PlayLog::new(&history, &streams);
-        let join = resolution.join(&targets[0]);
-        let item = crate::fit::FitItem {
-            id: "radarr-1".into(),
-            title: "A".into(),
-            kind: LibraryKind::Movie,
-            size_bytes: 4_200_000_000,
-            age_days: 2000.0,
-            episodes_total: None,
-            season_index: None,
-            show_title: None,
-            plays: log.item_plays(&join).into_iter().cloned().collect(),
-            audience_plays: log.audience_plays(&join).into_iter().cloned().collect(),
-            watch_source: Some(source),
-            is_newest_season: false,
-            series_status: None,
-            last_aired_epoch: None,
-            guid_resolved: true,
-            genres: Vec::new(),
-            on_disk: Vec::new(),
-        };
-        let spec =
-            crate::fit::panel::PanelSpec { now: 1_800_000_000, cuts_days: &[100.0], horizon_days: 30.0, tautulli_coverage_start: None };
-        let row = crate::fit::panel::build_dataset(&[item], &spec).remove(0);
-        assert_eq!(row.card.is_watched, Some(true), "the fitter reads a finish");
-        assert!(row.values.contains_key("completed_cold") && !row.values.contains_key("partially_played"), "{:?}", row.values);
-    }
 }
 
 prop_compose! {

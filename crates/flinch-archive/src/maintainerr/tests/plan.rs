@@ -35,6 +35,7 @@ fn desired(protect: &[&SyncItem], evict: &[&SyncItem]) -> Desired {
         announced: BTreeSet::new(),
         collections: titles(),
         gone: BTreeSet::new(),
+        unresolved: BTreeSet::new(),
         seerr_configured: false,
     }
 }
@@ -525,6 +526,24 @@ fn an_exclusion_on_an_item_gone_from_plex_is_released_but_never_the_operators_ro
         [SyncAction::RemoveExclusion { card_id: "sonarr-9-s1".into(), target: season("900", "901"), exclusion_id: 7 }]
     );
     assert_eq!(plan.gone, BTreeSet::from(["sonarr-9-s1".to_string()]));
+}
+
+#[test]
+fn an_exclusion_flinch_no_longer_wants_is_released_unless_the_card_cannot_be_judged() {
+    let left = film("radarr-1", "100", 5);
+    let unresolved = item("radarr-2", LibraryKind::Movie, None, 5 * GIB);
+    let mut owned = owning("radarr-1", movie("100"), 7);
+    owned.protected.insert("radarr-2".into(), ProtectedEntry { target: movie("200"), exclusion_ids: vec![8] });
+    let mut seen = observed(&[&left], &[row(7, "100", "100")], &[]);
+    seen.exclusions.insert("200".into(), vec![row(8, "200", "200")]);
+    let mut wanted = desired(&[], &[]);
+    wanted.unresolved.insert(unresolved.card_id.clone());
+
+    let plan = plan_sync(&wanted, &seen, &owned, &OPEN);
+
+    // Neither protected nor evicted: the operator's own rules decide again.
+    assert_eq!(plan.actions, [SyncAction::RemoveExclusion { card_id: "radarr-1".into(), target: movie("100"), exclusion_id: 7 }]);
+    assert!(plan.gone.is_empty(), "released, not gone: Plex still lists it");
 }
 
 #[test]

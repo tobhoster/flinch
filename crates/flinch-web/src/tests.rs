@@ -19,14 +19,13 @@ pub(crate) fn state_with(tmp: &Path, auth: auth::Auth) -> AppState {
     let dir = tmp.join("state");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("status.json"), r#"{"scanned":4,"kept":3,"dry_run":true}"#).unwrap();
-    fs::write(dir.join("items.json"), r#"[{"id":"radarr-1","title":"A Movie","kind":"movie","size_bytes":1000000000,"decision":"keep","reason":"guard","delete_probability":0.0,"protected":true}]"#).unwrap();
+    fs::write(dir.join("items.json"), r#"[{"id":"radarr-1","title":"A Movie","kind":"movie","size_bytes":1000000000,"decision":"keep","reason":"guard","protected":true}]"#).unwrap();
     fs::write(
         dir.join("history.json"),
         r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#,
     )
     .unwrap();
-    let items = Arc::new(snapshot::Snapshot::new(dir.join("items.json")));
-    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth), items }
+    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth) }
 }
 
 /// A request with these headers, as `(name, value)` pairs.
@@ -93,22 +92,6 @@ async fn api_endpoints_report_the_snapshot_not_a_broken_page() {
     fs::remove_dir_all(&tmp).ok();
 }
 
-#[tokio::test]
-async fn systemone_answers_from_the_snapshot_and_refuses_with_400() {
-    let tmp = std::env::temp_dir().join(format!("fw-{}-{}", std::process::id(), "systemone"));
-    let st = state(&tmp, Some(TOKEN));
-    let ask = r#"{"state": "radarr-1", "questions": {"decision": {"type": "choice", "criteria": ["keep", "delete"]}}}"#;
-    let answered = api_systemone(AxumState(st.clone()), ask.to_string()).await;
-    assert_eq!(answered.status(), StatusCode::OK);
-    let malformed = api_systemone(AxumState(st.clone()), "{".to_string()).await;
-    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
-    // radarr-1 has no forecast in the fixture: a 400, not a made-up number.
-    let unscored = r#"{"state": "radarr-1", "questions": {"safe": {"type": "noul"}}}"#;
-    let refused = api_systemone(AxumState(st.clone()), unscored.to_string()).await;
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
-    fs::remove_dir_all(&tmp).ok();
-}
-
 pub(crate) async fn body_of(res: Response) -> String {
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
     String::from_utf8(bytes.to_vec()).unwrap()
@@ -131,17 +114,15 @@ async fn the_plex_token_never_reaches_the_browser_and_a_blank_one_keeps_it() {
     assert!(!shown.contains("plex-s3cret-token"), "token sent to the browser: {shown}");
     let view: serde_json::Value = serde_json::from_str(&shown).unwrap();
     assert_eq!(view["plex_token_set"], true);
-    // f32 settings print as typed, not widened to 0.800000011920929.
-    assert_eq!(view["capacity_ceiling"].to_string(), "0.8");
 
     // The page saves back what it was shown, with one change.
     let mut edited = view.clone();
-    edited["score_floor"] = serde_json::json!(0.9);
+    edited["capacity"]["target_utilization"] = serde_json::json!(0.7);
     let res = send(&st, put_settings(edited.to_string())).await;
     assert_eq!(res.status(), StatusCode::OK);
     let stored = read_settings(&st.dir.join("settings.json")).unwrap();
     assert_eq!(stored.plex_token, "plex-s3cret-token");
-    assert!((stored.score_floor - 0.9).abs() < 1e-6);
+    assert_eq!(stored.capacity.target_utilization, 0.7);
     fs::remove_dir_all(&tmp).ok();
 }
 
@@ -191,7 +172,7 @@ async fn an_out_of_range_setting_is_refused_and_nothing_is_written() {
     let st = state(&tmp, Some(TOKEN));
     save_plex(&st, PLEX, "old");
     let before = fs::read(st.dir.join("settings.json")).unwrap();
-    let body = serde_json::json!({ "plex_url": PLEX, "capacity_ceiling": 0.7, "capacity_release": 0.9 });
+    let body = serde_json::json!({ "plex_url": PLEX, "capacity": { "target_utilization": 0.97 } });
     let res = send(&st, put_settings(body.to_string())).await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let refusal: serde_json::Value = serde_json::from_str(&body_of(res).await).unwrap();

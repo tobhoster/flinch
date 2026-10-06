@@ -194,3 +194,15 @@ fn no_history_means_no_spans_so_callers_keep_todays_rule() {
 fn arr_timestamps_parse_to_unix_seconds(#[case] text: &str, #[case] epoch: Option<u64>) {
     assert_eq!(parse_utc(text), epoch);
 }
+
+proptest::proptest! {
+    #[test]
+    fn formatting_a_timestamp_parses_back_to_it(epoch in 0u64..=8_000_000_000) {
+        proptest::prop_assert_eq!(parse_utc(&format_utc(epoch)), Some(epoch));
+    }
+}
+
+#[test]
+fn a_known_instant_formats_as_iso_8601() {
+    assert_eq!(format_utc(1_791_429_587), "2026-10-08T03:19:47Z");
+}

@@ -1,40 +1,17 @@
 //! The panel: every cut date × every item that was on disk at that cut, asked
 //! exactly as the daemon would have asked it then.
 //!
-//! Each row carries the card and household context inference would have scored
-//! at the cut, rebuilt from plays *before* the cut only, and a label from plays
-//! in the horizon *after* it. Recency, rewatches, viewers, sibling engagement
-//! and play-log provenance are exact, and so is play state as the play log
-//! records it (one exception below). A few facts have no history to replay and
-//! use their current value — the documented approximation: size, the
-//! newest-season flag, the sibling count, and provenance from an item-state
-//! source (a live Plex query or an export). They barely move over a season, and
-//! pretending to know their history would be inventing data. Series status is
-//! only counted once the final episode had aired by the cut, so it never leaks.
-//! Taste is a post-pass over the finished panel: each row reads the household's
-//! genre play-rates counted from rows whose outcome had closed by its own cut.
-//!
-//! The exception, a known disagreement with the daemon: a movie is finished
-//! here when the play log holds a finished play. The daemon also reads Plex
-//! item state and lets the newest record decide, so a later `lastViewedAt` Plex
-//! did not count (a start) outranks an older finished play: a Tautulli stream
-//! of 85% or more, which is dated by its start and so older than Plex's stamp
-//! for the same session, or another account's counted view. The play log has
-//! no item state to replay, so the panel trains such a movie as finished while
-//! the daemon scores it as started. The daemon's is the cautious reading: it
-//! never gates a start above the same movie read as finished, under the priors
-//! or a fit ([`crate::score::score_fenced`]), and the movie waits for
-//! never-played reclaim and Leaving Soon instead of leaving as watched.
+//! Each row carries the hazard's features at the cut, read only from plays
+//! *before* it, and its outcome: whether anything played the item in the
+//! horizon *after* it. Only fully observed windows are rows: a window still
+//! open at `now` would read as "not played" and teach the model that recent
+//! items are cold.
 
-use super::plays::PlayEvidence;
 use super::FitItem;
-use crate::card::{ArchiveCard, LibraryKind, SeasonState};
 use crate::presence;
-use crate::score::{self, HouseholdContext};
-use crate::taste::{self, GenreRates, ItemGenres};
-use crate::tautulli;
-use crate::watch::WatchSource;
-use std::collections::HashMap;
+use crate::regret::{PlayHistory, WatchFeatures};
+
+const DAY_SECS: u64 = 86_400;
 
 /// Which questions the panel asks.
 #[derive(Debug, Clone, Copy)]
@@ -44,8 +21,6 @@ pub struct PanelSpec<'a> {
     /// Cut dates, in days before `now`.
     pub cuts_days: &'a [f32],
     pub horizon_days: f32,
-    /// Oldest stream Tautulli holds: its silence only counts after this.
-    pub tautulli_coverage_start: Option<u64>,
 }
 
 /// One panel row: an "as of" question and its observed answer.
@@ -55,78 +30,42 @@ pub struct Example {
     /// When the question was asked, in days before the panel's `now`.
     pub cut_days: f32,
     pub cut_unix: u64,
-    /// What inference would have scored at the cut.
-    pub card: ArchiveCard,
-    pub ctx: HouseholdContext,
-    /// `score::features(card, ctx)` by name: what training fits weights over.
-    pub values: HashMap<&'static str, f32>,
-    /// 1.0 = nothing played it during the horizon, so reclaiming would have been safe.
+    /// What the hazard would have read at the cut.
+    pub features: WatchFeatures,
+    /// 1.0 = played during the horizon after the cut.
     pub label: f32,
 }
 
 /// Build the panel: every cut date × every item that was on disk at that cut.
 pub fn build_dataset(items: &[FitItem], spec: &PanelSpec<'_>) -> Vec<Example> {
     let horizon = (spec.horizon_days * 86_400.0) as u64;
-    let shows = by_show(items);
     let mut examples = Vec::new();
     for days in spec.cuts_days {
         let cut = spec.now.saturating_sub((*days * 86_400.0) as u64);
-        // Only fully observed outcomes are labels. A window that runs past `now`
-        // has not happened yet, and counting it as "nothing played it" would
-        // teach the model that recent items are safe.
         if cut + horizon > spec.now {
             continue;
         }
         for item in items {
-            // Only items that existed at the cut can be judged at it.
-            let Some(arrival) = arrival_by(item, cut, spec.now) else {
-                continue;
+            let Some(arrival) = arrival_by(item, cut, spec.now) else { continue };
+            let item_plays: Vec<_> = item.plays.iter().filter(|play| play.epoch < cut).collect();
+            let audience: Vec<_> = item.audience_plays.iter().filter(|play| play.epoch < cut).collect();
+            let history = PlayHistory {
+                item: &item_plays,
+                audience: &audience,
+                episodes_total: item.episodes_total,
+                last_watched_days: None,
+                added_days_ago: (cut - arrival) as f32 / DAY_SECS as f32,
             };
-            let show = item.show_title.as_deref().and_then(|title| shows.get(title)).map_or(&[][..], Vec::as_slice);
-            let card = card_as_of(item, cut, arrival);
-            let ctx = context_as_of(item, show, cut, spec);
-            let values = score::features(&card, ctx).into_iter().map(|feature| (feature.name, feature.value)).collect();
             examples.push(Example {
                 item_id: item.id.clone(),
                 cut_days: *days,
                 cut_unix: cut,
-                card,
-                ctx,
-                values,
-                // The guard's question: did nothing play it during the horizon?
-                label: if item.played_between(cut, cut + horizon) { 0.0 } else { 1.0 },
+                features: WatchFeatures::read(&history, cut),
+                label: if item.played_between(cut, cut + horizon) { 1.0 } else { 0.0 },
             });
         }
     }
-    attach_taste(&mut examples, items, horizon);
     examples
-}
-
-/// Set each row's taste from the genre rates as of its cut ([`taste::taste`]),
-/// and add the feature it implies. Rates are counted once per distinct cut.
-fn attach_taste(examples: &mut [Example], items: &[FitItem], horizon_secs: u64) {
-    let genres = ItemGenres::of(items);
-    let mut cuts: Vec<u64> = examples.iter().map(|row| row.cut_unix).collect();
-    cuts.sort_unstable();
-    cuts.dedup();
-    let rates: HashMap<u64, GenreRates> =
-        cuts.into_iter().map(|cut| (cut, GenreRates::as_of(examples, &genres, horizon_secs, cut))).collect();
-    for row in examples.iter_mut() {
-        row.ctx.taste = rates.get(&row.cut_unix).and_then(|rates| taste::taste(rates, &row.card, genres.of_id(&row.item_id)));
-        if row.ctx.taste.is_some() {
-            row.values = score::features(&row.card, row.ctx).into_iter().map(|feature| (feature.name, feature.value)).collect();
-        }
-    }
-}
-
-fn by_show(items: &[FitItem]) -> HashMap<&str, Vec<&FitItem>> {
-    let mut shows: HashMap<&str, Vec<&FitItem>> = HashMap::new();
-    for item in items {
-        if let Some(show) = item.show_title.as_deref() {
-            shows.entry(show).or_default().push(item);
-        }
-    }
-    shows
 }
 
 /// When the item that was on disk at `cut` arrived there, or `None` if it was
@@ -149,95 +88,4 @@ fn arrival_by(item: &FitItem, cut: u64, now: u64) -> Option<u64> {
     let first_play = item.plays.iter().map(|play| play.epoch).filter(|epoch| *epoch < cut).min();
     let arrival = first_play.map_or(recorded, |played| played.min(recorded));
     (arrival <= cut).then_some(arrival)
-}
-
-/// An item's card reconstructed as of `cut`, for an item that had arrived by then.
-fn card_as_of(item: &FitItem, cut: u64, arrival: u64) -> ArchiveCard {
-    let played = item.plays_before(cut) > 0;
-    let episodes = item.episodes_played_before(cut);
-    let season_state = match item.kind {
-        LibraryKind::Season => Some(match item.episodes_total.filter(|total| *total > 0) {
-            Some(total) if episodes >= total => SeasonState::Completed,
-            _ if played => SeasonState::Partial,
-            _ => SeasonState::Empty,
-        }),
-        LibraryKind::Movie => None,
-    };
-    ArchiveCard {
-        id: item.id.clone(),
-        title: item.title.clone(),
-        kind: item.kind,
-        size_bytes: item.size_bytes,
-        // Dwell as the daemon saw it at the cut, from the arrival the cut can
-        // prove — not today's age, and not a migration's reset date.
-        added_days_ago: cut.saturating_sub(arrival) as f32 / 86_400.0,
-        last_watched_days: item.last_play_before(cut).map(|epoch| cut.saturating_sub(epoch) as f32 / 86_400.0),
-        in_keep_collection: false,
-        is_favorite: false,
-        duplicate_count: 0,
-        series_type: None,
-        season_state,
-        season_index: item.season_index,
-        is_newest_season: Some(item.is_newest_season),
-        episodes_total: item.episodes_total,
-        episodes_watched: Some(episodes),
-        is_watched: match item.kind {
-            // Watched means finished, as the daemon reads Tautulli progress; a
-            // stream that stopped early still sets recency above.
-            LibraryKind::Movie => Some(item.finished_before(cut)),
-            LibraryKind::Season => None,
-        },
-        rewatch_score: None,
-        movie_year: None,
-        show_title: item.show_title.clone(),
-    }
-}
-
-/// Household context as of `cut`: what the *other* seasons of this show were
-/// doing by then, what the household's plays say, and where the evidence came
-/// from. Taste is added once the whole panel exists ([`attach_taste`]).
-fn context_as_of(item: &FitItem, show: &[&FitItem], cut: u64, spec: &PanelSpec<'_>) -> HouseholdContext {
-    let others = show.iter().filter(|other| other.id != item.id);
-    let sibling_season_played = others.clone().any(|other| other.plays_before(cut) > 0);
-    let sibling_season_completed =
-        others.into_iter().any(|other| other.episodes_total.is_some_and(|total| total > 0 && other.episodes_played_before(cut) >= total));
-    // The same reduction the daemon applies to its play log, at the cut.
-    let evidence = PlayEvidence::as_of(item.kind, &item.plays, &item.audience_plays, cut);
-    HouseholdContext {
-        sibling_season_played,
-        sibling_season_completed,
-        siblings: show.len() as u32,
-        watch_source: source_as_of(item, cut, spec),
-        rewatched: evidence.rewatched,
-        viewers: evidence.viewers,
-        series_ended: score::series_ended_as_of(item.series_status.as_deref(), item.last_aired_epoch, cut),
-        taste: None,
-    }
-}
-
-/// Watch-evidence provenance as of `cut`.
-///
-/// Item-state sources describe the item as a whole and cannot be replayed, so
-/// they keep their current value. Play-log sources can be replayed exactly: the
-/// item had play evidence at the cut iff it had a play before it, and Tautulli's
-/// silence counted only for a GUID-resolved item with no stream of any kind
-/// before the cut, where [`tautulli::absence_is_evidence`] held at the cut —
-/// the conditions under which the daemon claims it.
-fn source_as_of(item: &FitItem, cut: u64, spec: &PanelSpec<'_>) -> Option<WatchSource> {
-    let played = item.plays_before(cut) > 0;
-    match item.watch_source {
-        Some(source @ (WatchSource::Plex | WatchSource::PlexShow | WatchSource::Export)) => Some(source),
-        Some(WatchSource::Tautulli) if played => Some(WatchSource::Tautulli),
-        Some(WatchSource::Tautulli | WatchSource::TautulliAbsence | WatchSource::PlexHistory) | None => {
-            let silent_while_watched = item.guid_resolved
-                && spec.tautulli_coverage_start.is_some_and(|start| tautulli::absence_is_evidence(item.added_epoch(spec.now), start, cut));
-            if played {
-                Some(WatchSource::PlexHistory)
-            } else if silent_while_watched {
-                Some(WatchSource::TautulliAbsence)
-            } else {
-                None
-            }
-        }
-    }
 }

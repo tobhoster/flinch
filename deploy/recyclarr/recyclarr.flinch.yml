@@ -9,10 +9,10 @@
 # What each change buys, largest first (sources: TRaSH guides and the
 # Recyclarr v8.7 reference):
 #
-# 1. A compact tier per app. FLINCH advises, per item, premium vs compact from
-#    the same calibrated household evidence it uses for eviction; the tier has
-#    to exist before an item can use it. Recyclarr defines it; FLINCH only
-#    ever moves items between the two names below and never writes a profile.
+# 1. A compact profile per app. FLINCH's quality advice says, per item, when a
+#    downgrade to a compact release is worth it; the profile has to exist
+#    before you can move an item to it. Recyclarr defines it; FLINCH never
+#    writes a profile or moves an item.
 # 2. Stop endless upgrades. `until_score: 10000` is unreachable for a WEB
 #    release (a strong WEB 2160p release scores about 5.2k), and a
 #    `min_upgrade_format_score` of 1 lets a +5 repack or a +75 streaming-service
@@ -34,7 +34,7 @@ sonarr:
       type: series
       preferred_ratio: 0.2
     quality_profiles:
-      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined) — premium tier
+      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7 # WEB-2160p (Combined) — the original quality
         reset_unmatched_scores:
           enabled: true
         upgrade:
@@ -42,7 +42,7 @@ sonarr:
           until_quality: WEB 2160p
           until_score: 2000 # a strong WEB release ≈ 1700 tier + 500 HDR + 75 service
         min_upgrade_format_score: 250
-      - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p — FLINCH compact tier
+      - trash_id: 72dae194fc92bf828f32cde7744e51a1 # WEB-1080p — compact, for FLINCH's downgrade advice
         reset_unmatched_scores:
           enabled: true
         upgrade:
@@ -62,7 +62,7 @@ radarr:
       type: movie
       preferred_ratio: 0.2
     quality_profiles:
-      - trash_id: d1d310673359205736b4b84acd5ea8c8 # Remux 2160p (Combined) — premium tier
+      - trash_id: d1d310673359205736b4b84acd5ea8c8 # Remux 2160p (Combined) — the original quality
         reset_unmatched_scores:
           enabled: true
         upgrade:
@@ -78,7 +78,7 @@ radarr:
           - name: Bluray-1080p
           - name: WEB 1080p
             qualities: [WEBDL-1080p, WEBRip-1080p]
-      - trash_id: e8c5acb741363a0dbda67d3978f4912f # WEB 1080p — FLINCH compact tier
+      - trash_id: e8c5acb741363a0dbda67d3978f4912f # WEB 1080p — compact, for FLINCH's downgrade advice
         reset_unmatched_scores:
           enabled: true
         min_upgrade_format_score: 500

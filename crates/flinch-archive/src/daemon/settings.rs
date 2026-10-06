@@ -6,57 +6,36 @@
 ///
 /// Every field defaults individually (`#[serde(default)]` on the struct, fed by
 /// the one `Default` impl): a missing or new field must never reset the
-/// operator's other choices — least of all an opt-out of never-played reclaim.
+/// operator's other choices. A field this version dropped is ignored, so an
+/// older file still loads; a dropped `enforce: true` reads as a dry run.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct RuntimeSettings {
     /// Seconds between scheduled runs.
     pub interval_s: u64,
-    /// Consecutive candidate appearances required before scheduling.
+    /// Consecutive plans an item must appear in before it is handed over.
     pub grace_runs: u32,
     pub max_items: usize,
     pub max_gib: u64,
-    /// Hand candidates to Maintainerr rather than only listing them.
-    pub enforce: bool,
     pub collection_movie: String,
     pub collection_season: String,
     /// Maintainerr collection that announces evictions nobody finished: shown
     /// in Plex, deleting only after its window, so the household can still
     /// claim an item by playing it. One title for both kinds, each bound to its
     /// own library. Blank holds never-played reclaim off (see
-    /// [`super::NeverPlayedHold`]): nothing unwatched goes to the delete
-    /// collections, or counts toward a capacity goal.
+    /// [`super::NeverPlayedHold`]).
     pub collection_leaving: String,
-    /// Minimum P(safe) before an item may be scheduled, read capped at the
-    /// priors' ([`crate::score::score_fenced`]). Thresholds are meaningless
-    /// until the score is calibrated; this is where the Laya lesson lands.
-    pub score_floor: f32,
-    /// Temperature applied to the raw logit. >1 softens an overconfident model.
-    /// Once a fit is adopted it scales only the priors' side of the cap on
-    /// P(safe) ([`crate::score::score_fenced`]); the fit runs at its own.
-    pub score_temperature: f32,
-    /// Reclaim items nobody ever played when their P(safe) clears the
-    /// floor. Off by default: this is the capability Maintainerr cannot express,
-    /// and deleting on the strength of absent evidence is the operator's call.
+    /// Let items nobody ever played be candidates. Off by default: deleting on
+    /// the strength of absent evidence is the operator's call.
     pub unwatched_reclaim_enabled: bool,
-    pub unwatched_reclaim_floor: f32,
-    pub unwatched_reclaim_dwell_days: f32,
     /// Plex base URL + token; empty means "no watch source", guard stays closed.
     pub plex_url: String,
     pub plex_token: String,
-    /// The storage ceiling as a fraction (0.80 = 80%). Crossing it starts
-    /// eviction on that volume; below it nothing is deleted.
-    pub capacity_ceiling: f32,
-    /// Where a latched eviction stops (0.75 = 75%). Below the ceiling so one
-    /// finished download does not trigger one more delete.
-    pub capacity_release: f32,
-    /// While evicting, arm the never-played rule as an extra
-    /// candidate source (still gated by its own floor and dwell). Off: the
-    /// volume may stay over budget, and the status says so instead of guessing.
-    pub capacity_arm_never_played: bool,
-    /// Radarr/Sonarr tag label that makes an item untouchable (a hard guard,
-    /// like a favorite). Empty disables it.
+    /// Radarr/Sonarr tag label that pins an item (like a favorite). Empty
+    /// disables it.
     pub keep_tag: String,
+    pub capacity: crate::capacity::CapacityConfig,
+    pub planner: crate::plan::PlannerConfig,
 }
 
 impl Default for RuntimeSettings {
@@ -66,21 +45,15 @@ impl Default for RuntimeSettings {
             grace_runs: 2,
             max_items: 10,
             max_gib: 50,
-            enforce: false,
             collection_movie: "Watched Movies Cleanup".to_string(),
             collection_season: "Watched Seasons Cleanup".to_string(),
             collection_leaving: "Leaving Soon".to_string(),
-            score_floor: 0.75,
-            score_temperature: 1.6,
             unwatched_reclaim_enabled: false,
-            unwatched_reclaim_floor: 0.75,
-            unwatched_reclaim_dwell_days: 90.0,
             plex_url: String::new(),
             plex_token: String::new(),
-            capacity_ceiling: 0.80,
-            capacity_release: 0.75,
-            capacity_arm_never_played: true,
             keep_tag: "flinch-keep".to_string(),
+            capacity: crate::capacity::CapacityConfig::default(),
+            planner: crate::plan::PlannerConfig::default(),
         }
     }
 }
@@ -100,35 +73,17 @@ impl RuntimeSettings {
 
     /// The bounds the Settings page enforces, held here too so a hand-edited
     /// file or a scripted PUT cannot hand the daemon a value the page would
-    /// refuse. `NaN` fails every range check below, so non-finite floats are
-    /// refused by the same comparisons.
+    /// refuse. `NaN` fails every range check, so non-finite floats are refused
+    /// by the same comparisons.
     pub fn validate(&self) -> Result<(), SettingsError> {
-        let within = |value: f32, low: f32, high: f32| value.is_finite() && (low..=high).contains(&value);
-        if !within(self.capacity_ceiling, 0.01, 1.0) {
-            return Err(SettingsError::Invalid("the storage ceiling (capacity_ceiling) must be between 1% and 100%"));
-        }
-        if !within(self.capacity_release, 0.01, 0.99) || self.capacity_release > self.capacity_ceiling {
-            return Err(SettingsError::Invalid("the release mark (capacity_release) must be between 1% and 99% and not above the ceiling"));
-        }
         if self.interval_s < 300 {
             return Err(SettingsError::Invalid("the scan interval (interval_s) must be at least 300 seconds"));
         }
         if !(1..=20).contains(&self.grace_runs) {
             return Err(SettingsError::Invalid("grace runs (grace_runs) must be between 1 and 20"));
         }
-        if !within(self.score_floor, 0.0, 1.0) {
-            return Err(SettingsError::Invalid("the score floor (score_floor) must be between 0 and 1"));
-        }
-        if !within(self.unwatched_reclaim_floor, 0.0, 1.0) {
-            return Err(SettingsError::Invalid("the never-played floor (unwatched_reclaim_floor) must be between 0 and 1"));
-        }
-        if !within(self.score_temperature, 0.1, f32::MAX) {
-            return Err(SettingsError::Invalid("the temperature (score_temperature) must be at least 0.1"));
-        }
-        if !within(self.unwatched_reclaim_dwell_days, 0.0, f32::MAX) {
-            return Err(SettingsError::Invalid("days on disk (unwatched_reclaim_dwell_days) must be 0 or more"));
-        }
-        Ok(())
+        self.capacity.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))
     }
 }
 
@@ -171,9 +126,9 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    /// A real deployment's settings.json (its Plex host made generic): a new
-    /// rule that refuses it would park the daemon on its last good (or
-    /// default) settings after an upgrade.
+    /// A real deployment's settings.json from before the forecaster (its Plex
+    /// host made generic): it must still load after the upgrade, as a dry run,
+    /// or the daemon parks on its last good (or default) settings.
     const LIVE: &str = r#"{"interval_s":300,"grace_runs":2,"max_items":10,"max_gib":50,"enforce":true,
         "collection_movie":"Watched Movies Cleanup","collection_season":"Watched Seasons Cleanup","collection_leaving":"Leaving Soon",
         "score_floor":0.75,"score_temperature":1.6,"unwatched_reclaim_enabled":true,"unwatched_reclaim_floor":0.75,
@@ -186,53 +141,41 @@ mod tests {
     }
 
     #[test]
-    fn the_owners_live_settings_and_the_defaults_are_valid() {
-        assert!(live().validate().is_ok());
+    fn the_owners_pre_forecaster_settings_load_as_a_valid_dry_run() {
+        let settings = live();
+        assert!(settings.validate().is_ok());
+        assert!(settings.planner.dry_run, "a dropped enforce: true never hands anything over");
+        assert!(settings.unwatched_reclaim_enabled, "surviving choices are kept");
         assert!(RuntimeSettings::default().validate().is_ok());
     }
 
+    #[test]
+    fn a_partial_nested_object_defaults_the_rest() {
+        let settings: RuntimeSettings =
+            serde_json::from_str(r#"{"capacity":{"target_utilization":0.7},"planner":{"dry_run":false}}"#).unwrap();
+        assert_eq!(settings.capacity.target_utilization, 0.7);
+        assert_eq!(settings.capacity.emergency_utilization, 0.95);
+        assert!(!settings.planner.dry_run);
+        assert_eq!(settings.planner.grace_period_days, 30);
+    }
+
     #[rstest]
-    #[case::ceiling_zero(|s: &mut RuntimeSettings| s.capacity_ceiling = 0.0)]
-    #[case::ceiling_above_one(|s: &mut RuntimeSettings| s.capacity_ceiling = 1.01)]
-    #[case::ceiling_nan(|s: &mut RuntimeSettings| s.capacity_ceiling = f32::NAN)]
-    #[case::release_zero(|s: &mut RuntimeSettings| s.capacity_release = 0.0)]
-    #[case::release_full(|s: &mut RuntimeSettings| { s.capacity_ceiling = 1.0; s.capacity_release = 1.0 })]
-    #[case::release_above_ceiling(|s: &mut RuntimeSettings| s.capacity_release = 0.85)]
-    #[case::release_infinite(|s: &mut RuntimeSettings| s.capacity_release = f32::INFINITY)]
     #[case::interval_below_five_minutes(|s: &mut RuntimeSettings| s.interval_s = 299)]
     #[case::no_grace(|s: &mut RuntimeSettings| s.grace_runs = 0)]
     #[case::grace_above_twenty(|s: &mut RuntimeSettings| s.grace_runs = 21)]
-    #[case::score_floor_negative(|s: &mut RuntimeSettings| s.score_floor = -0.01)]
-    #[case::score_floor_above_one(|s: &mut RuntimeSettings| s.score_floor = 1.01)]
-    #[case::never_played_floor_above_one(|s: &mut RuntimeSettings| s.unwatched_reclaim_floor = 1.5)]
-    #[case::never_played_floor_nan(|s: &mut RuntimeSettings| s.unwatched_reclaim_floor = f32::NAN)]
-    #[case::temperature_too_low(|s: &mut RuntimeSettings| s.score_temperature = 0.09)]
-    #[case::temperature_infinite(|s: &mut RuntimeSettings| s.score_temperature = f32::INFINITY)]
-    #[case::dwell_negative(|s: &mut RuntimeSettings| s.unwatched_reclaim_dwell_days = -1.0)]
-    #[case::dwell_infinite(|s: &mut RuntimeSettings| s.unwatched_reclaim_dwell_days = f32::INFINITY)]
+    #[case::target_above_emergency(|s: &mut RuntimeSettings| s.capacity.target_utilization = 0.96)]
+    #[case::zero_quantum(|s: &mut RuntimeSettings| s.planner.quantum_mb = 0)]
+    #[case::negative_weight(|s: &mut RuntimeSettings| { s.planner.user_weights.insert("ann".into(), -1.0); })]
     fn a_value_the_settings_page_would_refuse_is_invalid(#[case] break_it: fn(&mut RuntimeSettings)) {
         let mut settings = live();
         break_it(&mut settings);
         assert!(matches!(settings.validate(), Err(SettingsError::Invalid(_))));
     }
 
-    #[rstest]
-    #[case::lowest(|s: &mut RuntimeSettings| { s.capacity_ceiling = 0.01; s.capacity_release = 0.01; s.interval_s = 300; s.grace_runs = 1 })]
-    #[case::highest(|s: &mut RuntimeSettings| { s.capacity_ceiling = 1.0; s.capacity_release = 0.99; s.grace_runs = 20 })]
-    #[case::release_at_the_ceiling(|s: &mut RuntimeSettings| s.capacity_release = s.capacity_ceiling)]
-    #[case::floors_and_dwell_at_their_edges(|s: &mut RuntimeSettings| {
-        s.score_floor = 1.0; s.unwatched_reclaim_floor = 0.0; s.score_temperature = 0.1; s.unwatched_reclaim_dwell_days = 0.0
-    })]
-    fn the_edges_the_settings_page_allows_are_valid(#[case] edge: fn(&mut RuntimeSettings)) {
-        let mut settings = live();
-        edge(&mut settings);
-        assert!(settings.validate().is_ok());
-    }
-
     #[test]
     fn a_file_that_parses_but_is_out_of_range_is_refused_not_used() {
         let path = std::env::temp_dir().join(format!("flinch-settings-{}-invalid.json", std::process::id()));
-        std::fs::write(&path, r#"{"capacity_ceiling": 0.7, "capacity_release": 0.9}"#).unwrap();
+        std::fs::write(&path, r#"{"capacity": {"target_utilization": 0.97}}"#).unwrap();
         let read = read_settings(&path);
         std::fs::remove_file(&path).ok();
         assert!(matches!(read, Err(SettingsError::Invalid(_))));

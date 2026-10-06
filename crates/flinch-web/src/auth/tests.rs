@@ -77,8 +77,6 @@ fn challenges(res: &Response) -> Vec<&str> {
     res.headers().get_all(header::WWW_AUTHENTICATE).iter().map(|value| value.to_str().unwrap()).collect()
 }
 
-const DECISION: &str = r#"{"state": "radarr-1", "questions": {"decision": {"type": "choice", "criteria": ["keep", "delete"]}}}"#;
-
 #[rstest]
 #[case::no_header(Some(KEY), &[], StatusCode::UNAUTHORIZED)]
 #[case::wrong_key(Some(KEY), &[("x-api-key", "s3cre7")], StatusCode::UNAUTHORIZED)]
@@ -113,9 +111,6 @@ async fn the_api_answers_only_the_configured_key(
             assert!(body["error"].is_string());
         }
     }
-    // Automations ask System One with the key, and never need the UI's header.
-    let systemone = send(&st, request("POST", flinch_archive::systemone::PATH, headers, DECISION)).await;
-    assert_eq!(systemone.status(), expected);
     std::fs::remove_dir_all(&tmp).ok();
 }
 
@@ -197,11 +192,9 @@ async fn logging_in_sets_a_session_cookie_that_opens_the_api(#[case] proto: Opti
     assert_eq!(send(&st, get("/api/nothing-here", &with_cookie)).await.status(), StatusCode::NOT_FOUND);
     let session = json_of(send(&st, get("/api/session", &with_cookie)).await).await;
     assert_eq!(session, serde_json::json!({ "authenticated": true, "login_configured": true }));
-    // Among other cookies, and on System One with the UI's header.
+    // Among other cookies.
     let among = format!("theme=dark; {cookie}; other=1");
     assert_eq!(send(&st, get("/api/items", &[("cookie", &among)])).await.status(), StatusCode::OK);
-    let asked = request("POST", flinch_archive::systemone::PATH, &[("cookie", &cookie), ("x-flinch-request", "1")], DECISION);
-    assert_eq!(send(&st, asked).await.status(), StatusCode::OK);
     std::fs::remove_dir_all(&tmp).ok();
 }
 
@@ -406,7 +399,6 @@ async fn sessions_are_capped_and_the_longest_idle_ends_first() {
 #[case::cookie_write_from_the_ui("PUT", "/api/settings", false, &[("x-flinch-request", "1")], StatusCode::OK)]
 #[case::cookie_run_without_header("POST", "/api/run", false, &[], StatusCode::FORBIDDEN)]
 #[case::cookie_run_from_the_ui("POST", "/api/run", false, &[("x-flinch-request", "1")], StatusCode::ACCEPTED)]
-#[case::cookie_systemone_without_header("POST", flinch_archive::systemone::PATH, false, &[], StatusCode::FORBIDDEN)]
 #[case::cookie_read_without_header("GET", "/api/settings", false, &[], StatusCode::OK)]
 #[case::key_write_without_header("PUT", "/api/settings", true, &[], StatusCode::OK)]
 #[case::key_run_without_header("POST", "/api/run", true, &[], StatusCode::ACCEPTED)]
@@ -423,7 +415,7 @@ async fn a_write_with_the_cookie_needs_the_ui_header(
     let cookie = logged_in(&st).await;
     let mut headers = vec![if with_key { ("x-api-key", KEY) } else { ("cookie", cookie.as_str()) }];
     headers.extend_from_slice(extra);
-    let body = if path == "/api/settings" { "{}" } else { DECISION };
+    let body = "{}";
     let res = send(&st, request(method, path, &headers, body)).await;
     assert_eq!(res.status(), expected);
     // Nothing behind the login may be kept by a cache: a cookie, unlike

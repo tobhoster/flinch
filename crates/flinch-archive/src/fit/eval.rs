@@ -1,12 +1,10 @@
-//! Scoring metrics for the reclaim model.
+//! Scoring metrics for the P(watch) hazard.
 //!
-//! Four numbers decide whether a fitted model replaces the hand-set priors, and
-//! they answer different questions: discrimination (AUC), overall accuracy of
-//! the probabilities (Brier, log-loss), whether a stated 0.8 means 80% (ECE),
-//! and what the operating threshold would actually do (precision/recall at the
-//! floor). AUC matters most once storage is over its ceiling: eviction frees the
-//! lowest expected regret per byte first, so the *ordering* of P(safe) decides
-//! which items go.
+//! Three questions decide whether a fitted hazard replaces the hand-set priors:
+//! discrimination (AUC, the C-index of a binary outcome), accuracy of the
+//! probabilities (Brier, log-loss), and whether a stated 0.8 means 80% (ECE).
+//! AUC matters most: the plan ranks by regret, so the *ordering* of P(watch)
+//! decides which items go.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -82,7 +80,7 @@ pub fn log_loss(scores: &[f32], labels: &[f32]) -> f32 {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scorecard {
     pub n: usize,
-    /// Rows labelled safe; `positives / n` is the base rate.
+    /// Rows labelled 1 (played); `positives / n` is the base rate.
     pub positives: usize,
     pub auc: f32,
     pub brier: f32,
@@ -163,7 +161,7 @@ pub struct Spread {
 /// same title at several cut dates, and those rows move together. A row
 /// bootstrap would treat them as independent evidence and report an interval
 /// far narrower than the data supports. Deterministic ([`BOOTSTRAP_SEED`]), so
-/// a report can be checked twice. Scores are P(safe); labels are 1.0 = safe.
+/// a report can be checked twice. Scores are P(watch); labels are 1.0 = played.
 pub fn spread(scores: &[f32], labels: &[f32], groups: &[&str]) -> Spread {
     let n = scores.len().min(labels.len()).min(groups.len());
     let (mut confident, mut confident_wrong) = (0, 0);
@@ -192,40 +190,6 @@ pub fn spread(scores: &[f32], labels: &[f32], groups: &[&str]) -> Spread {
         return Spread { auc: None, brier: None, confident, confident_wrong };
     }
     Spread { auc: interval(aucs), brier: interval(briers), confident, confident_wrong }
-}
-
-/// How one model scores against another on the same rows: 95% intervals of
-/// `a` minus `b`, from the same group bootstrap, so both always face the same
-/// titles. Negative Brier and log-loss differences, and a positive AUC
-/// difference, favour `a`; an interval that spans zero is no clear difference.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Difference {
-    pub brier: Option<[f32; 2]>,
-    pub log_loss: Option<[f32; 2]>,
-    pub auc: Option<[f32; 2]>,
-}
-
-pub fn paired_difference(a: &[f32], b: &[f32], labels: &[f32], groups: &[&str]) -> Difference {
-    let n = a.len().min(b.len()).min(labels.len()).min(groups.len());
-    let (mut briers, mut log_losses, mut aucs) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut drawn_a, mut drawn_b, mut drawn_labels) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
-    let varied = resample_groups(&groups[..n], |rows| {
-        drawn_a.clear();
-        drawn_b.clear();
-        drawn_labels.clear();
-        drawn_a.extend(rows.iter().map(|row| a[*row]));
-        drawn_b.extend(rows.iter().map(|row| b[*row]));
-        drawn_labels.extend(rows.iter().map(|row| labels[*row]));
-        briers.push(brier(&drawn_a, &drawn_labels) - brier(&drawn_b, &drawn_labels));
-        log_losses.push(log_loss(&drawn_a, &drawn_labels) - log_loss(&drawn_b, &drawn_labels));
-        if both_outcomes(&drawn_labels) {
-            aucs.push(auc(&drawn_a, &drawn_labels) - auc(&drawn_b, &drawn_labels));
-        }
-    });
-    if !varied {
-        return Difference::default();
-    }
-    Difference { brier: interval(briers), log_loss: interval(log_losses), auc: interval(aucs) }
 }
 
 /// Calls `each` with the rows of [`BOOTSTRAP_RESAMPLES`] resamples of whole
@@ -289,90 +253,6 @@ impl SplitMix64 {
     fn below(&mut self, bound: usize) -> usize {
         ((self.next() as u128 * bound as u128) >> 64) as usize
     }
-}
-
-/// What the operating threshold does: of the items it flags, how many were
-/// genuinely safe, and how many of the safe items it found.
-pub struct ThresholdStats {
-    pub flagged: usize,
-    pub precision: f32,
-    pub recall: f32,
-}
-
-pub fn at_threshold(scores: &[f32], labels: &[f32], floor: f32) -> ThresholdStats {
-    let flagged: Vec<usize> = (0..scores.len()).filter(|i| scores[*i] >= floor).collect();
-    let true_positives = flagged.iter().filter(|i| labels[**i] >= 0.5).count();
-    let total_positives = labels.iter().filter(|label| **label >= 0.5).count();
-    ThresholdStats {
-        flagged: flagged.len(),
-        precision: if flagged.is_empty() { 0.0 } else { true_positives as f32 / flagged.len() as f32 },
-        recall: if total_positives == 0 { 0.0 } else { true_positives as f32 / total_positives as f32 },
-    }
-}
-
-/// One-sided Clopper–Pearson upper bound on a binomial rate: the largest `p`
-/// under which seeing at most `k` events in `n` trials is still `delta`-likely.
-/// Exact, because at the counts this system sees (a handful of errors in a few
-/// hundred rows) normal approximations are wrong in the dangerous direction.
-pub fn binomial_upper_bound(k: usize, n: usize, delta: f64) -> f64 {
-    if n == 0 || k >= n {
-        return 1.0;
-    }
-    // P(X <= k) for X ~ Bin(n, p), accumulated term by term.
-    let cdf = |p: f64| -> f64 {
-        let mut term = (1.0 - p).powi(n as i32);
-        let mut total = term;
-        for i in 0..k {
-            term *= (n - i) as f64 / (i + 1) as f64 * p / (1.0 - p);
-            total += term;
-        }
-        total
-    };
-    let (mut low, mut high) = (k as f64 / n as f64, 1.0f64);
-    for _ in 0..100 {
-        let mid = (low + high) / 2.0;
-        if cdf(mid) > delta {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    high
-}
-
-/// A reclaim floor with a finite-sample guarantee behind it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CertifiedFloor {
-    pub floor: f32,
-    pub flagged: usize,
-    pub false_reclaims: usize,
-    pub upper_bound: f64,
-}
-
-/// The lowest floor whose false-reclaim risk is certified at level `alpha`.
-///
-/// Risk is the share of all items that would be reclaimed *and then played*:
-/// E[1{score ≥ λ} · 1{played}]. It can only shrink as λ rises, so floors are
-/// tested from the strictest down and the scan stops at the first failure —
-/// fixed-sequence testing as in Learn-then-Test (Angelopoulos et al., 2021),
-/// which needs no multiple-testing penalty. With probability ≥ 1 − δ the
-/// returned floor keeps that risk ≤ α, provided the rows are exchangeable.
-/// `None` means even the strictest floor cannot be vouched for with this much
-/// data: a zero-error panel of n rows only certifies α ≥ 1 − δ^(1/n).
-pub fn certified_floor(scores: &[f32], labels: &[f32], alpha: f64, delta: f64) -> Option<CertifiedFloor> {
-    let n = scores.len();
-    let mut best = None;
-    for step in (50..=99).rev() {
-        let floor = step as f32 / 100.0;
-        let flagged = scores.iter().filter(|score| **score >= floor).count();
-        let false_reclaims = scores.iter().zip(labels).filter(|(score, label)| **score >= floor && **label < 0.5).count();
-        let upper_bound = binomial_upper_bound(false_reclaims, n, delta);
-        if upper_bound > alpha {
-            break;
-        }
-        best = Some(CertifiedFloor { floor, flagged, false_reclaims, upper_bound });
-    }
-    best
 }
 
 #[cfg(test)]

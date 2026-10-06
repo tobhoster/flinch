@@ -38,7 +38,7 @@ pub struct WatchInfo {
 
 impl WatchInfo {
     pub fn is_watched(&self) -> bool {
-        self.watched_fraction >= 0.999
+        self.watched_fraction >= crate::watch::COMPLETE
     }
 
     /// The same item seen twice (two libraries): whatever either copy saw.

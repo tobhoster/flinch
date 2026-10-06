@@ -35,9 +35,16 @@ pub struct Play {
     pub episode: Option<u32>,
     /// Who played it, when the source says.
     pub viewer: Option<Viewer>,
-    /// Most of the runtime was watched. A stream that stopped early is still a
-    /// play — the household touched the item — but completes nothing.
-    pub complete: bool,
+    /// Share of the runtime watched, 0.0-1.0. A stream that stopped early is
+    /// still a play — the household touched the item — but completes nothing.
+    pub fraction: f32,
+}
+
+impl Play {
+    /// Most of the runtime was watched (see [`crate::tautulli::FINISHED_FRACTION`]).
+    pub fn complete(&self) -> bool {
+        self.fraction >= crate::tautulli::FINISHED_FRACTION
+    }
 }
 
 /// Every play both sources recorded, indexed by the keys joins look up.
@@ -62,13 +69,13 @@ impl PlayLog {
             // Plex writes a history row when an item is scrobbled as watched.
             log.push(
                 key,
-                Play { epoch, episode: row.index.filter(|_| row.media_type.eq_ignore_ascii_case("episode")), viewer, complete: true },
+                Play { epoch, episode: row.index.filter(|_| row.media_type.eq_ignore_ascii_case("episode")), viewer, fraction: 1.0 },
             );
         }
         for row in tautulli {
             let (Some(epoch), Some(key)) = (row.epoch(), row.key()) else { continue };
             let viewer = row.viewer().map(|id| Viewer::TautulliUser(id.to_string()));
-            log.push(key, Play { epoch, episode: row.media_index.parse().ok(), viewer, complete: row.is_watch() });
+            log.push(key, Play { epoch, episode: row.media_index.parse().ok(), viewer, fraction: row.fraction() });
         }
         log
     }
@@ -164,7 +171,7 @@ impl PlayEvidence {
         // numbered episode. An unnumbered episode row cannot be told apart from
         // its neighbours, so it cannot prove a rewatch.
         let mut span: HashMap<Option<u32>, (u64, u64)> = HashMap::new();
-        for play in item_plays.into_iter().filter(|play| play.complete && play.epoch < as_of) {
+        for play in item_plays.into_iter().filter(|play| play.complete() && play.epoch < as_of) {
             let unit = match kind {
                 LibraryKind::Movie => None,
                 LibraryKind::Season => match play.episode {
@@ -180,7 +187,7 @@ impl PlayEvidence {
 
         let mut plex: HashSet<u64> = HashSet::new();
         let mut tautulli: HashSet<&str> = HashSet::new();
-        for play in audience_plays.into_iter().filter(|play| play.complete && play.epoch < as_of) {
+        for play in audience_plays.into_iter().filter(|play| play.complete() && play.epoch < as_of) {
             match &play.viewer {
                 Some(Viewer::PlexAccount(id)) => {
                     plex.insert(*id);
@@ -254,7 +261,7 @@ mod tests {
         let heat = PlayJoin::Keys(PlayKeys::Movie { rating_keys: vec!["9".into()], plex_guids: Vec::new() });
         let plays = log.item_plays(&heat);
         assert_eq!(epochs(plays.clone()), vec![400, 500]);
-        assert!(!plays[1].complete, "the abandoned stream is a play that completes nothing");
+        assert!(!plays[1].complete(), "the abandoned stream is a play that completes nothing");
     }
 
     #[test]
@@ -274,7 +281,7 @@ mod tests {
     }
 
     fn play(epoch: u64, episode: Option<u32>, viewer: Option<Viewer>) -> Play {
-        Play { epoch, episode, viewer, complete: true }
+        Play { epoch, episode, viewer, fraction: 1.0 }
     }
 
     const DAY: u64 = 86_400;
@@ -293,7 +300,7 @@ mod tests {
             !PlayEvidence::as_of(LibraryKind::Season, &again, &again, 40 * DAY).rewatched,
             "a play on the as-of date itself is the future, not evidence"
         );
-        let sampled = [play(10 * DAY, Some(1), None), Play { complete: false, ..play(40 * DAY, Some(1), None) }];
+        let sampled = [play(10 * DAY, Some(1), None), Play { fraction: 0.5, ..play(40 * DAY, Some(1), None) }];
         assert!(
             !PlayEvidence::as_of(LibraryKind::Season, &sampled, &sampled, 50 * DAY).rewatched,
             "starting it again is not watching it again"

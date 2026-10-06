@@ -18,7 +18,7 @@ const PAGE: usize = 500;
 const MAX_PAGES: usize = 400;
 /// How far back play history is needed: the fitter's oldest cut date plus its
 /// horizon. History past this may stop being read without being "incomplete".
-const HISTORY_HORIZON_SECS: u64 = ((flinch_archive::fit::MAX_CUT_DAYS + flinch_archive::fit::DEFAULT_HORIZON_DAYS) as u64) * 86_400;
+const HISTORY_HORIZON_SECS: u64 = ((flinch_archive::fit::MAX_CUT_DAYS + flinch_archive::fit::HORIZON_DAYS) as u64) * 86_400;
 
 /// One cycle's read of Plex.
 pub(super) struct PlexFetch {

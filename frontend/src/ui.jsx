@@ -7,6 +7,21 @@ import { Explain } from './Explain.jsx';
 /** Bytes as GiB (2^30), one decimal: the unit every size FLINCH shows is labelled in. */
 export const GiB = (b) => ((b || 0) / 2 ** 30).toFixed(1);
 
+/** A fraction as a whole percent; `null`/`undefined` render as a dash. */
+export const pct = (p) => (p == null ? '—' : `${Math.round(p * 100)}%`);
+
+/** A unix time as a short date ("Oct 4"). */
+export const day = (unix) => new Date(unix * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+/** A run interval in seconds as "every 5 min"; `null` when it is not a positive number. */
+export function every(secs) {
+  const n = Number(secs);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n % 3600 === 0) return `every ${n / 3600} h`;
+  if (n % 60 === 0) return `every ${n / 60} min`;
+  return `every ${n} s`;
+}
+
 export function Card({ className = '', children, ...rest }) {
   return <div className={`card ${className}`} {...rest}>{children}</div>;
 }
@@ -35,25 +50,6 @@ const DOT_TONES = { ok: 'bg-state-ok', warn: 'bg-state-warn', bad: 'bg-state-bad
 /** Static status marker. */
 export function Dot({ tone = 'ok' }) {
   return <span aria-hidden className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${DOT_TONES[tone] ?? DOT_TONES.ok}`} />;
-}
-
-export function Tooltip({ text, children }) {
-  const [open, setOpen] = useState(false);
-  const timer = useRef();
-  useEffect(() => () => clearTimeout(timer.current), []);
-  return (
-    <span className="relative inline-flex"
-      onMouseEnter={() => { timer.current = setTimeout(() => setOpen(true), 300); }}
-      onMouseLeave={() => { clearTimeout(timer.current); setOpen(false); }}>
-      {children}
-      {open && text && (
-        <span role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-max max-w-[16rem] -translate-x-1/2 rounded border border-line bg-ink-800 px-2 py-1 text-xs font-normal normal-case tracking-normal text-fg-muted shadow-soft">
-          {text}
-        </span>
-      )}
-    </span>
-  );
 }
 
 /** Underlined text tabs. `tabs` is `[key, label, Icon?][]`; the icon is optional. */

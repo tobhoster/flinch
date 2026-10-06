@@ -6,8 +6,6 @@
 //! *arr keys, no database.
 
 mod auth;
-mod snapshot;
-mod systemone;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -29,8 +27,6 @@ struct AppState {
     web: Arc<PathBuf>,
     /// Who may use the API: the login, the API key and the live sessions.
     auth: Arc<auth::Auth>,
-    /// `items.json`, parsed once per published version for `/v1/systemone`.
-    items: Arc<snapshot::Snapshot>,
 }
 
 fn read_json(path: &Path) -> String {
@@ -123,29 +119,6 @@ async fn api_history(AxumState(st): AxumState<AppState>) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/json")], read_json(&st.dir.join("history.json")))
 }
 
-/// TypeSafe's System One API (`POST /v1/systemone`), answered from the
-/// published snapshot. The body is parsed by hand, not by axum's `Json`, so
-/// every refusal is a 400 with `{"error": …}` whatever the content type.
-async fn api_systemone(AxumState(st): AxumState<AppState>, body: String) -> Response {
-    let started = std::time::Instant::now();
-    let request: flinch_archive::systemone::Request = match serde_json::from_str(&body) {
-        Ok(request) => request,
-        Err(error) => return refuse(StatusCode::BAD_REQUEST, &format!("malformed request: {error}")),
-    };
-    let Some(items) = st.items.items().await else {
-        return refuse(StatusCode::SERVICE_UNAVAILABLE, "no library snapshot yet: the daemon has not published items.json");
-    };
-    match systemone::answer(&items, &request) {
-        Ok(answers) => axum::Json(flinch_archive::systemone::Response {
-            model: systemone::model_name(&read_json(&st.dir.join("status.json"))),
-            answers,
-            latency_ms: Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
-        })
-        .into_response(),
-        Err(error) => refuse(StatusCode::BAD_REQUEST, &error.to_string()),
-    }
-}
-
 fn refuse(status: StatusCode, message: &str) -> Response {
     (status, axum::Json(serde_json::json!({ "error": message }))).into_response()
 }
@@ -224,8 +197,7 @@ async fn api_unknown() -> Response {
     refuse(StatusCode::NOT_FOUND, "no such API endpoint")
 }
 
-/// Everything under `/api/` and `/v1/systemone` needs a session or the API
-/// key, except logging in and out and asking whether you are; the shell, its
+/// Everything under `/api/` needs a session or the API key, except logging in and out and asking whether you are; the shell, its
 /// assets, the logos and the health probe carry no data and stay open. The
 /// login is the one open route that reads a body, so it reads only a few KiB:
 /// protected routes refuse before reading theirs.
@@ -237,7 +209,6 @@ fn app(state: AppState) -> Router {
         .route("/api/run", post(api_run))
         .route("/api/settings", get(api_settings_get).put(api_settings_put))
         .route("/api/{*rest}", any(api_unknown))
-        .route(flinch_archive::systemone::PATH, post(api_systemone))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_auth));
     Router::new()
         .route("/api/login", post(auth::login).layer(DefaultBodyLimit::max(auth::LOGIN_BODY_LIMIT)))
@@ -261,8 +232,7 @@ async fn main() -> Result<()> {
     let web = std::env::var("FLINCH_WEB_DIR").unwrap_or_else(|_| "web".to_string());
     let auth = Arc::new(auth::Auth::from_env());
     let dir = PathBuf::from(dir);
-    let items = Arc::new(snapshot::Snapshot::new(dir.join("items.json")));
-    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth, items });
+    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth });
     let addr = format!("0.0.0.0:{port}");
     println!("flinch-web on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.context("bind")?;

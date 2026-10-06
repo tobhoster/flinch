@@ -5,9 +5,8 @@
   "kind": "movie",
   "size_bytes": 34896609280,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed: storage is healthy",
+  "protected": false,
   "poster_url": null,
   "year": 2024,
   "quality": "Remux-1080p",
@@ -17,16 +16,8 @@
   "last_watched_days": 3.0768187,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.85093695,
-  "forecast": 0.85093695,
-  "reasons": [
-   "played 3 d ago",
-   "watched within 30 d",
-   "frees 32.5 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -35,23 +26,26 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Adventure",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1790156506
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 85%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.271,
+  "p_watch": 0.384,
+  "eviction_safety": 0.585,
+  "friction": 1.31,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 27917287424
+   },
+   "marginal_regret_per_gb": 0.00833846,
+   "explanation": "Moderate demand (38% P(watch)): a compact release frees about 26 GiB"
+  }
  },
  {
   "id": "radarr-20",
@@ -59,9 +53,8 @@
   "kind": "movie",
   "size_bytes": 27917287424,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2022,
   "quality": "WEBDL-2160p",
@@ -71,16 +64,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9829815,
-  "forecast": 0.9829815,
-  "reasons": [
-   "plex: zero playback",
-   "frees 26.0 GiB",
-   "on disk 15 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -89,22 +74,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Romance",
-   "Comedy"
-  ],
   "on_disk": [
    {
     "from": 1788895379
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.05,
+  "eviction_safety": 0.926,
+  "friction": 1.24,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00238462,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-53",
@@ -112,9 +100,8 @@
   "kind": "movie",
   "size_bytes": 36936718746,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2025,
   "quality": "WEBDL-2160p",
@@ -124,16 +111,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9818549,
-  "forecast": 0.9818549,
-  "reasons": [
-   "plex: zero playback",
-   "frees 34.4 GiB",
-   "on disk 22 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -142,23 +121,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Science Fiction",
-   "Horror",
-   "Action"
-  ],
   "on_disk": [
    {
     "from": 1788328146
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.053,
+  "eviction_safety": 0.928,
+  "friction": 1.19,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00183343,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-57",
@@ -166,9 +147,8 @@
   "kind": "movie",
   "size_bytes": 7945689498,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2024,
   "quality": "WEBDL-2160p",
@@ -178,16 +158,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98088753,
-  "forecast": 0.98088753,
-  "reasons": [
-   "plex: zero playback",
-   "frees 7.4 GiB",
-   "on disk 25 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -196,10 +168,6 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1775688320,
@@ -209,13 +177,20 @@
     "from": 1788035640
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.056,
+  "eviction_safety": 0.922,
+  "friction": 1.22,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00923243,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-68",
@@ -223,8 +198,7 @@
   "kind": "movie",
   "size_bytes": 22655952486,
   "decision": "keep",
-  "reason": "Eligible, but not matched in Plex by id — FLINCH cannot hand it to Maintainerr, so it is never evicted",
-  "delete_probability": 0.0,
+  "reason": "Not matched in Plex",
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -235,36 +209,31 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9832545,
-  "forecast": 0.9832545,
-  "reasons": [
-   "plex: zero playback",
-   "on disk 192 d",
-   "frees 21.1 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Documentary"
-  ],
   "on_disk": [
    {
     "from": 1773627643
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.049,
+  "eviction_safety": 0.926,
+  "friction": 1.25,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00290284,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-89",
@@ -272,9 +241,8 @@
   "kind": "movie",
   "size_bytes": 50251117363,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2026,
   "quality": "Remux-1080p",
@@ -284,16 +252,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98320067,
-  "forecast": 0.98320067,
-  "reasons": [
-   "plex: zero playback",
-   "frees 46.8 GiB",
-   "on disk 18 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -302,22 +262,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Drama",
-   "History"
-  ],
   "on_disk": [
    {
     "from": 1788626265
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.05,
+  "eviction_safety": 0.919,
+  "friction": 1.31,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00139957,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-92",
@@ -325,9 +288,8 @@
   "kind": "movie",
   "size_bytes": 12670153523,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2025,
   "quality": "WEBDL-2160p",
@@ -337,16 +299,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98155105,
-  "forecast": 0.98155105,
-  "reasons": [
-   "plex: zero playback",
-   "frees 11.8 GiB",
-   "on disk 21 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -355,22 +309,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Comedy",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788424939
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.054,
+  "eviction_safety": 0.911,
+  "friction": 1.35,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00617797,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-97",
@@ -378,9 +335,8 @@
   "kind": "movie",
   "size_bytes": 22119081574,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2026,
   "quality": "WEBDL-2160p",
@@ -390,16 +346,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9819639,
-  "forecast": 0.9819639,
-  "reasons": [
-   "plex: zero playback",
-   "frees 20.6 GiB",
-   "on disk 19 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -408,10 +356,6 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1772251061,
@@ -421,13 +365,20 @@
     "from": 1788536204
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.053,
+  "eviction_safety": 0.915,
+  "friction": 1.32,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00339612,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-102",
@@ -435,9 +386,8 @@
   "kind": "movie",
   "size_bytes": 17716740096,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": "Bluray-1080p",
@@ -447,16 +397,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9811446,
-  "forecast": 0.9811446,
-  "reasons": [
-   "plex: zero playback",
-   "frees 16.5 GiB",
-   "on disk 17 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -465,23 +407,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Thriller",
-   "Crime",
-   "Comedy"
-  ],
   "on_disk": [
    {
     "from": 1788737848
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.056,
+  "eviction_safety": 0.899,
+  "friction": 1.45,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00492121,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-107",
@@ -489,9 +433,8 @@
   "kind": "movie",
   "size_bytes": 12133282611,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2024,
   "quality": "WEBDL-2160p",
@@ -501,16 +444,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9814352,
-  "forecast": 0.9814352,
-  "reasons": [
-   "plex: zero playback",
-   "frees 11.3 GiB",
-   "on disk 27 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -519,22 +454,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Comedy",
-   "Drama"
-  ],
   "on_disk": [
    {
     "from": 1787872199
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.055,
+  "eviction_safety": 0.924,
+  "friction": 1.21,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00588938,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-110",
@@ -542,9 +480,8 @@
   "kind": "movie",
   "size_bytes": 2899102925,
   "decision": "keep",
-  "reason": "Eligible — held while /data is under the 80% ceiling",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2022,
   "quality": "WEBRip-1080p",
@@ -554,16 +491,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9822894,
-  "forecast": 0.9822894,
-  "reasons": [
-   "plex: zero playback",
-   "on disk 244 d",
-   "frees 2.7 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -572,23 +501,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Science Fiction",
-   "Romance",
-   "Comedy"
-  ],
   "on_disk": [
    {
     "from": 1769158147
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.052,
+  "eviction_safety": 0.93,
+  "friction": 1.18,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0227259,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-117",
@@ -596,9 +527,8 @@
   "kind": "movie",
   "size_bytes": 25662429594,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": "WEBDL-2160p",
@@ -608,16 +538,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9818672,
-  "forecast": 0.9818672,
-  "reasons": [
-   "plex: zero playback",
-   "frees 23.9 GiB",
-   "on disk 11 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -626,23 +548,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Science Fiction",
-   "Adventure"
-  ],
   "on_disk": [
    {
     "from": 1789263937
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.053,
+  "eviction_safety": 0.936,
+  "friction": 1.11,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00246151,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-120",
@@ -650,9 +574,8 @@
   "kind": "movie",
   "size_bytes": 10952166605,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2022,
   "quality": "WEBDL-2160p",
@@ -662,16 +585,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9806865,
-  "forecast": 0.9806865,
-  "reasons": [
-   "plex: zero playback",
-   "frees 10.2 GiB",
-   "on disk 16 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -680,22 +595,25 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama"
-  ],
   "on_disk": [
    {
     "from": 1788804834
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.057,
+  "eviction_safety": 0.915,
+  "friction": 1.28,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00715294,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-126",
@@ -703,37 +621,23 @@
   "kind": "movie",
   "size_bytes": 2254857830,
   "decision": "keep",
-  "reason": "No watch evidence (no usable Plex or Tautulli record this run), so it is held",
-  "delete_probability": 0.0,
+  "reason": "In its 30-day grace period",
   "protected": false,
   "poster_url": null,
   "year": 2026,
   "quality": "WEBDL-1080p",
   "season_label": null,
   "episodes": null,
-  "age_days": 1.2966925,
+  "age_days": 12.4,
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": 0.8716109,
-  "forecast": 0.9553148,
-  "reasons": [
-   "no watch evidence — undecidable, fail-closed",
-   "frees 2.1 GiB",
-   "on disk 1 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Adventure",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1789179621,
@@ -743,13 +647,20 @@
     "from": 1790102046
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 87%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.061,
+  "eviction_safety": 0.91,
+  "friction": 1.29,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0374714,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-136",
@@ -757,9 +668,8 @@
   "kind": "movie",
   "size_bytes": 40372692582,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2026,
   "quality": "WEBDL-2160p",
@@ -769,16 +679,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9823501,
-  "forecast": 0.9823501,
-  "reasons": [
-   "plex: zero playback",
-   "frees 37.6 GiB",
-   "on disk 19 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": "/data",
+  "volume": "/movies",
   "series_status": null,
   "last_aired_epoch": null,
   "plex": {
@@ -787,21 +689,26 @@
    "section_id": 1
   },
   "play_keys": null,
-  "genres": [
-   "Drama"
-  ],
   "on_disk": [
    {
     "from": 1788608181
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.052,
+  "eviction_safety": 0.688,
+  "friction": 3.6,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "high_reacquisition_friction"
+   },
+   "marginal_regret_per_gb": 0.00497872,
+   "explanation": "Hard to get back: friction 3.6"
+  }
  },
  {
   "id": "sonarr-35-s7",
@@ -809,9 +716,8 @@
   "kind": "season",
   "size_bytes": 22011707392,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -821,16 +727,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.91637516,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "frees 20.5 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": {
@@ -839,11 +737,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Drama",
-   "Fantasy",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1770027608,
@@ -853,13 +746,21 @@
     "from": 1788331459
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.23,
+  "eviction_safety": 0.742,
+  "friction": 1.28,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 17609365913
+   },
+   "marginal_regret_per_gb": 0.014361,
+   "explanation": "Moderate demand (23% P(watch)): a compact release frees about 16 GiB"
+  }
  },
  {
   "id": "sonarr-38-s1",
@@ -867,9 +768,8 @@
   "kind": "season",
   "size_bytes": 17609365914,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -879,16 +779,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9813736,
-  "forecast": 0.9813736,
-  "reasons": [
-   "plex: zero playback",
-   "frees 16.4 GiB",
-   "on disk 4 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": {
@@ -897,23 +789,25 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1789850761
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.055,
+  "eviction_safety": 0.91,
+  "friction": 1.35,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00452744,
+   "explanation": "Low demand (6% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-38-s2",
@@ -921,9 +815,8 @@
   "kind": "season",
   "size_bytes": 31568009626,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -933,16 +826,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9176418,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "frees 29.4 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": {
@@ -951,23 +836,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1789851060
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.227,
+  "eviction_safety": 0.741,
+  "friction": 1.32,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 25254407700
+   },
+   "marginal_regret_per_gb": 0.0101918,
+   "explanation": "Moderate demand (23% P(watch)): a compact release frees about 24 GiB"
+  }
  },
  {
   "id": "sonarr-48-s1",
@@ -975,9 +863,8 @@
   "kind": "season",
   "size_bytes": 17394617549,
   "decision": "keep",
-  "reason": "Eligible, but no governed disk holds it — never evicted",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "On no governed disk",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -987,14 +874,6 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98289204,
-  "forecast": 0.98289204,
-  "reasons": [
-   "plex: zero playback",
-   "on disk 190 d",
-   "frees 16.2 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
@@ -1005,22 +884,25 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Reality",
-   "Romance"
-  ],
   "on_disk": [
    {
     "from": 1773757203
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.05,
+  "eviction_safety": 0.925,
+  "friction": 1.25,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00385802,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-48-s2",
@@ -1028,9 +910,8 @@
   "kind": "season",
   "size_bytes": 4724464026,
   "decision": "keep",
-  "reason": "Eligible, but no governed disk holds it — never evicted",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "On no governed disk",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -1040,14 +921,6 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98253214,
-  "forecast": 0.98253214,
-  "reasons": [
-   "plex: zero playback",
-   "on disk 190 d",
-   "frees 4.4 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
@@ -1058,22 +931,25 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Reality",
-   "Romance"
-  ],
   "on_disk": [
    {
     "from": 1773771133
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.051,
+  "eviction_safety": 0.914,
+  "friction": 1.35,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0156477,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-48-s3",
@@ -1081,9 +957,8 @@
   "kind": "season",
   "size_bytes": 12562779341,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "On no governed disk",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -1093,14 +968,6 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9232153,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "on disk 190 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
@@ -1111,51 +978,45 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Reality",
-   "Romance"
-  ],
   "on_disk": [
    {
     "from": 1773777935
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.213,
+  "eviction_safety": 0.754,
+  "friction": 1.33,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0242128,
+   "explanation": "Low demand (21% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-49-s5",
   "title": "Gannet Rock Radio S5",
   "kind": "season",
   "size_bytes": 143237159322,
-  "decision": "keep",
-  "reason": "Watched, no date recorded",
-  "delete_probability": 0.0,
-  "protected": true,
+  "decision": "delete",
+  "reason": "Watched, no date · 1 play · regret 0.67",
+  "protected": false,
   "poster_url": null,
   "year": 2019,
   "quality": null,
   "season_label": "S5",
   "episodes": 8,
-  "age_days": 1.7885811,
+  "age_days": 212.4,
   "last_watched_days": null,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.86993355,
-  "reasons": [
-   "newest aired season",
-   "frees 133.4 GiB",
-   "on disk 2 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": {
@@ -1164,24 +1025,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Adventure",
-   "Drama",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1790059547
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.673,
+  "p_watch": 0.342,
+  "eviction_safety": 0.597,
+  "friction": 1.61,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 114589727457
+   },
+   "marginal_regret_per_gb": 0.00504498,
+   "explanation": "Moderate demand (34% P(watch)): a compact release frees about 107 GiB"
+  }
  },
  {
   "id": "sonarr-51-s1",
@@ -1189,9 +1052,8 @@
   "kind": "season",
   "size_bytes": 86114094285,
   "decision": "keep",
-  "reason": "Kept by you (Maintainerr exclusion or Plex keep marker)",
-  "delete_probability": 0.0,
-  "protected": false,
+  "reason": "Pinned: keep collection",
+  "protected": true,
   "poster_url": null,
   "year": 2005,
   "quality": null,
@@ -1201,16 +1063,8 @@
   "last_watched_days": 9.2288637,
   "watched_fraction": 0.5,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.87405586,
-  "reasons": [
-   "keep-collection",
-   "played 9 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "keep-collection",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": {
@@ -1219,13 +1073,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Crime",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788892747,
@@ -1235,13 +1082,21 @@
     "from": 1789823337
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (keep-collection)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.332,
+  "eviction_safety": 0.438,
+  "friction": 3.3,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "active_progress"
+   },
+   "marginal_regret_per_gb": 0.0136608,
+   "explanation": "Someone is partway through it"
+  }
  },
  {
   "id": "sonarr-51-s2",
@@ -1249,9 +1104,8 @@
   "kind": "season",
   "size_bytes": 56800942490,
   "decision": "keep",
-  "reason": "Kept by you (Maintainerr exclusion or Plex keep marker)",
-  "delete_probability": 0.0,
-  "protected": false,
+  "reason": "Pinned: keep collection",
+  "protected": true,
   "poster_url": null,
   "year": 2005,
   "quality": null,
@@ -1261,16 +1115,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9742148,
-  "reasons": [
-   "keep-collection",
-   "plex: zero playback",
-   "another season of this show was played"
-  ],
-  "hard_guard": "keep-collection",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": {
@@ -1279,13 +1125,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Crime",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788956363,
@@ -1295,13 +1134,20 @@
     "from": 1789823337
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (keep-collection)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.075,
+  "eviction_safety": 0.869,
+  "friction": 1.56,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00221172,
+   "explanation": "Low demand (8% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-51-s3",
@@ -1309,9 +1155,8 @@
   "kind": "season",
   "size_bytes": 19327352832,
   "decision": "keep",
-  "reason": "Kept by you (Maintainerr exclusion or Plex keep marker)",
-  "delete_probability": 0.0,
-  "protected": false,
+  "reason": "Pinned: keep collection",
+  "protected": true,
   "poster_url": null,
   "year": 2005,
   "quality": null,
@@ -1321,16 +1166,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9718736,
-  "reasons": [
-   "keep-collection",
-   "plex: zero playback",
-   "another season of this show was played"
-  ],
-  "hard_guard": "keep-collection",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": {
@@ -1339,13 +1176,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Crime",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1789013138,
@@ -1355,13 +1185,20 @@
     "from": 1789823337
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (keep-collection)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.082,
+  "eviction_safety": 0.879,
+  "friction": 1.39,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00633222,
+   "explanation": "Low demand (8% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-51-s4",
@@ -1369,9 +1206,8 @@
   "kind": "season",
   "size_bytes": 63672890163,
   "decision": "keep",
-  "reason": "Kept by you (Maintainerr exclusion or Plex keep marker)",
-  "delete_probability": 0.0,
-  "protected": false,
+  "reason": "Pinned: keep collection",
+  "protected": true,
   "poster_url": null,
   "year": 2005,
   "quality": null,
@@ -1381,16 +1217,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9745926,
-  "reasons": [
-   "keep-collection",
-   "plex: zero playback",
-   "another season of this show was played"
-  ],
-  "hard_guard": "keep-collection",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": {
@@ -1399,13 +1227,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Crime",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788885766,
@@ -1415,13 +1236,20 @@
     "from": 1789823337
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (keep-collection)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.074,
+  "eviction_safety": 0.876,
+  "friction": 1.5,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00187184,
+   "explanation": "Low demand (7% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-51-s5",
@@ -1429,9 +1257,8 @@
   "kind": "season",
   "size_bytes": 52935471923,
   "decision": "keep",
-  "reason": "Kept by you (Maintainerr exclusion or Plex keep marker)",
-  "delete_probability": 0.0,
-  "protected": false,
+  "reason": "Pinned: keep collection",
+  "protected": true,
   "poster_url": null,
   "year": 2005,
   "quality": null,
@@ -1441,16 +1268,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.8859955,
-  "reasons": [
-   "keep-collection",
-   "newest aired season",
-   "plex: zero playback"
-  ],
-  "hard_guard": "keep-collection",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": {
@@ -1459,13 +1278,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Crime",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788886933,
@@ -1475,13 +1287,21 @@
     "from": 1789823337
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (keep-collection)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.305,
+  "eviction_safety": 0.642,
+  "friction": 1.53,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 42348377538
+   },
+   "marginal_regret_per_gb": 0.00946552,
+   "explanation": "Moderate demand (30% P(watch)): a compact release frees about 39 GiB"
+  }
  },
  {
   "id": "sonarr-52-s1",
@@ -1489,9 +1309,8 @@
   "kind": "season",
   "size_bytes": 1717986918,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed this run",
+  "protected": false,
   "poster_url": null,
   "year": 2026,
   "quality": null,
@@ -1501,16 +1320,8 @@
   "last_watched_days": 2.1235039,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.50773036,
-  "reasons": [
-   "newest aired season",
-   "played 2 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789689600,
   "plex": {
@@ -1519,12 +1330,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Mystery",
-   "Science Fiction",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1787652532,
@@ -1534,13 +1339,21 @@
     "from": 1790025571
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.278,
+  "p_watch": 0.869,
+  "eviction_safety": 0.119,
+  "friction": 1.12,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "high_watch_likelihood"
+   },
+   "marginal_regret_per_gb": 0.17375,
+   "explanation": "Likely watched soon: 87% P(watch)"
+  }
  },
  {
   "id": "sonarr-59-s1",
@@ -1548,8 +1361,7 @@
   "kind": "season",
   "size_bytes": 4187593114,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
+  "reason": "Not needed this run",
   "protected": true,
   "poster_url": null,
   "year": 2023,
@@ -1560,16 +1372,8 @@
   "last_watched_days": 7.322154e-05,
   "watched_fraction": 0.16666667,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.567833,
-  "reasons": [
-   "newest aired season",
-   "played 0 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": 1765238400,
   "plex": {
@@ -1578,22 +1382,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1772773977
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.285,
+  "p_watch": 0.817,
+  "eviction_safety": 0.166,
+  "friction": 1.17,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "active_progress"
+   },
+   "marginal_regret_per_gb": 0.0730769,
+   "explanation": "Someone is partway through it"
+  }
  },
  {
   "id": "sonarr-62-s4",
@@ -1601,9 +1409,8 @@
   "kind": "season",
   "size_bytes": 68075231642,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2024,
   "quality": null,
@@ -1613,16 +1420,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9288627,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "frees 63.4 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1772928000,
   "plex": {
@@ -1631,22 +1430,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Comedy",
-   "Drama"
-  ],
   "on_disk": [
    {
     "from": 1788404282
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.199,
+  "eviction_safety": 0.481,
+  "friction": 4.2,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 54460185313
+   },
+   "marginal_regret_per_gb": 0.013183,
+   "explanation": "Moderate demand (20% P(watch)): a compact release frees about 51 GiB"
+  }
  },
  {
   "id": "sonarr-77-s1",
@@ -1654,9 +1457,8 @@
   "kind": "season",
   "size_bytes": 40694815130,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed this run",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -1666,16 +1468,8 @@
   "last_watched_days": 1.4502126,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.56948733,
-  "reasons": [
-   "newest aired season",
-   "played 1 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": 1786060800,
   "plex": {
@@ -1684,23 +1478,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Drama",
-   "Horror",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1788783652
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.631,
+  "p_watch": 0.815,
+  "eviction_safety": 0.133,
+  "friction": 1.52,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "high_watch_likelihood"
+   },
+   "marginal_regret_per_gb": 0.0166491,
+   "explanation": "Likely watched soon: 82% P(watch)"
+  }
  },
  {
   "id": "sonarr-80-s1",
@@ -1708,9 +1505,8 @@
   "kind": "season",
   "size_bytes": 14925011354,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2025,
   "quality": null,
@@ -1720,16 +1516,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.98161113,
-  "forecast": 0.98161113,
-  "reasons": [
-   "plex: zero playback",
-   "frees 13.9 GiB",
-   "on disk 17 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": 1753660800,
   "plex": {
@@ -1738,10 +1526,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Mystery",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1776035431,
@@ -1751,13 +1535,20 @@
     "from": 1788747155
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.054,
+  "eviction_safety": 0.919,
+  "friction": 1.27,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.00493381,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-80-s2",
@@ -1765,9 +1556,8 @@
   "kind": "season",
   "size_bytes": 18253611008,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2025,
   "quality": null,
@@ -1777,16 +1567,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.91798335,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "frees 17.0 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "ended",
   "last_aired_epoch": 1753660800,
   "plex": {
@@ -1795,10 +1577,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Mystery",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1776033744,
@@ -1808,42 +1586,41 @@
     "from": 1788764305
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.226,
+  "eviction_safety": 0.742,
+  "friction": 1.32,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 14602888806
+   },
+   "marginal_regret_per_gb": 0.0175482,
+   "explanation": "Moderate demand (23% P(watch)): a compact release frees about 14 GiB"
+  }
  },
  {
   "id": "sonarr-82-s1",
   "title": "Dipper Creek S1",
   "kind": "season",
   "size_bytes": 11489037517,
-  "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
+  "decision": "delete",
+  "reason": "Watched 5 mo ago · 1 play · regret 0.22",
   "protected": true,
   "poster_url": null,
   "year": 2025,
   "quality": null,
   "season_label": "S1",
   "episodes": 9,
-  "age_days": 17.938267,
+  "age_days": 301.8,
   "last_watched_days": 152.24037,
   "watched_fraction": 0.44444444,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.7880495,
-  "reasons": [
-   "newest aired season",
-   "played 152 d ago",
-   "plex: partially played"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": null,
   "plex": {
@@ -1852,14 +1629,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama",
-   "Mini-Series",
-   "Mystery",
-   "Suspense",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1775571467,
@@ -1869,13 +1638,21 @@
     "from": 1788664214
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.222,
+  "p_watch": 0.511,
+  "eviction_safety": 0.446,
+  "friction": 1.43,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "active_progress"
+   },
+   "marginal_regret_per_gb": 0.0207477,
+   "explanation": "Someone is partway through it"
+  }
  },
  {
   "id": "sonarr-85-s1",
@@ -1883,9 +1660,8 @@
   "kind": "season",
   "size_bytes": 55297703936,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed this run",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -1895,16 +1671,8 @@
   "last_watched_days": 21.251219,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.8518024,
-  "forecast": 0.8518024,
-  "reasons": [
-   "played 21 d ago",
-   "watched within 30 d",
-   "frees 51.5 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": {
@@ -1913,11 +1681,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1787624959,
@@ -1927,13 +1690,21 @@
     "from": 1789923259
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 85%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.361,
+  "p_watch": 0.382,
+  "eviction_safety": 0.578,
+  "friction": 1.4,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 44238163148
+   },
+   "marginal_regret_per_gb": 0.00700971,
+   "explanation": "Moderate demand (38% P(watch)): a compact release frees about 41 GiB"
+  }
  },
  {
   "id": "sonarr-85-s2",
@@ -1941,9 +1712,8 @@
   "kind": "season",
   "size_bytes": 56156697395,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Season 1 must go first",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -1953,16 +1723,8 @@
   "last_watched_days": 16.377951,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.85546035,
-  "forecast": 0.85546035,
-  "reasons": [
-   "played 16 d ago",
-   "watched within 30 d",
-   "frees 52.3 GiB"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": {
@@ -1971,11 +1733,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1787578731,
@@ -1985,13 +1742,21 @@
     "from": 1789925343
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 86%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.357,
+  "p_watch": 0.374,
+  "eviction_safety": 0.605,
+  "friction": 1.21,
+  "advice": {
+   "action": {
+    "type": "downgrade_quality",
+    "estimated_reclaim_bytes": 44925357916
+   },
+   "marginal_regret_per_gb": 0.006826,
+   "explanation": "Moderate demand (37% P(watch)): a compact release frees about 42 GiB"
+  }
  },
  {
   "id": "sonarr-85-s3",
@@ -1999,9 +1764,8 @@
   "kind": "season",
   "size_bytes": 100394860544,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed this run",
+  "protected": false,
   "poster_url": null,
   "year": 2023,
   "quality": null,
@@ -2011,16 +1775,8 @@
   "last_watched_days": 3.1705684,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.58408517,
-  "reasons": [
-   "newest aired season",
-   "played 3 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": {
@@ -2029,11 +1785,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1787632536,
@@ -2043,13 +1794,21 @@
     "from": 1789924954
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 1.176,
+  "p_watch": 0.801,
+  "eviction_safety": 0.125,
+  "friction": 1.74,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "high_watch_likelihood"
+   },
+   "marginal_regret_per_gb": 0.0125775,
+   "explanation": "Likely watched soon: 80% P(watch)"
+  }
  },
  {
   "id": "sonarr-87-s4",
@@ -2057,8 +1816,7 @@
   "kind": "season",
   "size_bytes": 52398601011,
   "decision": "keep",
-  "reason": "Played in the last 30 days",
-  "delete_probability": 0.0,
+  "reason": "Not needed this run",
   "protected": true,
   "poster_url": null,
   "year": 2022,
@@ -2069,16 +1827,8 @@
   "last_watched_days": 5.3926292,
   "watched_fraction": 0.3,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.6139195,
-  "reasons": [
-   "newest aired season",
-   "played 5 d ago",
-   "watched within 30 d"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1789257600,
   "plex": {
@@ -2087,22 +1837,26 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Drama",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1788854767
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.7,
+  "p_watch": 0.769,
+  "eviction_safety": 0.206,
+  "friction": 1.25,
+  "advice": {
+   "action": {
+    "type": "keep_original",
+    "reason": "active_progress"
+   },
+   "marginal_regret_per_gb": 0.0143443,
+   "explanation": "Someone is partway through it"
+  }
  },
  {
   "id": "sonarr-95-s1",
@@ -2110,9 +1864,8 @@
   "kind": "season",
   "size_bytes": 16535624090,
   "decision": "keep",
-  "reason": "Never played, outside the never-played reclaim terms",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -2122,16 +1875,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.9818988,
-  "forecast": 0.9818988,
-  "reasons": [
-   "plex: zero playback",
-   "frees 15.4 GiB",
-   "on disk 22 d"
-  ],
-  "hard_guard": null,
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1773100800,
   "plex": {
@@ -2140,23 +1885,25 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788288653
    }
   ],
-  "inflow": {
-   "tier": "compact",
-   "reason": "P(safe) 98%: nobody is expected to play it again"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.053,
+  "eviction_safety": 0.912,
+  "friction": 1.35,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0046461,
+   "explanation": "Low demand (5% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-95-s2",
@@ -2164,9 +1911,8 @@
   "kind": "season",
   "size_bytes": 6227702579,
   "decision": "keep",
-  "reason": "Newest aired season",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Never played; never-played reclaim is off",
+  "protected": false,
   "poster_url": null,
   "year": 2018,
   "quality": null,
@@ -2176,16 +1922,8 @@
   "last_watched_days": null,
   "watched_fraction": 0.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.9138141,
-  "reasons": [
-   "newest aired season",
-   "plex: zero playback",
-   "frees 5.8 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1773100800,
   "plex": {
@@ -2194,23 +1932,25 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Crime",
-   "Drama",
-   "Thriller"
-  ],
   "on_disk": [
    {
     "from": 1788287478
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": 0.237,
+  "eviction_safety": 0.725,
+  "friction": 1.38,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0563897,
+   "explanation": "Low demand (24% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "sonarr-97-s2",
@@ -2218,9 +1958,8 @@
   "kind": "season",
   "size_bytes": 10952166605,
   "decision": "keep",
-  "reason": "Watched, no date recorded",
-  "delete_probability": 0.0,
-  "protected": true,
+  "reason": "Not needed this run",
+  "protected": false,
   "poster_url": null,
   "year": 2024,
   "quality": null,
@@ -2230,16 +1969,8 @@
   "last_watched_days": null,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": 0.01,
-  "forecast": 0.837722,
-  "reasons": [
-   "newest aired season",
-   "on disk 154 d",
-   "frees 10.2 GiB"
-  ],
-  "hard_guard": "newest-season",
   "title_slug": null,
-  "volume": null,
+  "volume": "/tv",
   "series_status": "continuing",
   "last_aired_epoch": 1777248000,
   "plex": {
@@ -2248,12 +1979,6 @@
    "section_id": 2
   },
   "play_keys": null,
-  "genres": [
-   "Action",
-   "Adventure",
-   "Drama",
-   "Science Fiction"
-  ],
   "on_disk": [
    {
     "from": 1775219617,
@@ -2263,13 +1988,20 @@
     "from": 1776928329
    }
   ],
-  "inflow": {
-   "tier": "premium",
-   "reason": "guarded (newest-season)"
-  },
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": 0.176,
+  "p_watch": 0.412,
+  "eviction_safety": 0.555,
+  "friction": 1.33,
+  "advice": {
+   "action": {
+    "type": "eligible_for_eviction"
+   },
+   "marginal_regret_per_gb": 0.0172549,
+   "explanation": "Low demand (41% P(watch)) and easy to replace"
+  }
  },
  {
   "id": "radarr-7",
@@ -2278,7 +2010,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2289,22 +2020,20 @@
   "last_watched_days": 0.98663906,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-27",
@@ -2313,7 +2042,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -2324,22 +2052,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-51",
@@ -2348,7 +2074,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2359,22 +2084,20 @@
   "last_watched_days": 9.5985282,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-54",
@@ -2383,7 +2106,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -2394,22 +2116,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-67",
@@ -2418,7 +2138,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2026,
@@ -2429,22 +2148,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-72",
@@ -2453,7 +2170,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -2464,22 +2180,20 @@
   "last_watched_days": 4.719389,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-76",
@@ -2488,7 +2202,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2499,22 +2212,20 @@
   "last_watched_days": 9.2522147,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-80",
@@ -2523,7 +2234,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -2534,22 +2244,20 @@
   "last_watched_days": 11.682602,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-86",
@@ -2558,7 +2266,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2569,22 +2276,20 @@
   "last_watched_days": 7.9136931,
   "watched_fraction": 1.0,
   "watch_source": "plex",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-87",
@@ -2593,7 +2298,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -2604,22 +2308,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-88",
@@ -2628,7 +2330,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -2639,22 +2340,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-96",
@@ -2663,7 +2362,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2674,22 +2372,20 @@
   "last_watched_days": 8.2503769,
   "watched_fraction": 1.0,
   "watch_source": "tautulli",
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-100",
@@ -2698,7 +2394,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -2709,22 +2404,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-111",
@@ -2733,7 +2426,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -2744,22 +2436,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "radarr-124",
@@ -2768,7 +2458,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -2779,22 +2468,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": null,
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-2-s1",
@@ -2803,7 +2490,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -2814,22 +2500,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1767139200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-12-s0",
@@ -2838,7 +2522,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2020,
@@ -2849,22 +2532,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-12-s1",
@@ -2873,7 +2554,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2020,
@@ -2884,22 +2564,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-12-s2",
@@ -2908,7 +2586,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2020,
@@ -2919,22 +2596,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-12-s3",
@@ -2943,7 +2618,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2020,
@@ -2954,22 +2628,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s0",
@@ -2978,7 +2650,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -2989,22 +2660,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s1",
@@ -3013,7 +2682,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3024,22 +2692,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s2",
@@ -3048,7 +2714,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3059,22 +2724,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s3",
@@ -3083,7 +2746,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3094,22 +2756,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s4",
@@ -3118,7 +2778,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3129,22 +2788,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s5",
@@ -3153,7 +2810,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3164,22 +2820,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-35-s6",
@@ -3188,7 +2842,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -3199,22 +2852,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1785110400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-38-s0",
@@ -3223,7 +2874,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -3234,22 +2884,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-39-s0",
@@ -3258,7 +2906,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2005,
@@ -3269,22 +2916,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": 1414886400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-39-s1",
@@ -3293,7 +2938,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2005,
@@ -3304,22 +2948,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": 1414886400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-47-s0",
@@ -3328,7 +2970,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2021,
@@ -3339,22 +2980,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1788566400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-47-s1",
@@ -3363,7 +3002,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2021,
@@ -3374,22 +3012,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1788566400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-47-s2",
@@ -3398,7 +3034,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2021,
@@ -3409,22 +3044,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1788566400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-47-s3",
@@ -3433,7 +3066,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2021,
@@ -3444,22 +3076,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1788566400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-47-s4",
@@ -3468,7 +3098,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2021,
@@ -3479,22 +3108,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1788566400,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-49-s0",
@@ -3503,7 +3130,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2019,
@@ -3514,22 +3140,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-49-s1",
@@ -3538,7 +3162,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2019,
@@ -3549,22 +3172,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-49-s2",
@@ -3573,7 +3194,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2019,
@@ -3584,22 +3204,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-49-s3",
@@ -3608,7 +3226,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2019,
@@ -3619,22 +3236,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-49-s4",
@@ -3643,7 +3258,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2019,
@@ -3654,22 +3268,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1780531200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-50-s1",
@@ -3678,7 +3290,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2026,
@@ -3689,22 +3300,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "upcoming",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-51-s0",
@@ -3713,7 +3322,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2005,
@@ -3724,22 +3332,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-56-s1",
@@ -3748,7 +3354,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -3759,22 +3364,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": 1771545600,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-62-s1",
@@ -3783,7 +3386,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -3794,22 +3396,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1772928000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-62-s2",
@@ -3818,7 +3418,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -3829,22 +3428,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1772928000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-62-s3",
@@ -3853,7 +3450,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -3864,22 +3460,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1772928000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-62-s5",
@@ -3888,7 +3482,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -3899,22 +3492,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1772928000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-69-s1",
@@ -3923,7 +3514,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -3934,22 +3524,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-69-s2",
@@ -3958,7 +3546,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -3969,22 +3556,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-80-s0",
@@ -3993,7 +3578,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -4004,22 +3588,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": 1753660800,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-82-s0",
@@ -4028,7 +3610,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2025,
@@ -4039,22 +3620,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": null,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-85-s0",
@@ -4063,7 +3642,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2023,
@@ -4074,22 +3652,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789603200,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-87-s0",
@@ -4098,7 +3674,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -4109,22 +3684,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789257600,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-87-s1",
@@ -4133,7 +3706,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -4144,22 +3716,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789257600,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-87-s2",
@@ -4168,7 +3738,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -4179,22 +3748,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789257600,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-87-s3",
@@ -4203,7 +3770,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2022,
@@ -4214,22 +3780,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1789257600,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-95-s3",
@@ -4238,7 +3802,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2018,
@@ -4249,22 +3812,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1773100800,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-97-s1",
@@ -4273,7 +3834,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2024,
@@ -4284,22 +3844,20 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "continuing",
   "last_aired_epoch": 1777248000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  },
  {
   "id": "sonarr-99-s1",
@@ -4308,7 +3866,6 @@
   "size_bytes": 0,
   "decision": "none",
   "reason": "Nothing on disk",
-  "delete_probability": 0.0,
   "protected": false,
   "poster_url": null,
   "year": 2026,
@@ -4319,21 +3876,19 @@
   "last_watched_days": null,
   "watched_fraction": null,
   "watch_source": null,
-  "p_safe": null,
-  "forecast": null,
-  "reasons": [
-   "no file on disk — nothing to reclaim"
-  ],
-  "hard_guard": null,
   "title_slug": null,
   "volume": null,
   "series_status": "ended",
   "last_aired_epoch": 1771632000,
   "plex": null,
   "play_keys": null,
-  "inflow": null,
   "route": null,
   "handed_at": null,
-  "leaves_at": null
+  "leaves_at": null,
+  "regret": null,
+  "p_watch": null,
+  "eviction_safety": null,
+  "friction": null,
+  "advice": null
  }
 ]

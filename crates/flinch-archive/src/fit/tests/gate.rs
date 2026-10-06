@@ -1,127 +1,90 @@
-//! The adoption gate and the candidate models it judges: what each needs,
-//! and what recalibrating the priors must preserve.
+//! The fit and its adoption gate.
 
+use super::super::adopt::fit_model;
+use super::super::candidate::{self, ModelKind};
+use super::super::load::Household;
 use super::*;
+use crate::regret::HazardModel;
 
-#[test]
-fn fitted_weights_never_touch_the_frozen_policy_signals() {
-    let model = FittedModel {
-        fitted_on: "test".to_string(),
-        kind: candidate::ModelKind::Full,
-        weights: [
-            ("never_played".to_string(), 1.1f32),
-            ("rewatched".to_string(), -0.7),
-            ("no_evidence".to_string(), 9.0),
-            ("protected_by_tag".to_string(), 9.0),
-        ]
-        .into_iter()
-        .collect(),
-        bias: 0.2,
-        temperature: 1.3,
-        metrics: Metrics::default(),
-    };
-    let weights = model.weights();
-    assert!((weights.never_played - 1.1).abs() < 1e-6);
-    assert!((weights.rewatched + 0.7).abs() < 1e-6, "a household signal read back from weights.json");
-    assert!((weights.no_evidence - score::ScoreWeights::default().no_evidence).abs() < 1e-6, "policy stays");
-    assert!((weights.protected_by_tag - score::ScoreWeights::default().protected_by_tag).abs() < 1e-6);
-    assert!((weights.bias - 0.2).abs() < 1e-6);
+fn household(items: Vec<FitItem>) -> Household {
+    Household { items, unreadable_rows: 0, plex_rows: 0, tautulli_rows: 0 }
+}
+
+/// A household that rewatches every title it played within the last month of
+/// each cut, and never touches anything older: recency decides everything.
+fn recency_driven(titles: usize) -> Vec<FitItem> {
+    (0..titles)
+        .map(|n| {
+            // Every 45 days; odd titles stop playing two years before now.
+            let plays: Vec<u64> =
+                (0..16u64).map(|k| NOW - (40 + 45 * k) * DAY).filter(|epoch| n % 2 == 0 || *epoch < NOW - 700 * DAY).collect();
+            item(&format!("radarr-{n}"), LibraryKind::Movie, 900.0, plays)
+        })
+        .collect()
 }
 
 #[test]
-fn adoption_requires_a_real_improvement_out_of_fold() {
-    let mut model = FittedModel {
-        fitted_on: "test".to_string(),
-        kind: candidate::ModelKind::Full,
-        weights: HashMap::new(),
-        bias: 0.0,
-        temperature: 1.0,
-        metrics: Metrics {
-            examples: MIN_EXAMPLES,
-            positives: 40,
-            negative_items: 12,
-            auc: 0.8,
-            brier: 0.10,
-            priors_brier: 0.20,
-            priors_auc: 0.7,
-            ..Default::default()
-        },
-    };
-    assert!(model.beats_priors());
-
-    // A one-class panel: perfect Brier, no discrimination. Refuse it.
-    model.metrics.positives = model.metrics.examples;
-    assert!(!model.beats_priors(), "a single-class panel must never be adopted");
-
-    // Ranking at chance is not a model, however good its Brier.
-    model.metrics.positives = 40;
-    model.metrics.auc = 0.52;
-    assert!(!model.beats_priors(), "chance-level ranking must be refused");
-    model.metrics.auc = 0.8;
-
-    // A tie is not an improvement.
-    model.metrics.brier = model.metrics.priors_brier;
-    assert!(!model.beats_priors());
-
-    // Better Brier but worse ranking is a trade the guard should refuse.
-    model.metrics.brier = 0.15;
-    model.metrics.auc = 0.60;
-    assert!(!model.beats_priors());
-
-    // Too little data: priors win by default.
-    model.metrics.auc = 0.9;
-    model.metrics.examples = 20;
-    assert!(!model.beats_priors());
+fn a_near_empty_watch_log_keeps_the_priors() {
+    let items =
+        vec![item("radarr-1", LibraryKind::Movie, 900.0, vec![]), item("radarr-2", LibraryKind::Movie, 900.0, vec![NOW - 500 * DAY])];
+    let dataset = panel(&items, &default_cuts(), HORIZON_DAYS);
+    let model = fit_model(&household(items), &dataset, NOW, default_cuts().len());
+    assert!(model.shortfall().is_some(), "two titles cannot outvote the priors");
+    let empty = fit_model(&household(Vec::new()), &[], NOW, 0);
+    assert!(empty.shortfall().is_some(), "no rows, no fit");
+    assert!(empty.hazard.lambda0_per_day.is_finite());
 }
 
-/// A panel of `examples` rows with `played` played outcomes from
-/// `played_titles` titles, where the model clearly beats the priors.
+#[test]
+fn a_clear_household_signal_is_learnt_and_adopted() {
+    let items = recency_driven(60);
+    let dataset = panel(&items, &default_cuts(), HORIZON_DAYS);
+    let model = fit_model(&household(items), &dataset, NOW, default_cuts().len());
+    assert_eq!(model.shortfall(), None, "{:?}", model.metrics);
+    assert!(model.metrics.auc > model.metrics.priors_auc - 0.02 && model.metrics.brier < model.metrics.priors_brier);
+}
+
+#[test]
+fn recalibration_keeps_the_priors_ranking() {
+    let dataset = panel(&recency_driven(30), &default_cuts(), HORIZON_DAYS);
+    let fitted = candidate::fit(ModelKind::Recalibrated, &dataset);
+    let priors = HazardModel::default();
+    let order = |model: &HazardModel| {
+        let mut rows: Vec<usize> = (0..dataset.len()).collect();
+        rows.sort_by(|a, b| model.log_hazard(&dataset[*a].features).total_cmp(&model.log_hazard(&dataset[*b].features)));
+        rows
+    };
+    assert_eq!(order(&fitted), order(&priors), "one increasing map of the priors' linear predictor");
+}
+
 #[rstest]
-#[case::recalibration_on_a_small_panel(candidate::ModelKind::Recalibrated, 79, 2, 2, true)]
-#[case::the_full_fit_cannot_use_that_panel(candidate::ModelKind::Full, 79, 2, 2, false)]
-#[case::recalibration_needs_forty_rows(candidate::ModelKind::Recalibrated, 39, 2, 2, false)]
-#[case::one_played_title_teaches_nothing(candidate::ModelKind::Recalibrated, 79, 3, 1, false)]
-#[case::the_full_fit_with_enough_outcomes(candidate::ModelKind::Full, 200, 12, 5, true)]
+#[case::recalibration_with_too_few_rows(ModelKind::Recalibrated, 39, 10, 2, true)]
+#[case::recalibration_enough(ModelKind::Recalibrated, 40, 10, 2, false)]
+#[case::full_needs_more_rows(ModelKind::Full, 100, 30, 5, true)]
+#[case::one_played_title_is_not_a_signal(ModelKind::Recalibrated, 200, 30, 1, true)]
 fn each_candidate_needs_the_data_its_size_demands(
-    #[case] kind: candidate::ModelKind,
+    #[case] kind: ModelKind,
     #[case] examples: usize,
     #[case] played: usize,
-    #[case] played_titles: usize,
-    #[case] adopted: bool,
+    #[case] played_items: usize,
+    #[case] short: bool,
 ) {
-    let metrics = Metrics {
-        examples,
-        positives: examples - played,
-        negative_items: played_titles,
-        auc: 0.9,
-        brier: 0.02,
-        priors_brier: 0.2,
-        priors_auc: 0.85,
-        ..Default::default()
-    };
-    assert_eq!(shortfall(kind, &metrics).is_none(), adopted, "{:?}", shortfall(kind, &metrics));
+    let metrics =
+        Metrics { examples, played, played_items, auc: 0.8, brier: 0.1, priors_auc: 0.75, priors_brier: 0.2, ..Metrics::default() };
+    assert_eq!(shortfall(kind, &metrics).is_some(), short);
 }
 
 #[test]
-fn recalibration_keeps_the_priors_order_and_calibrates_them_to_the_household() {
-    // Forty films nobody ever plays, and two the household plays after a cut.
-    let mut items: Vec<FitItem> =
-        (0..40).map(|index| item(&format!("radarr-{index}"), LibraryKind::Movie, 400.0 + index as f32 * 5.0, vec![])).collect();
-    items.push(item("radarr-90", LibraryKind::Movie, 400.0, vec![NOW - 70 * DAY]));
-    items.push(item("radarr-91", LibraryKind::Movie, 400.0, vec![NOW - 100 * DAY]));
-    let dataset = panel(&items, &[60.0, 90.0, 120.0], 30.0);
-    assert!(dataset.iter().any(|row| row.label < 0.5), "the panel must hold played outcomes");
-    let labels: Vec<f32> = dataset.iter().map(|row| row.label).collect();
-
-    let priors = forecasts(&dataset, &score::ScoreWeights::default(), DEPLOYED_PRIOR_TEMPERATURE);
-    let trained = candidate::fit(candidate::ModelKind::Recalibrated, &dataset);
-    let recalibrated = forecasts(&dataset, &trained.weights, trained.temperature);
-
-    for (i, j) in (0..dataset.len()).flat_map(|i| (0..dataset.len()).map(move |j| (i, j))) {
-        if priors[i] < priors[j] {
-            assert!(recalibrated[i] <= recalibrated[j], "rows {i} and {j} changed order");
-        }
-    }
-    let brier = |p: &[f32]| p.iter().zip(&labels).map(|(p, y)| (p - y).powi(2)).sum::<f32>() / labels.len() as f32;
-    assert!(brier(&recalibrated) < brier(&priors), "{} vs the priors' {}", brier(&recalibrated), brier(&priors));
+fn a_fit_that_does_not_beat_the_priors_brier_is_refused() {
+    let metrics = Metrics {
+        examples: 500,
+        played: 100,
+        played_items: 20,
+        auc: 0.8,
+        brier: 0.198,
+        priors_auc: 0.8,
+        priors_brier: 0.2,
+        ..Metrics::default()
+    };
+    assert!(shortfall(ModelKind::Full, &metrics).is_some_and(|reason| reason.contains("Brier")));
 }

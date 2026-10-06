@@ -95,7 +95,6 @@ status 200 "$base/"
 status 200 "$base/healthz"
 status 401 "$base/api/status"
 status 401 -X POST "$base/api/run"
-status 401 -X POST --data '{}' "$base/v1/systemone"
 json "/api/session before logging in" '. == {"authenticated": false, "login_configured": true}' "$base/api/session"
 header "a refused request" '^www-authenticate: Cookie realm="flinch"' "$base/api/items"
 header "a refused request" '^www-authenticate: Bearer realm="flinch"$' "$base/api/items"
@@ -116,8 +115,8 @@ status 204 -c "$jar" "${ui[@]}" -X POST --data "$(login "$username" "$password")
 json "/api/status with the session" '.demo == true' -b "$jar" "$base/api/status"
 header "/api/items with the session" '^cache-control: no-store$' -b "$jar" "$base/api/items"
 json "/api/session after logging in" '.authenticated == true' -b "$jar" "$base/api/session"
-status 403 -b "$jar" -X PUT -H 'Content-Type: application/json' --data '{"capacity_ceiling": 5}' "$base/api/settings"
-status 400 -b "$jar" -X PUT "${ui[@]}" --data '{"capacity_ceiling": 5}' "$base/api/settings"
+status 403 -b "$jar" -X PUT -H 'Content-Type: application/json' --data '{"capacity":{"target_utilization":5}}' "$base/api/settings"
+status 400 -b "$jar" -X PUT "${ui[@]}" --data '{"capacity":{"target_utilization":5}}' "$base/api/settings"
 
 # Machines: the API key as X-Api-Key or as a bearer token, no UI header.
 status 401 -H "X-Api-Key: wrong-$key" "$base/api/status"
@@ -126,10 +125,7 @@ json "/api/status with X-Api-Key" '.demo == true' -H "X-Api-Key: $key" "$base/ap
 json "/api/status with the bearer key" '.demo == true' -H "Authorization: Bearer $key" "$base/api/status"
 header "/api/items with the key" '^cache-control: no-store$' -H "X-Api-Key: $key" "$base/api/items"
 status 400 -X PUT -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
-  --data '{"capacity_ceiling": 5}' "$base/api/settings"
-item=$(curl -s -H "X-Api-Key: $key" "$base/api/items" | jq -r '[.[] | select(.forecast != null)][0].id')
-ask=$(jq -cn --arg id "$item" '{state: $id, questions: {safe: {type: "noul"}}}')
-json "System One with the key" '.answers.safe.noul | type == "number"' -X POST -H "Authorization: Bearer $key" --data "$ask" "$base/v1/systemone"
+  --data '{"capacity":{"target_utilization":5}}' "$base/api/settings"
 
 # Logging out needs the UI's header, then ends the session on the server, not
 # only in the browser.

@@ -6,13 +6,13 @@
 //! statistics, not "has the household watched it". That lives in the media
 //! server and arrives via `watch.rs`.
 
-use crate::card::{ArchiveCard, LibraryKind, SeriesType};
+use crate::card::{ArchiveCard, LibraryKind};
 use serde::{Deserialize, Serialize};
 
 mod dwell;
 pub mod history;
 
-use dwell::{chrono_lite, days_on_disk};
+use dwell::days_on_disk;
 
 /// One volume from `/api/v3/diskspace` (Radarr and Sonarr both serve it).
 /// The *arrs own the files, so they are the authoritative witness for how full
@@ -111,8 +111,6 @@ pub struct ArrMovie {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
-    #[serde(default)]
-    pub genres: Vec<String>,
     /// Carries the operator's keep tag (resolved by the daemon from tag
     /// labels): a hard guard, exactly like a favorite.
     #[serde(skip)]
@@ -192,8 +190,6 @@ pub struct ArrSeries {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
-    #[serde(default)]
-    pub genres: Vec<String>,
     /// Carries the operator's keep tag (see [`ArrMovie::keep`]).
     #[serde(skip)]
     pub keep: bool,
@@ -213,12 +209,12 @@ fn known_text(id: Option<&str>) -> Option<String> {
 pub fn external_ids(movies: &[ArrMovie], series: &[ArrSeries]) -> std::collections::HashMap<String, crate::ids::ExternalIds> {
     let mut ids = std::collections::HashMap::new();
     for movie in movies {
-        ids.insert(format!("radarr-{}", movie.id), movie.external_ids());
+        ids.insert(movie.card_id(), movie.external_ids());
     }
     for show in series {
         let show_ids = show.external_ids();
         for season in &show.seasons {
-            ids.insert(format!("sonarr-{}-s{}", show.id, season.season_number), show_ids.clone());
+            ids.insert(show.season_card_id(season.season_number), show_ids.clone());
         }
     }
     ids
@@ -257,12 +253,39 @@ pub struct ArrMediaManagement {
     pub recycle_bin_cleanup_days: u32,
 }
 
+/// Rows parsed one by one: a malformed row is skipped and counted, never
+/// allowed to fail the page it came in.
+pub struct Rows<T> {
+    pub parsed: Vec<T>,
+    pub skipped: usize,
+    pub first_error: Option<serde_json::Error>,
+}
+
+pub fn parse_rows<T: serde::de::DeserializeOwned>(rows: Vec<serde_json::Value>) -> Rows<T> {
+    let mut out = Rows { parsed: Vec::with_capacity(rows.len()), skipped: 0, first_error: None };
+    for row in rows {
+        match serde_json::from_value(row) {
+            Ok(item) => out.parsed.push(item),
+            Err(error) => {
+                out.skipped += 1;
+                out.first_error.get_or_insert(error);
+            }
+        }
+    }
+    out
+}
+
 /// Poster preference: upstream CDN first (browser-loadable), then arr-local.
 pub fn poster_url(images: &[ArrImage]) -> Option<String> {
     images.iter().find(|i| i.cover_type == "poster").and_then(|i| i.remote_url.clone().or_else(|| i.url.clone()))
 }
 
 impl ArrMovie {
+    /// The card id FLINCH keys every decision about this movie by.
+    pub fn card_id(&self) -> String {
+        format!("radarr-{}", self.id)
+    }
+
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
         crate::ids::ExternalIds { tmdb: known_number(self.tmdb_id), tvdb: None, imdb: known_text(self.imdb_id.as_deref()) }
     }
@@ -276,7 +299,7 @@ impl ArrMovie {
             return None; // nothing on disk, nothing to reclaim
         }
         Some(ArchiveCard {
-            id: format!("radarr-{}", self.id),
+            id: self.card_id(),
             title: self.title.clone(),
             kind: LibraryKind::Movie,
             size_bytes: self.size_on_disk,
@@ -284,15 +307,10 @@ impl ArrMovie {
             last_watched_days: None, // filled by WatchState::apply
             in_keep_collection: false,
             is_favorite: self.keep,
-            duplicate_count: 0,
-            series_type: None,
-            season_state: None,
             season_index: None,
-            is_newest_season: None,
             episodes_total: None,
             episodes_watched: None,
             is_watched: None,
-            rewatch_score: None,
             movie_year: self.year,
             show_title: None,
         })
@@ -300,6 +318,11 @@ impl ArrMovie {
 }
 
 impl ArrSeries {
+    /// The card id of one of this show's seasons.
+    pub fn season_card_id(&self, season: u32) -> String {
+        format!("sonarr-{}-s{season}", self.id)
+    }
+
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
         crate::ids::ExternalIds {
             tmdb: known_number(self.tmdb_id),
@@ -310,27 +333,15 @@ impl ArrSeries {
 
     /// When the series last aired an episode, as unix seconds.
     pub fn last_aired_epoch(&self) -> Option<u64> {
-        self.previous_airing.as_deref().and_then(chrono_lite)
+        self.previous_airing.as_deref().and_then(crate::presence::parse_utc)
     }
 
     pub fn to_cards(&self) -> Vec<ArchiveCard> {
         let mut out = Vec::new();
-        // "Newest" counts only seasons that ARE on disk. An announced future
-        // season with no files must not shield the latest download from the
-        // archive reflex — the household cannot be mid-binge on nothing.
-        let on_disk: Vec<&SeriesSeason> =
-            self.seasons.iter().filter(|s| s.statistics.episode_file_count > 0 || s.statistics.size_on_disk > 0).collect();
-        let newest: Option<u32> = on_disk.iter().map(|s| s.season_number).max();
-        for season in on_disk {
+        for season in self.seasons.iter().filter(|s| s.statistics.episode_file_count > 0 || s.statistics.size_on_disk > 0) {
             let stats = &season.statistics;
-            let kind = match self.series_type.as_str() {
-                "anime" => SeriesType::Anime,
-                "documentary" => SeriesType::Documentary,
-                "reality" => SeriesType::Reality,
-                _ => SeriesType::Standard,
-            };
             out.push(ArchiveCard {
-                id: format!("sonarr-{}-s{}", self.id, season.season_number),
+                id: self.season_card_id(season.season_number),
                 title: format!("{} S{}", self.title, season.season_number),
                 kind: LibraryKind::Season,
                 size_bytes: stats.size_on_disk,
@@ -338,18 +349,13 @@ impl ArrSeries {
                 last_watched_days: None,
                 in_keep_collection: false,
                 is_favorite: self.keep,
-                duplicate_count: 0,
-                series_type: Some(kind),
-                season_state: None,
                 season_index: Some(season.season_number),
-                is_newest_season: Some(newest == Some(season.season_number)),
                 // Episodes on disk, not every announced one: an unaired or
                 // missing episode would keep a fully watched season from ever
                 // reading as completed.
                 episodes_total: Some(stats.episode_file_count),
                 episodes_watched: None,
                 is_watched: None,
-                rewatch_score: None,
                 movie_year: None,
                 show_title: Some(self.title.clone()),
             });

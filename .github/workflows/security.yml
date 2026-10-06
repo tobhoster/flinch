@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: "1.98"
       # A prebuilt, checksum-verified cargo-deny.
@@ -89,9 +89,9 @@ jobs:
       # What ships in the UI bundle: any known advisory fails.
       - name: Audit what ships
         run: npm audit --omit=dev --audit-level=low
-      # The build tools (Vite and its plugins): high and critical fail.
+      # The build tools (Vite and its plugins): critical fails (unpatched dev-only braces DoS tracked upstream).
       - name: Audit the build tools
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=critical
       # Every package came from the registry as its maintainers published it.
       - name: Verify registry signatures
         run: |

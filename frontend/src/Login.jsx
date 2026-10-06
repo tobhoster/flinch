@@ -49,9 +49,7 @@ export default function Login({ loginConfigured, reason = '', onLogin }) {
           <form onSubmit={submit} className="flex flex-col gap-3">
             <div>
               <p className="inline-flex items-center gap-1.5 font-medium text-fg"><Lock size={13} /> Log in</p>
-              <p className="mt-1 text-fg-muted">
-                {reason || 'With the username and password set in FLINCH_WEB_USERNAME and FLINCH_WEB_PASSWORD.'}
-              </p>
+              {reason && <p className="mt-1 text-fg-muted">{reason}</p>}
             </div>
             {/* Read-only, not disabled, while sending: a disabled field loses focus. */}
             <label className="flex flex-col gap-1">

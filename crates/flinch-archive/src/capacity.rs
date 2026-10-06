@@ -1,33 +1,28 @@
-//! Capacity governance — keep the media store under a ceiling by evicting only
-//! when space is actually needed.
+//! Capacity governance — forecast each library volume a window ahead and ask
+//! the planner to free only what that forecast says will not fit.
 //!
 //! The *arrs own the files and know the filesystems they write to. Each cycle
 //! the daemon asks Radarr and Sonarr for `/api/v3/diskspace` (every mount in
 //! the container) and `/api/v3/rootfolder` (where the library lives); this
-//! module keeps only the filesystems that host a root folder, measures each
-//! against the watermarks, and decides per volume: evict now or stay idle.
+//! module keeps only the filesystems that host a root folder and forecasts
+//! each one (see [`SlidingWindowCapacityForecaster`]):
 //!
-//! Watermark governance (the Kubernetes image-GC high/low pattern):
+//! ```text
+//! v̂        = EWMA_α(bytes imported per day, last 30 days)
+//! U_proj   = U + v̂·W + queued bytes − evictions not yet freed
+//! B_target = max(0, U_proj − θ_target·C_max + headroom)
+//! ```
 //!
-//! - **Below the ceiling, nothing is deleted.** A library under budget is doing
-//!   its job; deleting a safe-looking item there buys nothing and risks the one
-//!   mistake this reflex exists to prevent.
-//! - **Crossing the ceiling latches eviction for that volume.** The plan frees
-//!   the least expected regret per byte first until the volume is back at the
-//!   *release* mark; the latch persists across runs until it gets there.
-//!   Release below ceiling is the hysteresis — equal thresholds would chatter
-//!   one item per finished download.
+//! - **Stateless.** Every cycle forecasts from the measurement and the logs;
+//!   nothing latches, so no stored state can disagree with the disk.
 //! - **Per volume, never pooled.** Freeing the TV disk does not relieve a full
 //!   movies disk, and a full `/config` mount is not the library's problem.
-//! - **More aggressive only on measured evidence.** Unmeasured capacity evicts
-//!   nothing and leaves the latch as it was: losing telemetry never deletes more.
-//! - **Pressure widens the permitted set; it never lowers a floor.** While
-//!   evicting, the operator may let the never-played rule contribute, still
-//!   gated by its own P(safe) floor and dwell.
+//! - **Unmeasured evicts nothing.** No library volume, no forecast, no target:
+//!   losing telemetry never deletes more.
 //! - **Space that never frees is reported, not chased.** Evicted bytes the
-//!   disk has not released after the recycle window stay credited as *held*
-//!   (see [`EvictionLedger`]), so a torrent seeding the same file cannot make
-//!   FLINCH evict a second batch for one gap.
+//!   disk has not released after the recycle window stay credited (see
+//!   [`EvictionLedger`]) and come off the projection, so a torrent seeding the
+//!   same file cannot make FLINCH evict a second batch for one gap.
 
 mod inflight;
 mod status;
@@ -36,127 +31,190 @@ mod volumes;
 pub use inflight::{
     Credit, Eviction, EvictionLedger, HandedOver, HeldEviction, Occupancy, HELD_CREDIT_SECS, SETTLE_GRACE_SECS, STALE_ON_DISK_SECS,
 };
-pub use status::{CapacityStatus, VolumeStatus};
+pub use status::{CapacityStatus, CycleCapacity, VolumeStatus};
 pub use volumes::{App, AppDisks, LibraryVolumes, RecycleBin, RootFolder, Volume};
 
-use crate::policy::ArchivePolicy;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-/// The two thresholds, validated once: 0 < release ≤ ceiling ≤ 1.
-///
-/// Stored widened to f64 through the shortest decimal form: `f64::from(0.8f32)`
-/// is 0.800000011920929…, which would put "exactly at the ceiling" a few KB
-/// over it per TB and make byte accounting drift from what the operator typed.
+const GIB: u64 = 1 << 30;
+const DAY_SECS: u64 = 86_400;
+
+/// How many days of ingest the velocity is smoothed over.
+pub const INGEST_HISTORY_DAYS: usize = 30;
+
+/// The forecaster's knobs, as the operator sets them (`settings.json`
+/// `capacity`). Every field defaults individually.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CapacityConfig {
+    /// Caps each volume's capacity (`min` with its measured size), for a share
+    /// whose quota is smaller than the disk. `None`: the measured size.
+    pub max_capacity_bytes: Option<u64>,
+    /// θ_target: the fraction of capacity the projection must stay under.
+    pub target_utilization: f64,
+    /// θ_emerg: at or above this *current* fraction the planner skips the
+    /// solver for the greedy pass.
+    pub emergency_utilization: f64,
+    /// W: how many days ahead the projection looks.
+    pub sliding_window_days: u32,
+    /// α: weight of the newest day in the ingest average.
+    pub ewma_alpha: f64,
+    /// Extra bytes kept free below the target.
+    pub headroom_buffer_bytes: u64,
+}
+
+impl Default for CapacityConfig {
+    fn default() -> Self {
+        Self {
+            max_capacity_bytes: None,
+            target_utilization: 0.80,
+            emergency_utilization: 0.95,
+            sliding_window_days: 14,
+            ewma_alpha: 0.2,
+            headroom_buffer_bytes: 50 * GIB,
+        }
+    }
+}
+
+/// A [`CapacityConfig`] outside its bounds; the message names the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidCapacityConfig(pub &'static str);
+
+impl CapacityConfig {
+    pub fn validate(&self) -> Result<(), InvalidCapacityConfig> {
+        let fraction = |value: f64| value.is_finite() && value > 0.0 && value <= 1.0;
+        if !(fraction(self.target_utilization) && fraction(self.emergency_utilization)) {
+            return Err(InvalidCapacityConfig("the target and emergency utilization must be between 0 and 1"));
+        }
+        if self.target_utilization >= self.emergency_utilization {
+            return Err(InvalidCapacityConfig("the target utilization must be below the emergency utilization"));
+        }
+        if !(1..=365).contains(&self.sliding_window_days) {
+            return Err(InvalidCapacityConfig("the forecast window must be 1 to 365 days"));
+        }
+        if !fraction(self.ewma_alpha) {
+            return Err(InvalidCapacityConfig("the smoothing factor (ewma_alpha) must be above 0 and at most 1"));
+        }
+        if self.max_capacity_bytes == Some(0) {
+            return Err(InvalidCapacityConfig("the maximum capacity must be above 0 when set"));
+        }
+        Ok(())
+    }
+}
+
+/// One volume's inputs for a forecast.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Watermarks {
-    ceiling: f64,
-    release: f64,
-}
-
-/// The f64 nearest to the decimal an operator wrote, not to its f32 bits.
-fn widen(fraction: f32) -> f64 {
-    fraction.to_string().parse().unwrap_or(f64::from(fraction))
-}
-
-impl Watermarks {
-    /// `None` outside 0 < release ≤ ceiling ≤ 1 (NaN included): a malformed
-    /// threshold means ungoverned, never a guessed number.
-    pub fn new(ceiling: f32, release: f32) -> Option<Self> {
-        let valid = ceiling.is_finite() && release.is_finite() && release > 0.0 && release <= ceiling && ceiling <= 1.0;
-        valid.then(|| Self { ceiling: widen(ceiling), release: widen(release) })
-    }
-
-    pub fn ceiling(&self) -> f64 {
-        self.ceiling
-    }
-
-    pub fn release(&self) -> f64 {
-        self.release
-    }
-}
-
-/// One volume measured against the watermarks.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VolumeMeasure {
-    pub path: String,
+pub struct VolumeLoad<'a> {
     pub total_bytes: u64,
     pub used_bytes: u64,
-    pub ceiling_bytes: u64,
-    pub release_bytes: u64,
-    /// Bytes over the ceiling; 0 when under.
-    pub deficit_bytes: u64,
-    /// Bytes over the release mark: what a latched run frees.
-    pub release_gap_bytes: u64,
-    pub utilization: f32,
-    pub over_ceiling: bool,
+    /// Bytes imported per day, oldest first, one entry per day.
+    pub daily_ingest: &'a [u64],
+    /// Bytes still to download for items on this volume.
+    pub queue_bytes: u64,
+    /// Bytes evicted and credited but not yet freed (see [`EvictionLedger`]).
+    pub in_flight_bytes: u64,
 }
 
-/// One measured moment of the library volumes.
+/// One volume, forecast.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapacityForecast {
+    pub current_used_bytes: u64,
+    pub max_capacity_bytes: u64,
+    pub current_utilization: f64,
+    pub daily_ingest_rate_bytes: u64,
+    pub queue_bytes: u64,
+    pub in_flight_bytes: u64,
+    pub projected_used_bytes: u64,
+    /// B_target: what this volume must free.
+    pub target_reclaim_bytes: u64,
+    pub is_emergency: bool,
+}
+
+/// A forecast with the volume it belongs to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VolumeForecast {
+    pub volume: String,
+    #[serde(flatten)]
+    pub forecast: CapacityForecast,
+}
+
+/// The stateless forecaster: the same inputs always give the same target.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CapacitySnapshot {
-    pub watermarks: Watermarks,
-    pub volumes: Vec<VolumeMeasure>,
-    pub total_bytes: u64,
-    pub used_bytes: u64,
-    pub ceiling_bytes: u64,
-    pub release_bytes: u64,
-    pub deficit_bytes: u64,
-    pub release_gap_bytes: u64,
-    pub utilization: f32,
-    /// Any volume over its ceiling.
-    pub over_ceiling: bool,
+pub struct SlidingWindowCapacityForecaster {
+    config: CapacityConfig,
+}
+
+impl SlidingWindowCapacityForecaster {
+    pub fn new(config: CapacityConfig) -> Result<Self, InvalidCapacityConfig> {
+        config.validate()?;
+        Ok(Self { config })
+    }
+
+    pub fn config(&self) -> &CapacityConfig {
+        &self.config
+    }
+
+    /// `None` for a volume with no capacity: nothing to measure against.
+    pub fn forecast(&self, load: &VolumeLoad) -> Option<CapacityForecast> {
+        let config = &self.config;
+        let capacity = config.max_capacity_bytes.map_or(load.total_bytes, |cap| cap.min(load.total_bytes));
+        if capacity == 0 {
+            return None;
+        }
+        let velocity = ewma(config.ewma_alpha, load.daily_ingest);
+        let projected = load.used_bytes as f64 + velocity * f64::from(config.sliding_window_days) + load.queue_bytes as f64
+            - load.in_flight_bytes as f64;
+        let projected = projected.max(0.0);
+        let safe = config.target_utilization * capacity as f64;
+        let target = (projected - safe + config.headroom_buffer_bytes as f64).max(0.0);
+        let utilization = load.used_bytes as f64 / capacity as f64;
+        Some(CapacityForecast {
+            current_used_bytes: load.used_bytes,
+            max_capacity_bytes: capacity,
+            current_utilization: utilization,
+            daily_ingest_rate_bytes: velocity.round() as u64,
+            queue_bytes: load.queue_bytes,
+            in_flight_bytes: load.in_flight_bytes,
+            projected_used_bytes: projected.round() as u64,
+            target_reclaim_bytes: target.ceil() as u64,
+            is_emergency: utilization >= config.emergency_utilization,
+        })
+    }
+}
+
+/// Exponentially weighted moving average, oldest first, seeded with the first
+/// day: `v = α·x + (1 − α)·v`. 0 for an empty series.
+pub fn ewma(alpha: f64, series: &[u64]) -> f64 {
+    let mut values = series.iter().map(|bytes| *bytes as f64);
+    let Some(first) = values.next() else { return 0.0 };
+    values.fold(first, |average, today| alpha * today + (1.0 - alpha) * average)
+}
+
+/// Bytes per day over the `days` 24-hour windows ending at `now`, oldest
+/// first. Events in the future or older than the window are ignored.
+pub fn daily_series(events: impl IntoIterator<Item = (u64, u64)>, now: u64, days: usize) -> Vec<u64> {
+    let mut series = vec![0u64; days];
+    for (epoch, bytes) in events {
+        let Some(age) = now.checked_sub(epoch) else { continue };
+        let back = (age / DAY_SECS) as usize;
+        if let Some(slot) = back.checked_add(1).and_then(|back| days.checked_sub(back)) {
+            series[slot] = series[slot].saturating_add(bytes);
+        }
+    }
+    series
 }
 
 fn sum(values: impl Iterator<Item = u64>) -> u64 {
     values.fold(0u64, u64::saturating_add)
 }
 
-fn ratio(used: u64, total: u64) -> f32 {
+fn ratio(used: u64, total: u64) -> f64 {
     if total == 0 {
         0.0
     } else {
-        (used as f64 / total as f64) as f32
-    }
-}
-
-impl CapacitySnapshot {
-    /// `None` when there is nothing to measure: no library volume was found.
-    pub fn of(volumes: &[Volume], watermarks: Watermarks) -> Option<Self> {
-        if volumes.is_empty() {
-            return None;
-        }
-        let measures: Vec<VolumeMeasure> = volumes
-            .iter()
-            .map(|v| {
-                let deficit_bytes = v.excess_over(watermarks.ceiling);
-                VolumeMeasure {
-                    path: v.path.clone(),
-                    total_bytes: v.total_bytes,
-                    used_bytes: v.used_bytes(),
-                    ceiling_bytes: v.budget(watermarks.ceiling),
-                    release_bytes: v.budget(watermarks.release),
-                    deficit_bytes,
-                    release_gap_bytes: v.excess_over(watermarks.release),
-                    utilization: ratio(v.used_bytes(), v.total_bytes),
-                    over_ceiling: deficit_bytes > 0,
-                }
-            })
-            .collect();
-        let total_bytes = sum(measures.iter().map(|m| m.total_bytes));
-        let used_bytes = sum(measures.iter().map(|m| m.used_bytes));
-        Some(Self {
-            watermarks,
-            total_bytes,
-            used_bytes,
-            ceiling_bytes: sum(measures.iter().map(|m| m.ceiling_bytes)),
-            release_bytes: sum(measures.iter().map(|m| m.release_bytes)),
-            deficit_bytes: sum(measures.iter().map(|m| m.deficit_bytes)),
-            release_gap_bytes: sum(measures.iter().map(|m| m.release_gap_bytes)),
-            utilization: ratio(used_bytes, total_bytes),
-            over_ceiling: measures.iter().any(|m| m.over_ceiling),
-            volumes: measures,
-        })
+        used as f64 / total as f64
     }
 }
 
@@ -185,89 +243,6 @@ impl OnDisk {
         let library = self.library.get(volume).copied().unwrap_or(0);
         let credit = self.credit.get(volume).map_or(0, Credit::total);
         used.saturating_sub(library.saturating_add(credit))
-    }
-}
-
-/// The volumes whose eviction is latched, persisted across runs
-/// (`state/capacity.json`). A missing or corrupt file reads as unlatched: the
-/// failure mode deletes less, never more.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Latch {
-    #[serde(default)]
-    pub latched: BTreeSet<String>,
-}
-
-pub fn read_latch(path: &std::path::Path) -> Latch {
-    std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
-}
-
-pub fn write_latch(path: &std::path::Path, latch: &Latch) -> std::io::Result<()> {
-    crate::persist::replace(path, &serde_json::to_vec(latch)?)
-}
-
-/// What one cycle does about capacity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CapacityAction {
-    /// No library volume measured: nothing is evicted; the latch is kept.
-    Unmeasured,
-    /// No volume latched: nothing is evicted.
-    Idle,
-    /// At least one volume latched: free `goal_bytes` in total, per volume.
-    Evict { goal_bytes: u64, armed_never_played: bool },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CapacityDecision {
-    pub action: CapacityAction,
-    /// The latch to persist for the next run.
-    pub latch: Latch,
-    /// Bytes each latched volume must free this run.
-    pub goals: BTreeMap<String, u64>,
-}
-
-/// Decide one cycle: which volumes evict, and how much.
-///
-/// A volume latches when it crosses its ceiling and stays latched while it is
-/// above its release mark — both judged on the measurement alone. Its goal is
-/// the gap to the release mark minus `pending` (bytes already evicted that the
-/// recycle bin still holds), so a latched volume waiting on its recycle bin
-/// has a goal of 0 instead of evicting a second batch for the same gap. A
-/// latched volume vanishing from the measurement (unmounted, renamed) drops
-/// out of the latch: there is nothing to free on a disk that is not there.
-/// While anything evicts and `arm_never_played` is set, the never-played rule
-/// joins the permitted set.
-pub fn decide_capacity(
-    policy: &mut ArchivePolicy,
-    snapshot: Option<&CapacitySnapshot>,
-    before: &Latch,
-    arm_never_played: bool,
-    pending: &BTreeMap<String, u64>,
-) -> CapacityDecision {
-    let Some(snapshot) = snapshot else {
-        return CapacityDecision { action: CapacityAction::Unmeasured, latch: before.clone(), goals: BTreeMap::new() };
-    };
-    // Every latched volume is a key, even at a goal of 0 (waiting on its
-    // recycle bin): "latched" and "has a goal key" mean the same thing.
-    let goals: BTreeMap<String, u64> = snapshot
-        .volumes
-        .iter()
-        .filter(|m| m.over_ceiling || (before.latched.contains(&m.path) && m.release_gap_bytes > 0))
-        .map(|m| {
-            let credit = pending.get(&m.path).copied().unwrap_or(0);
-            (m.path.clone(), m.release_gap_bytes.saturating_sub(credit))
-        })
-        .collect();
-    let latch = Latch { latched: goals.keys().cloned().collect() };
-    if goals.is_empty() {
-        return CapacityDecision { action: CapacityAction::Idle, latch, goals };
-    }
-    if arm_never_played {
-        policy.unwatched_reclaim.enabled = true;
-    }
-    CapacityDecision {
-        action: CapacityAction::Evict { goal_bytes: sum(goals.values().copied()), armed_never_played: policy.unwatched_reclaim.enabled },
-        latch,
-        goals,
     }
 }
 

@@ -1,68 +1,92 @@
 {
  "scanned": 41,
- "delete_candidates": 0,
- "kept": 41,
- "reclaimed_bytes": 0,
+ "delete_candidates": 2,
+ "kept": 39,
+ "reclaimed_bytes": 154726196839,
  "protections_added": 0,
  "protections_skipped_repeat": 34,
- "dry_run": false,
+ "dry_run": true,
  "ran_at_unix": 1790214080,
  "interval_s": 300,
  "next_run_unix": 1790214380,
  "movies": 30,
  "seasons": 70,
- "model": "recalibrated priors on 79 example(s) — out-of-fold AUC 0.84, Brier 0.024, ECE 0.05 (41 library items (10 with plays), 160 history + 243 Tautulli rows, panel of 79 examples at 24 cut dates, horizon 30 d), temperature 1.92",
- "shadow_items": 0,
- "shadow_gib": 0.0,
+ "model": "recalibrated hazard on 79 example(s) — out-of-fold AUC 0.81, Brier 0.112, ECE 0.04 (41 library items (10 with plays), 160 history + 243 Tautulli rows, panel of 79 examples at 24 cut dates, horizon 90 d)",
+ "shadow_items": 20,
+ "shadow_gib": 431.0,
  "capacity": {
-  "total_bytes": 834297397248,
-  "used_bytes": 428422987776,
-  "ceiling": 0.8,
-  "release": 0.75,
-  "ceiling_bytes": 667437917798,
-  "release_bytes": 625723047936,
-  "deficit_bytes": 0,
-  "release_gap_bytes": 0,
-  "utilization": 0.5135135,
-  "over_ceiling": false,
-  "latched": false,
-  "goal_bytes": 0,
-  "covered": null,
-  "goal_met": null,
-  "armed_never_played": false,
+  "total_bytes": 3221225472000,
+  "used_bytes": 2190433320960,
+  "utilization": 0.68,
+  "target_utilization": 0.8,
+  "emergency_utilization": 0.95,
+  "window_days": 14,
+  "headroom_bytes": 53687091200,
+  "target_reclaim_bytes": 146028888064,
+  "healthy": false,
+  "emergency": false,
+  "planned_bytes": 154726196839,
+  "eligible_bytes": 455266533377,
+  "covered": true,
+  "goal_met": false,
+  "method": "milp",
+  "solver_error": null,
+  "total_regret": 0.895,
+  "pending_bytes": 0,
+  "held_bytes": 0,
+  "untracked_bytes": 912465802033,
+  "handed_bytes": 0,
+  "unmatched_roots": [
+   "sonarr:/media/library-1"
+  ],
   "volumes": [
    {
-    "path": "/data",
-    "total_bytes": 834297397248,
-    "used_bytes": 428422987776,
-    "utilization": 0.5135135,
-    "deficit_bytes": 0,
-    "release_gap_bytes": 0,
-    "latched": false,
-    "goal_bytes": 0,
-    "reclaimed_bytes": 0,
-    "eligible_bytes": 2899102925,
+    "path": "/movies",
+    "total_bytes": 1073741824000,
+    "used_bytes": 558345748480,
+    "utilization": 0.52,
+    "capacity_bytes": 1073741824000,
+    "daily_ingest_bytes": 3221225472,
+    "queue_bytes": 8589934592,
+    "projected_used_bytes": 612032839680,
+    "target_reclaim_bytes": 0,
+    "emergency": false,
+    "planned_bytes": 0,
+    "eligible_bytes": 34896609280,
     "pending_bytes": 0,
-    "handed_bytes": 0,
-    "covered": null,
-    "goal_met": null,
     "held_bytes": 0,
     "held": [],
     "library_bytes": 327383882137,
-    "untracked_bytes": 101039105639
+    "untracked_bytes": 230961866343,
+    "handed_bytes": 0,
+    "covered": null,
+    "goal_met": null
+   },
+   {
+    "path": "/tv",
+    "total_bytes": 2147483648000,
+    "used_bytes": 1632087572480,
+    "utilization": 0.76,
+    "capacity_bytes": 2147483648000,
+    "daily_ingest_bytes": 9663676416,
+    "queue_bytes": 42949672960,
+    "projected_used_bytes": 1810328715264,
+    "target_reclaim_bytes": 146028888064,
+    "emergency": false,
+    "planned_bytes": 154726196839,
+    "eligible_bytes": 420369924097,
+    "pending_bytes": 0,
+    "held_bytes": 0,
+    "held": [],
+    "library_bytes": 950583636790,
+    "untracked_bytes": 681503935690,
+    "handed_bytes": 0,
+    "covered": true,
+    "goal_met": false
    }
-  ],
-  "unmatched_roots": [
-   "sonarr:/media/library-1",
-   "sonarr:/media/library-2",
-   "sonarr:/media/library-3"
-  ],
-  "pending_bytes": 0,
-  "handed_bytes": 0,
-  "held_bytes": 0,
-  "untracked_bytes": 101039105639
+  ]
  },
- "eligible_bytes": 2899102925,
+ "eligible_bytes": 455266533377,
  "last_error": null,
  "last_error_at": null,
  "evidence_problems": [],
@@ -77,7 +101,7 @@
  "sync": {
   "error": null,
   "version": "3.29.0",
-  "dry_run": false,
+  "dry_run": true,
   "exclusions_added": 0,
   "exclusions_removed": 0,
   "scheduled": 0,
@@ -85,10 +109,10 @@
   "announced": 0,
   "announced_bytes": 0,
   "unscheduled": 0,
-  "simulated": 0,
+  "simulated": 2,
   "failures": 0,
   "skipped": 0,
-  "already_protected": 34,
+  "already_protected": 8,
   "already_scheduled": 0,
   "operator_keeps": 5,
   "unresolved": 2,
@@ -97,196 +121,67 @@
   "released_gone": 0,
   "warnings": []
  },
- "inflow": {
-  "premium": 19,
-  "compact": 22
+ "quality": {
+  "keep": 8,
+  "downgrade": 9,
+  "evict": 24
  },
  "fit": {
   "fitted_at_unix": 1790206626,
   "adopted": true,
   "shortfall": null,
   "kind": "recalibrated",
-  "fitted_on": "41 library items (10 with plays), 160 history + 243 Tautulli rows, panel of 79 examples at 24 cut dates, horizon 30 d",
+  "fitted_on": "41 library items (10 with plays), 160 history + 243 Tautulli rows, panel of 79 examples at 24 cut dates, horizon 90 d",
   "metrics": {
    "examples": 79,
-   "validation": 79,
-   "positives": 77,
-   "auc": 0.83766234,
-   "brier": 0.023926912,
-   "ece": 0.0523314,
-   "priors_auc": 0.83766234,
-   "priors_brier": 0.26435497,
-   "priors_ece": 0.44545668,
-   "horizon_days": 30.0,
+   "played": 14,
+   "played_items": 9,
+   "auc": 0.81,
+   "brier": 0.112,
+   "ece": 0.041,
+   "priors_auc": 0.74,
+   "priors_brier": 0.151,
+   "priors_ece": 0.093,
+   "horizon_days": 90.0,
    "fitted_at_unix": 1790206626,
-   "flagged_at_floor": 41,
-   "precision_at_floor": 1.0,
-   "priors_flagged": 29,
-   "priors_flagged_then_played": 0,
-   "negative_items": 2,
    "spread": {
     "auc": [
-     0.5584416,
-     1.0
+     0.68,
+     0.91
     ],
     "brier": [
-     0.003034897,
-     0.053116646
+     0.081,
+     0.146
     ],
-    "confident": 52,
-    "confident_wrong": 1
+    "confident": 31,
+    "confident_wrong": 2
    },
    "priors_spread": {
     "auc": [
-     0.5584416,
-     1.0
+     0.6,
+     0.86
     ],
     "brier": [
-     0.14285076,
-     0.3923172
+     0.118,
+     0.187
     ],
-    "confident": 2,
-    "confident_wrong": 1
+    "confident": 12,
+    "confident_wrong": 3
    }
   },
-  "taste": {
-   "as_of": 1790206626,
-   "overall": {
-    "played": 2,
-    "total": 79
-   },
-   "genres": {
-    "action": {
-     "played": 1,
-     "total": 29
-    },
-    "adventure": {
-     "played": 0,
-     "total": 18
-    },
-    "comedy": {
-     "played": 0,
-     "total": 6
-    },
-    "crime": {
-     "played": 0,
-     "total": 13
-    },
-    "drama": {
-     "played": 1,
-     "total": 42
-    },
-    "fantasy": {
-     "played": 0,
-     "total": 18
-    },
-    "horror": {
-     "played": 1,
-     "total": 6
-    },
-    "mystery": {
-     "played": 1,
-     "total": 6
-    },
-    "reality": {
-     "played": 0,
-     "total": 7
-    },
-    "romance": {
-     "played": 0,
-     "total": 7
-    },
-    "science fiction": {
-     "played": 2,
-     "total": 48
-    },
-    "thriller": {
-     "played": 1,
-     "total": 24
-    }
-   }
-  }
- },
- "benchmark": {
-  "model": "example-taste-model",
-  "endpoint": "http://127.0.0.1:8000",
-  "scored_at_unix": 1790206087,
-  "result": {
-   "now_unix": 1790206036,
-   "horizon_days": 30.0,
-   "join": {
-    "prediction_lines": 79,
-    "joined": 79,
-    "unjoined": 0,
-    "stale": 0,
-    "duplicates": 0,
-    "invalid": 0,
-    "invalid_lines": [],
-    "panel_rows": 79,
-    "unanswered": 0
-   },
-   "external": {
-    "n": 79,
-    "positives": 77,
-    "auc": 0.6298701,
-    "brier": 0.1650851,
-    "log_loss": 0.51414573,
-    "ece": 0.3634228
-   },
-   "priors": {
-    "n": 79,
-    "positives": 77,
-    "auc": 0.83766234,
-    "brier": 0.26435584,
-    "log_loss": 0.7476409,
-    "ece": 0.4454577
-   },
-   "recalibrated": {
-    "n": 79,
-    "positives": 77,
-    "auc": 0.83766234,
-    "brier": 0.023926917,
-    "log_loss": 0.115219995,
-    "ece": 0.05233138
-   },
-   "fitted": {
-    "n": 79,
-    "positives": 77,
-    "auc": 0.44805196,
-    "brier": 0.025295455,
-    "log_loss": 0.15114623,
-    "ece": 0.011385977
-   },
-   "versus": {
-    "recalibrated": {
-     "brier": [
-      -0.18673661,
-      -0.098751724
-     ],
-     "log_loss": [
-      -0.5000521,
-      -0.29893863
-     ],
-     "auc": [
-      -0.08641976,
-      0.4736842
-     ]
-    },
-    "fitted": {
-     "brier": [
-      -0.18672244,
-      -0.093382746
-     ],
-     "log_loss": [
-      -0.5246317,
-      -0.17232996
-     ],
-     "auc": [
-      -0.55063295,
-      0.18666667
-     ]
-    }
-   }
+  "hazard": {
+   "lambda0_per_day": 0.024,
+   "beta_recency": -0.62,
+   "beta_scrobbles": 0.41,
+   "beta_velocity": 0.83,
+   "beta_cyclical": 0.37
+  },
+  "priors": {
+   "lambda0_per_day": 0.004,
+   "beta_recency": -0.5,
+   "beta_scrobbles": 0.0,
+   "beta_velocity": 0.7,
+   "beta_cyclical": 0.3
   }
  },
  "outside_deletions": [
@@ -653,5 +548,6 @@
    "monitored": false,
    "on_disk": false
   }
- ]
+ ],
+ "never_played_requested": false
 }

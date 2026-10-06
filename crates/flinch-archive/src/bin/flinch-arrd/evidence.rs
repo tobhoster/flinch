@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Everything the cycle knows about who watched what.
 pub(super) struct Evidence {
-    /// The merged watch map the score and the policy read.
+    /// The merged watch map the planner and the item view read.
     pub(super) watch: HashMap<String, WatchEntry>,
     pub(super) watch_targets: Vec<WatchTarget>,
     pub(super) resolution: Resolution,
@@ -59,10 +59,7 @@ pub(super) async fn gather(
     let mut season_facts: HashMap<String, (Option<u32>, u32)> = HashMap::new();
     for series_item in series {
         for season in &series_item.seasons {
-            season_facts.insert(
-                format!("sonarr-{}-s{}", series_item.id, season.season_number),
-                (series_item.year, season.statistics.episode_file_count),
-            );
+            season_facts.insert(series_item.season_card_id(season.season_number), (series_item.year, season.statistics.episode_file_count));
         }
     }
     let with_identity = |mut target: flinch_archive::plex::WatchTarget| {
@@ -86,7 +83,7 @@ pub(super) async fn gather(
         .collect();
     for movie in movies.iter().filter(|movie| movie.to_card().is_none()) {
         watch_targets.push(with_identity(flinch_archive::plex::WatchTarget {
-            id: format!("radarr-{}", movie.id),
+            id: movie.card_id(),
             kind: flinch_archive::LibraryKind::Movie,
             title: movie.title.clone(),
             year: movie.year,
@@ -103,7 +100,7 @@ pub(super) async fn gather(
         let on_disk: std::collections::HashSet<u32> = series_item.to_cards().iter().filter_map(|c| c.season_index).collect();
         for season in series_item.seasons.iter().filter(|season| !on_disk.contains(&season.season_number)) {
             watch_targets.push(with_identity(flinch_archive::plex::WatchTarget {
-                id: format!("sonarr-{}-s{}", series_item.id, season.season_number),
+                id: series_item.season_card_id(season.season_number),
                 kind: flinch_archive::LibraryKind::Season,
                 title: series_item.title.clone(),
                 year: series_item.year,
@@ -387,7 +384,7 @@ async fn episode_ids(
         let targets: Vec<String> = series_item
             .seasons
             .iter()
-            .map(|season| format!("sonarr-{}-s{}", series_item.id, season.season_number))
+            .map(|season| series_item.season_card_id(season.season_number))
             .filter(|id| waiting.contains(id.as_str()))
             .collect();
         if targets.is_empty() {

@@ -15,10 +15,10 @@ body:
     validations:
       required: true
   - type: dropdown
-    id: enforcement
+    id: dry_run
     attributes:
-      label: Enforcement
-      options: ["Off (dry run)", "On"]
+      label: Dry run
+      options: ["On (plan only)", "Off"]
     validations:
       required: true
   - type: textarea

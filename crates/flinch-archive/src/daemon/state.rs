@@ -12,7 +12,13 @@ pub struct ItemSnapshot {
     /// "delete" | "keep"
     pub decision: String,
     pub reason: String,
-    pub delete_probability: f32,
+    /// Expected regret of evicting it (see [`crate::regret`]); `None`
+    /// for an item that is not a candidate.
+    #[serde(default)]
+    pub regret: Option<f64>,
+    /// P(someone watches it within the regret horizon).
+    #[serde(default)]
+    pub p_watch: Option<f64>,
     /// Whether a protective exclusion is already recorded.
     pub protected: bool,
     /// Upstream poster (TMDB/TVDB), browser-loadable; the UI falls back to a
@@ -46,20 +52,15 @@ pub struct ItemSnapshot {
     /// item is unknown. The UI must never render an unmatched item as watched.
     #[serde(default)]
     pub watch_source: Option<String>,
-    /// The P(safe) the plan gates on: guards and fail-closed terms included.
+    /// How safe evicting it is, 0..1: never above `1 − p_watch`.
     #[serde(default)]
-    pub p_safe: Option<f32>,
-    /// The forecast behind it: the chance nobody plays the item within the
-    /// horizon, from the household's evidence alone. No guard caps it, so a
-    /// kept-by-rule item still shows what the evidence says.
+    pub eviction_safety: Option<f64>,
+    /// How hard it would be to get back (C_reacq; 1 = an ordinary re-download).
     #[serde(default)]
-    pub forecast: Option<f32>,
-    /// Ordered, human-readable reasons behind the score.
+    pub friction: Option<f64>,
+    /// What to do with its quality (see [`crate::quality`]).
     #[serde(default)]
-    pub reasons: Vec<String>,
-    /// Structural guard that caps the score (favorite, keep-collection, newest).
-    #[serde(default)]
-    pub hard_guard: Option<String>,
+    pub advice: Option<crate::quality::QualityAdvice>,
     /// The *arr web UI's route key for this item (`titleSlug`), so the UI can
     /// link to it. Numeric ids do not resolve in either app's router.
     #[serde(default)]
@@ -82,18 +83,10 @@ pub struct ItemSnapshot {
     /// fitter re-joins history exactly as the daemon did.
     #[serde(default)]
     pub play_keys: Option<crate::plex::PlayKeys>,
-    /// Genre names from the *arr: the fitter counts the household's play rate
-    /// by them for the taste signal (see [`crate::taste`]).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub genres: Vec<String>,
     /// When it was on disk, from *arr history ([`crate::presence`]), so the
     /// fitter asks about past cuts only where the item really was.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_disk: Vec<crate::presence::Span>,
-    /// Which quality tier the household's evidence says this item deserves
-    /// (Recyclarr defines the tiers; FLINCH only advises). `None`: no advice.
-    #[serde(default)]
-    pub inflow: Option<crate::inflow::InflowAdvice>,
     /// How it leaves: the route of the collection it sits in once handed over,
     /// before that the route its eviction will take. `None` for a kept item.
     #[serde(default)]
@@ -129,24 +122,21 @@ pub struct StatusSnapshot {
     pub movies: u64,
     #[serde(default)]
     pub seasons: u64,
-    /// Which scorecard produced these numbers, in the operator's words. A model
-    /// that changes silently is indistinguishable from a bug.
+    /// Which hazard produced P(watch) this cycle, in the operator's words. A
+    /// model that changes silently is indistinguishable from a bug.
     #[serde(default)]
     pub model: String,
-    /// Preview of the never-played rule: what would additionally qualify if it
-    /// were armed. Published so an empty candidate list can explain its own size
-    /// instead of looking broken.
+    /// What enabling never-played reclaim would add. Published so a short
+    /// candidate list can explain its own size instead of looking broken.
     #[serde(default)]
     pub shadow_items: u64,
     #[serde(default)]
     pub shadow_gib: f32,
-    /// How full the *arr library volumes are, against the ceiling. `None` when
-    /// the daemon could not measure diskspace: the UI must then show nothing,
-    /// not a fake 0%.
+    /// Each library volume's forecast against the plan. `None` when the daemon
+    /// could not measure diskspace: the UI must then show nothing, not a fake 0%.
     #[serde(default)]
     pub capacity: Option<crate::capacity::CapacityStatus>,
-    /// Everything the policy and both floors permit on a governed volume: the
-    /// reserve eviction can draw on when space is needed.
+    /// Everything the planner could select on a governed volume.
     #[serde(default)]
     pub eligible_bytes: u64,
     /// Set when the newest cycle failed: this snapshot is then the last good
@@ -166,10 +156,8 @@ pub struct StatusSnapshot {
     /// it was published.
     #[serde(default)]
     pub never_played_hold: Option<super::NeverPlayedHold>,
-    /// Whether the settings ask never-played reclaim to run this cycle (see
-    /// [`super::never_played_requested`]). Held and not asked for, the UI says
-    /// to lift the hold and then enable the rule, not only to lift the hold.
-    /// `false` in a status file written before it was published.
+    /// Whether the operator enabled never-played reclaim. Held and not
+    /// enabled, the UI says to lift the hold and then enable the rule.
     #[serde(default)]
     pub never_played_requested: bool,
     /// What each watch source delivered this cycle, so the UI marks a service
@@ -180,36 +168,34 @@ pub struct StatusSnapshot {
     /// deferred, and why anything was refused.
     #[serde(default)]
     pub sync: crate::maintainerr::SyncSummary,
-    /// How many on-disk items the evidence advises into each Recyclarr tier.
+    /// How many on-disk items each quality action is advised for.
     #[serde(default)]
-    pub inflow: InflowCounts,
+    pub quality: QualityCounts,
     /// The last daily fit of the household panel, adopted or not, so the page
     /// can say which model runs, how well it has done, and what it still lacks.
     #[serde(default)]
     pub fit: Option<crate::fit::adopt::FitStatus>,
-    /// The last `flinch-fit --against --write` run: an external System One
-    /// model scored against FLINCH on the same household panel.
-    #[serde(default)]
-    pub benchmark: Option<crate::fit::bench::Benchmark>,
     /// Files Radarr or Sonarr removed lately that FLINCH did not hand over,
     /// newest first, with whether each will download again.
     #[serde(default)]
     pub outside_deletions: Vec<crate::outside::OutsideDeletion>,
 }
 
-/// Tier advice across the library, for the status page.
+/// Quality advice across the library, for the status page.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct InflowCounts {
-    pub premium: usize,
-    pub compact: usize,
+pub struct QualityCounts {
+    pub keep: usize,
+    pub downgrade: usize,
+    pub evict: usize,
 }
 
-impl InflowCounts {
+impl QualityCounts {
     pub fn of(items: &[ItemSnapshot]) -> Self {
-        items.iter().filter_map(|item| item.inflow.as_ref()).fold(Self::default(), |mut counts, advice| {
-            match advice.tier {
-                crate::inflow::Tier::Premium => counts.premium += 1,
-                crate::inflow::Tier::Compact => counts.compact += 1,
+        items.iter().filter_map(|item| item.advice.as_ref()).fold(Self::default(), |mut counts, advice| {
+            match advice.action {
+                crate::quality::QualityAction::KeepOriginal { .. } => counts.keep += 1,
+                crate::quality::QualityAction::DowngradeQuality { .. } => counts.downgrade += 1,
+                crate::quality::QualityAction::EligibleForEviction => counts.evict += 1,
             }
             counts
         })

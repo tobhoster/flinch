@@ -7,10 +7,9 @@ import OutsideDeletions from './OutsideDeletions.jsx';
 import ModelCard from './ModelCard.jsx';
 import { GiB, SectionTitle, ago } from './ui.jsx';
 import { Explain, GlossaryCard } from './Explain.jsx';
-import { GLOSSARY } from './glossary.js';
 
-const pct = (p) => (p == null ? '—' : `${Math.round(p * 100)}%`);
 const CANDIDATE_LIMIT = 25;
+const regretText = (r) => (r == null ? '—' : r.toFixed(2));
 
 // Watch sources grouped the way the Library labels them. `tautulli_no_stream`
 // is Tautulli's absence record, so it counts under Tautulli.
@@ -23,68 +22,39 @@ const SOURCES = [
 ];
 const KNOWN_SOURCES = new Set(SOURCES.flatMap(([, keys]) => keys));
 
-/** Held-reason buckets, as glossary keys: the label and note live there. */
-const HELD = {
-  reserve: 'held_reserve',
-  notGoverned: 'not_governed',
-  unresolved: 'unresolved',
-  noEvidence: 'held_no_evidence',
-  evidenceHeld: 'held_evidence',
-  untitled: 'held_untitled',
-  newest: 'held_newest',
-  yours: 'held_yours',
-  noDate: 'held_no_date',
-  floor: 'held_floor',
-  empty: 'held_empty',
-  excluded: 'held_excluded',
-};
-
 /**
- * The daemon's reason strings for items it is not evicting. "Eligible —" is the
- * reserve (waiting for a disk to need space); the ungoverned and unmatched forms
- * can never be evicted; the evidence forms wait on watch evidence, and the
- * never-played hold on complete evidence or a Leaving Soon title. Anything
- * else falls through to the policy and floor buckets.
+ * Groups for the daemon's kept-item `reason` sentences: `[pattern, label,
+ * glossary key]`. A reason no pattern matches is its own group.
  */
-const NOT_GOVERNED_REASON = 'Eligible, but no governed disk';
-const UNRESOLVED_REASON = 'Eligible, but not matched in Plex';
-const NO_EVIDENCE_REASON = 'No watch evidence';
-const NEVER_PLAYED_HELD_REASON = '; never-played reclaim is held until';
-const EVIDENCE_HELD_REASON = 'until the watch evidence is complete';
-const RESERVE_REASON = /^Eligible\s+—/;
+const KEPT_GROUPS = [
+  [/^Pinned/, 'Pinned', 'pinned'],
+  [/grace period/, 'In grace period', 'grace_period'],
+  [/^Not needed/, 'Eligible, not needed', 'eligible'],
+  [/^Never played/, 'Never played', 'never_played'],
+  [/^Not matched in Plex/, 'Not matched in Plex', 'unresolved'],
+  [/^On no governed disk/, 'Not governed', 'not_governed'],
+  [/must go first/, 'Earlier season first', 'plan'],
+];
 
-/**
- * Why the never-played rule cannot run yet (`never_played_hold`), when enabling
- * it would change nothing: `held` when the settings ask for it
- * (`never_played_requested`), `off` when lifting the hold alone would not run it.
- */
+/** What lifts the never-played hold (`never_played_hold`), by whether the settings ask for it. */
 const SHADOW_HINT = {
-  leaving_soon_untitled: {
-    held: 'It is held until a Leaving Soon collection is named in Settings.',
-    off: 'Name a Leaving Soon collection, then enable it in Settings.',
-  },
-  incomplete_evidence: {
-    held: 'It is held until the watch evidence is complete.',
-    off: 'Once the watch evidence is complete, enable it in Settings.',
-  },
+  leaving_soon_untitled: { held: 'Held until a Leaving Soon collection is named.', off: 'Name a Leaving Soon collection, then enable it in Settings.' },
+  incomplete_evidence: { held: 'Held until the watch evidence is complete.', off: 'Enable it in Settings once the watch evidence is complete.' },
 };
-
-/** Hard guards the operator set: the keep tag, a Plex label or collection, their own exclusion. */
-const OPERATOR_GUARDS = new Set(['favorite', 'keep-collection']);
 
 export default function Overview({ status, items, history, loading }) {
   const s = status || {};
 
   const totals = useMemo(() => {
-    let bytes = 0, onDisk = 0, candidates = 0, held = 0;
+    let bytes = 0, onDisk = 0, planned = 0, kept = 0;
     for (const i of items) {
       const size = i.size_bytes || 0;
       bytes += size;
       if (size > 0) onDisk += 1;
-      if (i.decision === 'delete') candidates += 1;
-      else if (size > 0) held += 1;
+      if (i.decision === 'delete') planned += 1;
+      else if (size > 0) kept += 1;
     }
-    return { bytes, onDisk, candidates, held };
+    return { bytes, onDisk, planned, kept };
   }, [items]);
 
   const evidence = useMemo(() => {
@@ -99,38 +69,24 @@ export default function Overview({ status, items, history, loading }) {
     .filter((i) => i.decision === 'delete')
     .sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0)), [items]);
 
-  // Why everything else is held. Without this an all-held library looks broken.
-  const held = useMemo(() => {
-    const buckets = new Map();
-    const add = (key, item) => {
-      const bucket = buckets.get(key) || { key, label: GLOSSARY[key].term, count: 0, bytes: 0 };
-      bucket.count += 1;
-      bucket.bytes += item.size_bytes || 0;
-      buckets.set(key, bucket);
-    };
+  // Why everything else is kept. Without this an all-kept library looks broken.
+  const kept = useMemo(() => {
+    const groups = new Map();
     for (const item of items) {
-      if ((item.size_bytes || 0) === 0) { add(HELD.empty, item); continue; }
       if (item.decision === 'delete') continue;
-      const reason = item.reason || '';
-      const watchedNoDate = reason.includes('no date')
-        || ((item.watched_fraction ?? 0) >= 1 && item.last_watched_days == null);
-      if (item.hard_guard === 'newest-season') add(HELD.newest, item);
-      else if (OPERATOR_GUARDS.has(item.hard_guard)) add(HELD.yours, item);
-      else if (reason.startsWith(NOT_GOVERNED_REASON)) add(HELD.notGoverned, item);
-      else if (reason.startsWith(UNRESOLVED_REASON)) add(HELD.unresolved, item);
-      else if (reason.startsWith(NO_EVIDENCE_REASON)) add(HELD.noEvidence, item);
-      else if (reason.includes(NEVER_PLAYED_HELD_REASON)) add(reason.includes(EVIDENCE_HELD_REASON) ? HELD.evidenceHeld : HELD.untitled, item);
-      else if (RESERVE_REASON.test(reason)) add(HELD.reserve, item);
-      else if (watchedNoDate) add(HELD.noDate, item);
-      else if (item.protected) add(HELD.excluded, item);
-      else add(HELD.floor, item);
+      const reason = (item.size_bytes || 0) === 0 ? 'Nothing on disk' : item.reason || 'No reason recorded';
+      const [, label, term] = KEPT_GROUPS.find(([re]) => re.test(reason)) ?? [null, reason, null];
+      const group = groups.get(label) || { label, term, count: 0, bytes: 0 };
+      group.count += 1;
+      group.bytes += item.size_bytes || 0;
+      groups.set(label, group);
     }
-    return [...buckets.values()].sort((a, b) => b.bytes - a.bytes || b.count - a.count);
+    return [...groups.values()].sort((a, b) => b.bytes - a.bytes || b.count - a.count);
   }, [items]);
 
-  const closest = useMemo(() => items
-    .filter((i) => (i.size_bytes || 0) > 0 && i.decision !== 'delete')
-    .sort((a, b) => (b.p_safe ?? -1) - (a.p_safe ?? -1))
+  const cheapest = useMemo(() => items
+    .filter((i) => i.decision !== 'delete' && i.regret != null)
+    .sort((a, b) => a.regret - b.regret)
     .slice(0, 3), [items]);
 
   if (loading) return <p className="mt-6 text-[13px] text-fg-muted">Loading…</p>;
@@ -145,7 +101,7 @@ export default function Overview({ status, items, history, loading }) {
     );
   }
 
-  const candidateCount = s.delete_candidates ?? totals.candidates;
+  const planned = s.delete_candidates ?? totals.planned;
 
   return (
     <div className="mt-6 space-y-6 text-[13px]">
@@ -153,12 +109,12 @@ export default function Overview({ status, items, history, loading }) {
 
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line md:grid-cols-4">
         <Metric label="On disk" value={`${GiB(totals.bytes)} GiB`} note={`${totals.onDisk} of ${items.length} items`} />
-        <Metric label="Reclaimable" value={`${GiB(s.reclaimed_bytes)} GiB`} />
-        <Metric label="Candidates" value={candidateCount} warn={candidateCount > 0} />
-        <Metric label="Held" value={totals.held} />
+        <Metric label="Planned" value={planned} note={`${GiB(s.reclaimed_bytes)} GiB`} warn={planned > 0} />
+        <Metric label="Eligible" value={`${GiB(s.eligible_bytes)} GiB`} />
+        <Metric label="Kept" value={totals.kept} />
       </dl>
 
-      {s.capacity && <Capacity c={s.capacity} eligible={s.eligible_bytes} hold={s.never_played_hold} requested={s.never_played_requested} />}
+      {s.capacity && <Capacity c={s.capacity} />}
 
       <section>
         <SectionTitle hint={`${items.length} items`} term="evidence">Watch evidence</SectionTitle>
@@ -173,26 +129,27 @@ export default function Overview({ status, items, history, loading }) {
           <p className="mt-2 flex items-start gap-2 text-state-warn">
             <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
             <span className="min-w-0 break-words">
-              Never-played reclaim is held off: {s.evidence_problems.join(', ')}. <Explain term="evidence_complete" />
+              Never-played reclaim is off: {s.evidence_problems.join(', ')}. <Explain term="evidence_complete" />
             </span>
           </p>
         )}
       </section>
 
-      <ModelCard fit={s.fit} benchmark={s.benchmark} />
+      <ModelCard fit={s.fit} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         {candidates.length > 0
           ? <CandidateList items={candidates} />
-          : <NothingToReclaim held={held} closest={closest} status={s} />}
+          : <NothingPlanned kept={kept} cheapest={cheapest} status={s} />}
         <div className="min-w-0 space-y-6">
-          <RecentRuns history={history} />
-          <MaintainerrSync sync={s.sync} />
+          <RecentRuns history={history} target={s.capacity?.target_utilization} />
+          <MaintainerrSync sync={s.sync} dryRun={s.dry_run} />
           <OutsideDeletions items={s.outside_deletions} />
-          {(s.inflow?.compact > 0 || s.inflow?.premium > 0) && (
+          {s.quality && (
             <p className="text-fg-muted">
-              Quality tiers (advice): <span className="num text-fg">{s.inflow.compact}</span> compact
-              {' · '}<span className="num text-fg">{s.inflow.premium}</span> premium <Explain term="quality_tier" />
+              Quality advice: <span className="num text-fg">{s.quality.keep ?? 0}</span> keep
+              {' · '}<span className="num text-fg">{s.quality.downgrade ?? 0}</span> downgrade
+              {' · '}<span className="num text-fg">{s.quality.evict ?? 0}</span> evictable <Explain term="advice" />
             </p>
           )}
         </div>
@@ -234,11 +191,11 @@ function CandidateList({ items }) {
   const shown = items.slice(0, CANDIDATE_LIMIT);
   return (
     <section className="min-w-0">
-      <SectionTitle hint="largest first">Candidates</SectionTitle>
+      <SectionTitle hint="largest first" term="plan">Planned</SectionTitle>
       <div className={`hidden border-b border-line pb-1.5 text-xs text-fg-muted ${ROW}`}>
         <span>Title</span>
         <span className="text-right">Size</span>
-        <span className="inline-flex items-center justify-end gap-1">P(safe) <Explain term="p_safe" /></span>
+        <span className="inline-flex items-center justify-end gap-1">Regret <Explain term="regret" /></span>
         <span>Reason</span>
       </div>
       {shown.map((i) => (
@@ -246,7 +203,7 @@ function CandidateList({ items }) {
           <div className="flex min-w-0 items-baseline gap-3 md:contents">
             <span className="min-w-0 flex-1 truncate" title={i.title}>{i.title}</span>
             <span className="num shrink-0 text-right">{GiB(i.size_bytes)} GiB</span>
-            <span className="num w-10 shrink-0 text-right text-fg-muted md:w-auto">{pct(i.p_safe)}</span>
+            <span className="num w-10 shrink-0 text-right text-fg-muted md:w-auto">{regretText(i.regret)}</span>
           </div>
           <span className="block truncate text-xs text-fg-muted md:text-[13px]" title={i.reason}>{i.reason}</span>
         </div>
@@ -258,17 +215,14 @@ function CandidateList({ items }) {
   );
 }
 
-function NothingToReclaim({ held, closest, status }) {
-  const eligibleHeld = held.some((row) => [HELD.reserve, HELD.notGoverned, HELD.unresolved].includes(row.key));
-  const why = status.capacity && !status.capacity.latched
-    ? 'Storage is under the ceiling, so nothing is scheduled.'
-    : eligibleHeld ? 'Nothing is scheduled this run.' : 'Nothing passes the policy and the P(safe) floor.';
+function NothingPlanned({ kept, cheapest, status }) {
+  const why = status.capacity?.healthy ? 'Storage is healthy.' : 'Nothing eligible.';
   const shadowHint = SHADOW_HINT[status.never_played_hold]?.[status.never_played_requested ? 'held' : 'off'] || 'Enable it in Settings.';
   return (
     <section className="min-w-0 space-y-5">
       <div>
-        <SectionTitle>No candidates</SectionTitle>
-        <p className="text-fg-muted">{why} Held items by reason:</p>
+        <SectionTitle>Nothing planned</SectionTitle>
+        <p className="text-fg-muted">{why} Kept items by reason:</p>
         <table className="mt-2 w-full">
           <thead>
             <tr className="border-b border-line text-left text-xs text-fg-muted">
@@ -278,10 +232,10 @@ function NothingToReclaim({ held, closest, status }) {
             </tr>
           </thead>
           <tbody>
-            {held.map((row) => (
-              <tr key={row.key} className="border-b border-line-soft last:border-0">
+            {kept.map((row) => (
+              <tr key={row.label} className="border-b border-line-soft last:border-0">
                 <td className="py-1.5 pr-3">
-                  <span className="inline-flex items-center gap-1.5">{row.label} <Explain term={row.key} /></span>
+                  <span className="inline-flex items-center gap-1.5">{row.label} {row.term && <Explain term={row.term} />}</span>
                 </td>
                 <td className="num py-1.5 pr-3 text-right">{row.count}</td>
                 <td className="num whitespace-nowrap py-1.5 text-right">{GiB(row.bytes)} GiB</td>
@@ -291,19 +245,14 @@ function NothingToReclaim({ held, closest, status }) {
         </table>
       </div>
 
-      {closest.length > 0 && (
+      {cheapest.length > 0 && (
         <div>
-          <h3 className="mb-1.5 flex items-center gap-1.5 text-xs text-fg-muted">Closest by P(safe) <Explain term="p_safe" /></h3>
-          {closest.map((i) => (
-            <div key={i.id} className="border-b border-line-soft py-1.5 last:border-0">
-              <div className="flex items-baseline gap-3">
-                <span className="num w-10 shrink-0 text-right">{pct(i.p_safe)}</span>
-                <span className="min-w-0 flex-1 truncate" title={i.title}>{i.title}</span>
-                <span className="num shrink-0 text-fg-muted">{GiB(i.size_bytes)} GiB</span>
-              </div>
-              <div className="truncate pl-[3.25rem] text-xs text-fg-muted" title={i.reason}>
-                {i.hard_guard ? `Guard: ${i.hard_guard}. ` : ''}{i.reason}
-              </div>
+          <h3 className="mb-1.5 flex items-center gap-1.5 text-xs text-fg-muted">Lowest regret <Explain term="regret" /></h3>
+          {cheapest.map((i) => (
+            <div key={i.id} className="flex items-baseline gap-3 border-b border-line-soft py-1.5 last:border-0">
+              <span className="num w-10 shrink-0 text-right">{regretText(i.regret)}</span>
+              <span className="min-w-0 flex-1 truncate" title={i.title}>{i.title}</span>
+              <span className="num shrink-0 text-fg-muted">{GiB(i.size_bytes)} GiB</span>
             </div>
           ))}
         </div>

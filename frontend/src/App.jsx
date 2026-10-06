@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, LogOut, Play } from 'lucide-react';
 import { Locked, loadSession, loadStatus, loadItems, loadHistory, logOut, onLocked, triggerRun } from './api.js';
-import { Dot, Tabs, ago } from './ui.jsx';
+import { Dot, Tabs, ago, every } from './ui.jsx';
 import Overview from './Overview.jsx';
 import MediaTable from './MediaTable.jsx';
 import Settings from './Settings.jsx';
@@ -135,11 +135,6 @@ export default function App() {
   );
 }
 
-function every(intervalS) {
-  if (!intervalS) return 'manual only';
-  return intervalS < 3600 ? `every ${Math.round(intervalS / 60)} min` : `every ${Math.round(intervalS / 3600)} h`;
-}
-
 const clock = (unix) => new Date(unix * 1000).toLocaleTimeString();
 
 /**
@@ -167,7 +162,7 @@ function runHealth(status, now) {
   return { tone: 'ok', text: `Last run ${ago(secs)}`, title: status.next_run_unix ? `Next run ${clock(status.next_run_unix)}` : undefined };
 }
 
-/** "● Last run 2 min ago · every 5 min · Enforced". The model has its own card. */
+/** "● Last run 2 min ago · every 5 min · Dry run". The model has its own card. */
 function StatusLine({ status, loading }) {
   if (loading) return <span className="text-xs text-fg-muted">Loading…</span>;
   if (!status) return <span className="text-xs text-fg-muted">No run recorded</span>;
@@ -178,11 +173,11 @@ function StatusLine({ status, loading }) {
         {health.tone && <Dot tone={health.tone} />}
         {health.text}
       </span>
-      {' · '}{every(status.interval_s)}
+      {' · '}{every(status.interval_s) ?? 'manual only'}
       {' · '}
       {status.dry_run
-        ? <span title="Plans only; nothing is scheduled for deletion">Dry run</span>
-        : <span className="text-state-bad" title="Candidates are handed to Maintainerr for deletion">Enforced</span>}
+        ? <span title="Nothing is sent to Maintainerr">Dry run</span>
+        : <span className="text-state-bad" title="Picked items are handed to Maintainerr for deletion">Live</span>}
     </span>
   );
 }

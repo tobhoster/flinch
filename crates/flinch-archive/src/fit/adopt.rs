@@ -1,24 +1,22 @@
 //! Fitting as the daemon runs it: once a day, on the files it already
 //! publishes, adopted only through the out-of-fold gate in
-//! [`super::shortfall`]. `flinch-fit` reports and writes through the same two
+//! [`super::shortfall`]. `flinch-fit` reports and writes through the same
 //! functions, so the fit the status page shows is the one that runs.
 
 use super::candidate::{self, ModelKind};
 use super::eval::{self, Scorecard};
 use super::load::{self, Household, LoadError};
 use super::panel::{self, Example, PanelSpec};
-use super::{
-    default_cuts, forecasts, probabilities, FittedModel, Metrics, DEFAULT_HORIZON_DAYS, DEPLOYED_PRIOR_TEMPERATURE, OPERATING_FLOOR,
-};
-use crate::score::ScoreWeights;
-use crate::taste::{GenreRates, ItemGenres};
+use super::{default_cuts, FittedModel, Metrics, HORIZON_DAYS};
+use crate::regret::HazardModel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 
 /// How often the daemon refits: outcomes arrive by the day, not by the cycle.
 pub const REFIT_SECS: u64 = 86_400;
-const WEIGHTS_FILE: &str = "weights.json";
+/// The adopted hazard; absent means the hand-set priors.
+pub const MODEL_FILE: &str = "hazard.json";
 const STATUS_FILE: &str = "fit.json";
 
 /// The last fit, as the status page shows it. Written whether or not the fit
@@ -30,18 +28,16 @@ pub struct FitStatus {
     /// The first adoption requirement the fit missed; `None` when adopted.
     pub shortfall: Option<String>,
     /// Which candidate was judged: the adopted one, or the best that fell short.
-    #[serde(default)]
     pub kind: ModelKind,
     pub fitted_on: String,
     pub metrics: Metrics,
-    /// The household's genre play-rates from every outcome closed by the fit:
-    /// what the daemon's taste signal reads until the next refit. Empty in a
-    /// `fit.json` written before it existed, which means no taste.
-    #[serde(default)]
-    pub taste: GenreRates,
+    /// The fitted parameters, adopted or not, for the report.
+    pub hazard: HazardModel,
+    /// The hand-set priors it was judged against.
+    pub priors: HazardModel,
 }
 
-/// What [`adopt`] did with `weights.json`.
+/// What [`adopt`] did with `hazard.json`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Adoption {
     Written,
@@ -60,46 +56,50 @@ pub enum RefitError {
     Encode(#[from] serde_json::Error),
 }
 
+fn as_f32(values: &[f64]) -> Vec<f32> {
+    values.iter().map(|value| *value as f32).collect()
+}
+
 /// Fit the household panel as the daemon runs it. Every candidate is judged
-/// out of fold against the deployed priors on the same rows; the best one by
-/// out-of-fold log-loss that clears its own gate is fitted on every row. When
-/// none clears, the best one is reported with what it still lacks.
-pub fn fit_model(household: &Household, dataset: &[Example], now: u64, horizon_days: f32, cut_count: usize) -> FittedModel {
+/// out of fold against the priors on the same rows; the best by out-of-fold
+/// log-loss that clears its gate is fitted on every row. When none clears, the
+/// best is reported with what it still lacks.
+pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count: usize) -> FittedModel {
     let labels: Vec<f32> = dataset.iter().map(|example| example.label).collect();
     let groups: Vec<&str> = dataset.iter().map(|example| example.item_id.as_str()).collect();
-    let priors = ScoreWeights::default();
-    let prior_forecasts = forecasts(dataset, &priors, DEPLOYED_PRIOR_TEMPERATURE);
+    let priors = HazardModel::default();
+    let prior_forecasts = as_f32(&dataset.iter().map(|example| priors.p_watch(&example.features)).collect::<Vec<_>>());
     let prior_card = Scorecard::of(&prior_forecasts, &labels);
     let prior_spread = eval::spread(&prior_forecasts, &labels, &groups);
-    let audit = Audit::of(dataset, &probabilities(dataset, &priors, DEPLOYED_PRIOR_TEMPERATURE));
-    let positives = labels.iter().filter(|label| **label >= 0.5).count();
+    let played_items: HashSet<&str> =
+        dataset.iter().filter(|example| example.label >= 0.5).map(|example| example.item_id.as_str()).collect();
 
     let mut judged: Vec<(ModelKind, f32, Metrics)> = ModelKind::ALL
         .iter()
         .map(|&kind| {
-            let rows = candidate::out_of_fold(kind, dataset);
-            let forecast: Vec<f32> = rows.iter().map(|row| row.forecast).collect();
-            let p_safe: Vec<f32> = rows.iter().map(|row| row.p_safe).collect();
-            let card = candidate::scorecard(kind, &forecast, &labels, &prior_card);
-            let stats = eval::at_threshold(&p_safe, &labels, OPERATING_FLOOR);
+            let forecast = as_f32(&candidate::out_of_fold(kind, dataset));
+            let mut card = Scorecard::of(&forecast, &labels);
+            let mut spread = eval::spread(&forecast, &labels, &groups);
+            // A recalibration is one increasing map of the priors, so it ranks
+            // every row as they do: its AUC is theirs. Pooling four per-fold
+            // scales would misstate that ranking; the folds judge probabilities.
+            if kind == ModelKind::Recalibrated {
+                card.auc = prior_card.auc;
+                spread.auc = prior_spread.auc;
+            }
             let metrics = Metrics {
                 examples: dataset.len(),
-                validation: dataset.len(),
-                positives,
+                played: card.positives,
+                played_items: played_items.len(),
                 auc: card.auc,
                 brier: card.brier,
                 ece: card.ece,
                 priors_auc: prior_card.auc,
                 priors_brier: prior_card.brier,
                 priors_ece: prior_card.ece,
-                horizon_days,
+                horizon_days: HORIZON_DAYS,
                 fitted_at_unix: now,
-                flagged_at_floor: stats.flagged,
-                precision_at_floor: stats.precision,
-                priors_flagged: audit.flagged,
-                priors_flagged_then_played: audit.flagged_then_played,
-                negative_items: audit.negative_items,
-                spread: candidate::spread(kind, eval::spread(&forecast, &labels, &groups), &prior_spread),
+                spread,
                 priors_spread: prior_spread.clone(),
             };
             (kind, card.log_loss, metrics)
@@ -108,35 +108,26 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, horizon_d
     judged.sort_by(|a, b| a.1.total_cmp(&b.1));
     let pick = judged.iter().position(|(kind, _, metrics)| super::shortfall(*kind, metrics).is_none()).unwrap_or(0);
     let (kind, _, metrics) = judged.swap_remove(pick);
-
-    let trained = candidate::fit(kind, dataset);
     let items_with_plays = household.items.iter().filter(|item| !item.plays.is_empty()).count();
     FittedModel {
         fitted_on: format!(
-            "{} library items ({items_with_plays} with plays), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {:.0} d",
+            "{} library items ({items_with_plays} with plays), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
             household.items.len(),
             household.plex_rows,
             household.tautulli_rows,
             dataset.len(),
-            horizon_days,
         ),
         kind,
-        weights: ScoreWeights::names()
-            .iter()
-            .filter(|name| !ScoreWeights::frozen().contains(name))
-            .map(|name| (name.to_string(), trained.weights.get(name)))
-            .collect(),
-        bias: trained.weights.bias,
-        temperature: trained.temperature,
+        hazard: candidate::fit(kind, dataset),
         metrics,
     }
 }
 
-/// Write `weights.json` when the fit beats the priors; remove an older one when
+/// Write `hazard.json` when the fit beats the priors; remove an older one when
 /// it does not, so a rejected fit never lingers for the daemon to load.
 pub fn adopt(state_dir: &Path, model: &FittedModel) -> Result<Adoption, RefitError> {
-    let path = state_dir.join(WEIGHTS_FILE);
-    if model.beats_priors() {
+    let path = state_dir.join(MODEL_FILE);
+    if model.shortfall().is_none() {
         crate::persist::replace(&path, serde_json::to_string_pretty(model)?.as_bytes())?;
         return Ok(Adoption::Written);
     }
@@ -155,21 +146,22 @@ pub fn read_status(state_dir: &Path) -> Option<FitStatus> {
 /// The daemon's refit: at most once per [`REFIT_SECS`], and only once it has
 /// published a library to fit on. `None` when none was due.
 pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, RefitError>> {
-    let due = read_status(state_dir).map_or(true, |last| now.saturating_sub(last.fitted_at_unix) >= REFIT_SECS);
+    let due = read_status(state_dir).is_none_or(|last| now.saturating_sub(last.fitted_at_unix) >= REFIT_SECS);
     (due && state_dir.join("items.json").exists()).then(|| refit(state_dir, now))
+}
+
+/// Build the panel `now` and fit it.
+pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel) {
+    let cuts = default_cuts();
+    let dataset = panel::build_dataset(&household.items, &PanelSpec { now, cuts_days: &cuts, horizon_days: HORIZON_DAYS });
+    let model = fit_model(household, &dataset, now, cuts.len());
+    (dataset, model)
 }
 
 fn refit(state_dir: &Path, now: u64) -> Result<FitStatus, RefitError> {
     let household = load::load_household(state_dir)?;
-    let cuts = default_cuts();
-    let spec =
-        PanelSpec { now, cuts_days: &cuts, horizon_days: DEFAULT_HORIZON_DAYS, tautulli_coverage_start: household.tautulli_coverage_start };
-    let dataset = panel::build_dataset(&household.items, &spec);
-    let model = fit_model(&household, &dataset, now, DEFAULT_HORIZON_DAYS, cuts.len());
+    let (_, model) = panel_fit(&household, now);
     let adopted = adopt(state_dir, &model)? == Adoption::Written;
-    // Every panel row's window has closed by `now`, so these are the rates a
-    // panel row cut today would read.
-    let taste = GenreRates::as_of(&dataset, &ItemGenres::of(&household.items), (DEFAULT_HORIZON_DAYS * 86_400.0) as u64, now);
     let status = FitStatus {
         fitted_at_unix: now,
         adopted,
@@ -177,26 +169,9 @@ fn refit(state_dir: &Path, now: u64) -> Result<FitStatus, RefitError> {
         kind: model.kind,
         fitted_on: model.fitted_on,
         metrics: model.metrics,
-        taste,
+        hazard: model.hazard,
+        priors: HazardModel::default(),
     };
     crate::persist::replace(&state_dir.join(STATUS_FILE), serde_json::to_string_pretty(&status)?.as_bytes())?;
     Ok(status)
-}
-
-/// Panel-wide audit of the deployed priors through the operating floor: how
-/// many rows they flag, and how many of those were played afterwards.
-struct Audit {
-    flagged: usize,
-    flagged_then_played: usize,
-    negative_items: usize,
-}
-
-impl Audit {
-    fn of(dataset: &[Example], priors: &[f32]) -> Self {
-        let flagged = priors.iter().filter(|p| **p >= OPERATING_FLOOR).count();
-        let flagged_then_played = dataset.iter().zip(priors).filter(|(example, p)| **p >= OPERATING_FLOOR && example.label < 0.5).count();
-        let negative_items: HashSet<&str> =
-            dataset.iter().filter(|example| example.label < 0.5).map(|example| example.item_id.as_str()).collect();
-        Self { flagged, flagged_then_played, negative_items: negative_items.len() }
-    }
 }

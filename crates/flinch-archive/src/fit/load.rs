@@ -7,10 +7,8 @@
 use super::plays::PlayLog;
 use super::FitItem;
 use crate::card::LibraryKind;
-use crate::ids::PlexIds;
 use crate::plex::{public_normalise, PlayJoin, PlayKeys, PlexMetadata};
-use crate::tautulli::{self, TautulliRow};
-use crate::watch::WatchSource;
+use crate::tautulli::TautulliRow;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -41,8 +39,6 @@ pub struct Household {
     pub unreadable_rows: usize,
     pub plex_rows: usize,
     pub tautulli_rows: usize,
-    /// Oldest stream Tautulli holds: its silence only counts after this.
-    pub tautulli_coverage_start: Option<u64>,
 }
 
 /// What the fitter reads out of an `items.json` row; only the fields it needs.
@@ -60,27 +56,14 @@ struct SnapshotRow {
     episodes: Option<u32>,
     #[serde(default)]
     season_label: Option<String>,
-    #[serde(default)]
-    hard_guard: Option<String>,
-    #[serde(default)]
-    watch_source: Option<String>,
-    #[serde(default)]
-    series_status: Option<String>,
-    #[serde(default)]
-    last_aired_epoch: Option<u64>,
     /// The movie's (or show's) year: the only thing the title fallback may lean on.
     #[serde(default)]
     year: Option<u32>,
-    /// Placement of a GUID-resolved item; present only for those.
-    #[serde(default)]
-    plex: Option<PlexIds>,
     /// How the daemon joined this item's plays, when it resolved in Plex: its
     /// ratingKeys and the `plex://` GUIDs that reach plays from before a
     /// library re-add, so the panel sees exactly the plays the daemon did.
     #[serde(default)]
     play_keys: Option<PlayKeys>,
-    #[serde(default)]
-    genres: Vec<String>,
     /// Presence spans from *arr history; absent in rows written before them.
     #[serde(default)]
     on_disk: Vec<crate::presence::Span>,
@@ -115,13 +98,7 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
             fit_item(snapshot, unique, &log)
         })
         .collect();
-    Ok(Household {
-        items,
-        unreadable_rows,
-        plex_rows: plex.len(),
-        tautulli_rows: streams.len(),
-        tautulli_coverage_start: tautulli::coverage(&streams).map(|coverage| coverage.start),
-    })
+    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len() })
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.
@@ -145,7 +122,6 @@ fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitIt
         None => PlayJoin::Unresolved,
     };
     Some(FitItem {
-        genres: row.genres,
         on_disk: row.on_disk,
         plays: log.item_plays(&join).into_iter().cloned().collect(),
         audience_plays: log.audience_plays(&join).into_iter().cloned().collect(),
@@ -157,11 +133,6 @@ fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitIt
         episodes_total: row.episodes,
         season_index,
         show_title,
-        watch_source: row.watch_source.as_deref().and_then(WatchSource::from_label),
-        is_newest_season: row.hard_guard.as_deref() == Some("newest-season"),
-        series_status: row.series_status,
-        last_aired_epoch: row.last_aired_epoch,
-        guid_resolved: row.plex.is_some(),
     })
 }
 

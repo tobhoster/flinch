@@ -1,330 +1,398 @@
-//! The plan: turn cards + policy into an auditable delete list, sharpness-gated.
+//! The plan: which items leave so every volume's forecast fits, at the least
+//! expected regret.
 //!
-//! The sharpness contract is explicit here, not aspirational:
-//!
-//! - An item is proposed for deletion only when the DETERMINISTIC policy says
-//!   safe AND, when the card has a score verdict, its P(safe) is at least
-//!   `policy.score_floor`. The model's answer must also reach `delete_floor`
-//!   (default 0.95), but the shipped [`Baseline`] answers 1.0 for every delete
-//!   the policy permits, so that floor never sees a probability.
-//! - Anything below a floor is kept. Reconstruction from trash is cheap;
-//!   reconstructing a season that was actually still wanted is not.
-//! - `flinch-archive` never deletes anything. It writes a candidate list; a
-//!   separate, explicit command (`apply`) moves candidates to a trash location
-//!   with a TTL. A delete path owned by a model is the one failure this crate
-//!   exists to prevent: a library emptied by a confident mistake.
-//!
-//! What the policy permits and how much the plan takes are separate questions.
-//! The policy (plus both floors) decides *eligibility*; the [`ReclaimGoal`]
-//! decides *how much* of the eligible set is taken, in eviction order — the
-//! least expected regret per byte freed first.
+//! - **Eligibility is narrow and explicit.** An item is a candidate unless it
+//!   is pinned, in its grace period, unknown to Plex, on no governed disk,
+//!   without watch evidence, or never played while never-played reclaim is off
+//!   or held. Everything else competes on regret alone.
+//! - **How much is the forecast's call.** Each volume's `B_target` (see
+//!   [`crate::capacity`]) is a covering constraint; a healthy forecast plans
+//!   nothing and the solver never runs.
+//! - **Which items is the solver's.** [`knapsack::select`] solves the 0-1
+//!   program with HiGHS, or greedily in an emergency, and never orphans part
+//!   of a show.
+//! - `flinch-archive` never deletes anything. The plan is handed to
+//!   Maintainerr only when `dry_run` is off, and Maintainerr deletes on its own
+//!   schedule.
 
-use crate::calibration::{calibration_report, Observation, Probability};
-use crate::card::ArchiveCard;
-use crate::policy::{decide, reclaims_bytes, ArchivePolicy, Reason, ScoreVerdict};
+pub mod candidates;
+pub mod knapsack;
+
+use crate::capacity::VolumeForecast;
+use crate::daemon::NeverPlayedHold;
+use crate::regret::Regret;
+use knapsack::{Method, Sequence, Unit};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// Every delete in the plan. One row per item, with the reason the policy
-/// produced. If the reason reads wrong to a human, the rule — not the model —
-/// is what to change.
+const MIB: u64 = 1 << 20;
+
+/// The planner's knobs (`settings.json` `planner`). Every field defaults
+/// individually.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlanEntry {
+#[serde(default)]
+pub struct PlannerConfig {
+    /// Write the plan, hand nothing to Maintainerr. On until the operator has
+    /// read a few plans and turns it off.
+    pub dry_run: bool,
+    /// Sizes and targets are rounded up to this many MiB for the solver.
+    pub quantum_mb: u64,
+    /// Items on disk fewer days than this are never candidates.
+    pub grace_period_days: u32,
+    /// Seerr display name → weight of that user's watchlist and requests.
+    /// Unlisted users weigh 1.0; names match case-insensitively.
+    pub user_weights: BTreeMap<String, f64>,
+}
+
+impl Default for PlannerConfig {
+    fn default() -> Self {
+        Self { dry_run: true, quantum_mb: 100, grace_period_days: 30, user_weights: BTreeMap::new() }
+    }
+}
+
+/// A [`PlannerConfig`] outside its bounds; the message names the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidPlannerConfig(pub &'static str);
+
+impl PlannerConfig {
+    pub fn validate(&self) -> Result<(), InvalidPlannerConfig> {
+        if !(1..=10_240).contains(&self.quantum_mb) {
+            return Err(InvalidPlannerConfig("the size quantum must be 1 to 10240 MiB"));
+        }
+        if self.grace_period_days > 3_650 {
+            return Err(InvalidPlannerConfig("the grace period must be at most 3650 days"));
+        }
+        if self.user_weights.values().any(|weight| !(weight.is_finite() && *weight >= 0.0)) {
+            return Err(InvalidPlannerConfig("user weights must be 0 or more"));
+        }
+        Ok(())
+    }
+
+    pub fn quantum_bytes(&self) -> u64 {
+        self.quantum_mb.saturating_mul(MIB)
+    }
+
+    /// The weight of a Seerr user; 1.0 when unlisted.
+    pub fn weight(&self, user: &str) -> f64 {
+        self.user_weights.iter().find(|(name, _)| name.eq_ignore_ascii_case(user)).map_or(1.0, |(_, weight)| *weight)
+    }
+}
+
+/// Why an item can never be selected this run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exclusion {
+    /// A favorite, or on a keep list (keep collection, keep tag, or the
+    /// operator's own Maintainerr exclusion).
+    Pinned(Pin),
+    /// On disk for fewer than the grace period's days.
+    Grace {
+        days: u32,
+    },
+    /// Plex has no id for it, so Maintainerr cannot act on it.
+    NotInPlex,
+    /// No governed mount holds its files.
+    NoGovernedDisk,
+    /// No watch source knows it: "never played" would be a guess.
+    NoWatchEvidence,
+    NeverPlayedOff,
+    NeverPlayedHeld(NeverPlayedHold),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    Favorite,
+    KeepList,
+}
+
+impl std::fmt::Display for Exclusion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pinned(Pin::Favorite) => f.write_str("Pinned: favorite"),
+            Self::Pinned(Pin::KeepList) => f.write_str("Pinned: on a keep list"),
+            Self::Grace { days } => write!(f, "In its {days}-day grace period"),
+            Self::NotInPlex => f.write_str("Not matched in Plex"),
+            Self::NoGovernedDisk => f.write_str("On no governed disk"),
+            Self::NoWatchEvidence => f.write_str("No watch evidence this run"),
+            Self::NeverPlayedOff => f.write_str("Never played; never-played reclaim is off"),
+            Self::NeverPlayedHeld(hold) => write!(f, "Never played; held {}", hold.until()),
+        }
+    }
+}
+
+/// One library item as the planner sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaCandidate {
     pub id: String,
     pub title: String,
     pub size_bytes: u64,
-    pub reason: Reason,
-    pub delete_probability: f32,
+    /// The governed volume its files live on.
+    pub volume: Option<String>,
+    pub regret: Regret,
+    /// Why losing it is cheap, for the manifest.
+    pub reason: String,
+    pub age_days: f32,
+    /// Set by the caller for every rule but the grace period, which the
+    /// planner applies from [`PlannerConfig::grace_period_days`].
+    pub exclusion: Option<Exclusion>,
+    /// Its place in its show; `None` for a movie.
+    pub sequence: Option<Sequence>,
+    /// Already handed to Maintainerr: preferred, so its window keeps running.
+    pub handed: bool,
+    /// Nobody finished it: it goes to Leaving Soon, not straight to deletion.
+    pub announce: bool,
+    /// Maintainerr must never take it, whatever its own rules say: pinned, or
+    /// someone is partway through.
+    pub protect: bool,
+    /// What to do with its quality, from the same regret (see [`crate::quality`]).
+    pub quality: crate::quality::QualityAdvice,
+    /// How safe evicting it is, 0..1, never above `1 − P(watch)`.
+    pub eviction_safety: f64,
 }
 
-/// How much of the eligible set a plan takes. A plan-time input, not a policy
-/// rule: the policy says what MAY go; the goal says how much SHOULD.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReclaimGoal {
-    /// Every eligible item — the CLI's "delete everything safe".
-    AllSafe,
-    /// Eligible items in eviction order until this many bytes are covered.
-    /// `Bytes(0)` plans nothing: there is no "zero means everything" sentinel.
-    Bytes(u64),
-    /// Per-volume goals: an item is taken only while *its* volume still needs
-    /// space. Freeing a different disk relieves nothing, so an item on a volume
-    /// with no goal — or on no known volume — is kept.
-    PerVolume(VolumeGoals),
+/// One selected item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub id: String,
+    pub title: String,
+    pub size_bytes: u64,
+    pub regret: f64,
+    pub reason: String,
+    pub volume: String,
+    #[serde(skip)]
+    pub announce: bool,
+    /// The selected item that must leave first (an unplayed later season, a
+    /// played earlier one). Precedes this one in [`EvictionPlan::items`].
+    #[serde(skip)]
+    pub after: Option<String>,
 }
 
-/// Byte goals per library volume, and which volume each card lives on.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct VolumeGoals {
-    /// Volume path → bytes it must free. Volumes absent here need nothing.
-    pub goals: BTreeMap<String, u64>,
-    /// Card id → the library volume its files live on.
-    pub volume_of: HashMap<String, String>,
-    /// Cards already handed to Maintainerr. While the policy still permits
-    /// them they are taken first: re-planning a goal onto other items would
-    /// take them back and restart every Leaving Soon window, delaying the
-    /// space by a whole window each time.
-    pub handed: HashSet<String>,
-}
-
-impl VolumeGoals {
-    fn goal(&self, volume: &str) -> u64 {
-        self.goals.get(volume).copied().unwrap_or(0)
-    }
-}
-
-impl ReclaimGoal {
-    fn volume_of(&self, id: &str) -> Option<&str> {
-        match self {
-            ReclaimGoal::PerVolume(goals) => goals.volume_of.get(id).map(String::as_str),
-            ReclaimGoal::AllSafe | ReclaimGoal::Bytes(_) => None,
-        }
-    }
-
-    fn handed(&self, id: &str) -> bool {
-        match self {
-            ReclaimGoal::PerVolume(goals) => goals.handed.contains(id),
-            ReclaimGoal::AllSafe | ReclaimGoal::Bytes(_) => false,
-        }
-    }
-}
-
-/// Accounting for one volume under [`ReclaimGoal::PerVolume`].
+/// One volume's target against what the plan takes there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VolumeOutcome {
     pub volume: String,
-    pub goal_bytes: u64,
-    pub reclaimed_bytes: u64,
-    /// Everything eligible on this volume: the reserve eviction can draw on.
+    pub target_bytes: u64,
+    pub planned_bytes: u64,
+    /// Everything selectable on this volume: what a larger target could draw on.
     pub eligible_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Plan {
-    pub entries: Vec<PlanEntry>,
-    pub reclaimed_bytes: u64,
-    /// Total bytes the goal asked for; `None` when the goal was "everything safe".
-    #[serde(default)]
-    pub goal_bytes: Option<u64>,
-    /// Every goal covered. Vacuously true for "everything safe".
-    pub goal_met: bool,
-    /// Everything the goal could ever take — policy- and floor-eligible, and on
-    /// a known volume when goals are per volume — before the goal truncates it.
-    #[serde(default)]
-    pub eligible_bytes: u64,
-    /// Per-volume accounting; empty unless the goal is per volume.
-    #[serde(default)]
+/// Why a candidate stays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kept {
+    Excluded(Exclusion),
+    /// Its volume's forecast fits: nothing there needs to go.
+    Healthy,
+    /// Selectable, but the target was covered more cheaply.
+    NotNeeded,
+}
+
+impl std::fmt::Display for Kept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Excluded(exclusion) => exclusion.fmt(f),
+            Self::Healthy => f.write_str("Not needed: storage is healthy"),
+            Self::NotNeeded => f.write_str("Not needed this run"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvictionPlan {
+    /// How the items were chosen; `None` when every forecast was healthy and
+    /// the solver never ran.
+    pub method: Option<Method>,
+    pub solver_error: Option<String>,
+    /// Selected items in the order they should leave: prerequisites first,
+    /// then most bytes per regret.
+    pub items: Vec<PlanItem>,
     pub volumes: Vec<VolumeOutcome>,
-    /// How sharp the *decision set* is, measured on any provided labels:
-    /// Brier/ECE/sharpness of the delete probabilities vs the deterministic
-    /// labels. Reported even with no labels (then `None`).
-    pub quality: Option<QualityReport>,
+    pub target_bytes: u64,
+    pub total_reclaimed_bytes: u64,
+    pub total_regret: f64,
+    /// Candidates the solver could select.
+    pub candidates_count: usize,
+    pub eligible_bytes: u64,
+    /// Why every candidate not selected stays.
+    pub kept: HashMap<String, Kept>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct QualityReport {
-    pub items: usize,
-    pub brier: f32,
-    pub ece: f32,
-    pub sharpness: f32,
-}
-
-/// The interface the sharp head slots into. `Baseline` is the shipped,
-/// complete implementation, and the only one: the daily fit's trained model
-/// reaches the plan as each card's [`ScoreVerdict`] P(safe), gated by
-/// `policy.score_floor`, not through this trait. It is a real boundary, not a
-/// stub: the plan honours it even when every bias is a baseline rule.
-pub trait ArchiveModel {
-    /// `reason` is the policy's decision for this card *with* its score verdict.
-    /// A model must judge that decision, not re-derive one without the verdict:
-    /// the first version did, and armed never-played reclaim could never plan
-    /// a deletion while its preview promised several.
-    fn delete_probability(&self, card: &ArchiveCard, reason: &Reason) -> Probability;
-}
-
-/// Deterministic baseline as a "model": 1.0 when the policy says delete, 0.0
-/// otherwise. Perfectly sharp and perfectly unimpressive — its Brier is what
-/// any real head must beat (the archive analog of extrapolation baseline 4).
-pub struct Baseline {
-    pub policy: ArchivePolicy,
-}
-
-impl Baseline {
-    pub fn new(policy: ArchivePolicy) -> Self {
-        Self { policy }
+impl EvictionPlan {
+    /// Every volume's target is covered.
+    pub fn covered(&self) -> bool {
+        self.volumes.iter().all(|volume| volume.planned_bytes >= volume.target_bytes)
     }
 
-    pub fn with_defaults() -> Self {
-        Self::new(ArchivePolicy::default())
-    }
-}
-
-impl ArchiveModel for Baseline {
-    fn delete_probability(&self, _card: &ArchiveCard, reason: &Reason) -> Probability {
-        Probability::new(if reclaims_bytes(reason) > 0 { 1.0 } else { 0.0 }).unwrap_or(Probability::ZERO)
-    }
-}
-
-/// One eligible item, with what the eviction order needs to rank it.
-struct Candidate<'a> {
-    card: &'a ArchiveCard,
-    reason: &'a Reason,
-    probability: f32,
-    bytes: u64,
-    volume: Option<&'a str>,
-    /// Already handed to Maintainerr (see [`VolumeGoals::handed`]).
-    handed: bool,
-    regret: f64,
-}
-
-/// Expected regret of evicting an item, per byte it frees: the chance someone
-/// still wanted it, spread over what deleting it buys. Minimising the sum of
-/// this over a byte goal is what "least harm per GiB" means; ranking by P(safe)
-/// alone would evict fifty tiny near-certain items before one large one that
-/// is nearly as safe.
-fn regret_per_byte(p_safe: f32, bytes: u64) -> f64 {
-    f64::from(1.0 - p_safe.clamp(0.0, 1.0)) / bytes.max(1) as f64
-}
-
-/// Items already handed over first; then least regret per byte; at equal
-/// regret the larger item (fewer delete operations); then the id, so the order
-/// is total and reproducible. A non-finite regret (a NaN score) sorts last.
-fn eviction_order(a: &Candidate, b: &Candidate) -> Ordering {
-    b.handed.cmp(&a.handed).then(a.regret.total_cmp(&b.regret)).then(b.bytes.cmp(&a.bytes)).then_with(|| a.card.id.cmp(&b.card.id))
-}
-
-/// Build the delete plan.
-///
-/// 1. Deterministic policy decides each card (protections first).
-/// 2. Eligibility: the policy permits a delete, the model clears
-///    `delete_floor` (the sharpness gate: a confident model never overrides a
-///    "keep", a shy one never overrules a "delete"), and — when the card has a
-///    score verdict — its P(safe) clears `policy.score_floor`.
-/// 3. Eligible items are ranked by [`eviction_order`], using the score
-///    verdict's P(safe) when present and the model's probability otherwise (so a
-///    baseline 1.0 ranks by size alone).
-/// 4. The goal takes that order until it is covered.
-pub fn build_plan(
-    cards: &[ArchiveCard],
-    model: &dyn ArchiveModel,
-    policy: &ArchivePolicy,
-    delete_floor: f32,
-    verdicts: &HashMap<String, ScoreVerdict>,
-    goal: &ReclaimGoal,
-) -> Plan {
-    let decided: Vec<(&ArchiveCard, Reason, f32)> = cards
-        .iter()
-        .map(|card| {
-            let reason = decide(card, policy, verdicts.get(&card.id).copied());
-            let probability = model.delete_probability(card, &reason);
-            (card, reason, probability.get())
-        })
-        .collect();
-
-    let mut eligible: Vec<Candidate> = decided
-        .iter()
-        .filter_map(|(card, reason, probability)| {
-            let bytes = reclaims_bytes(reason);
-            let verdict = verdicts.get(&card.id);
-            let permitted = bytes > 0 && *probability >= delete_floor && verdict.map_or(true, |v| v.p_safe >= policy.score_floor);
-            permitted.then(|| Candidate {
-                card,
-                reason,
-                probability: *probability,
-                bytes,
-                volume: goal.volume_of(&card.id),
-                handed: goal.handed(&card.id),
-                regret: regret_per_byte(verdict.map_or(*probability, |v| v.p_safe), bytes),
-            })
-        })
-        .collect();
-    eligible.sort_by(eviction_order);
-
-    let mut entries = Vec::new();
-    let mut reclaimed = 0u64;
-    let mut reclaimed_on: BTreeMap<&str, u64> = BTreeMap::new();
-    for candidate in &eligible {
-        let take = match goal {
-            ReclaimGoal::AllSafe => true,
-            ReclaimGoal::Bytes(target) => reclaimed < *target,
-            ReclaimGoal::PerVolume(goals) => {
-                candidate.volume.is_some_and(|volume| reclaimed_on.get(volume).copied().unwrap_or(0) < goals.goal(volume))
+    /// What may be handed over this run: items past their grace streak
+    /// (`eligible`), in plan order, each only once the item it must follow is
+    /// handed over too (earlier, or earlier in this list).
+    pub fn releasable(&self, eligible: &[String], handed: &HashSet<String>) -> Vec<String> {
+        let eligible: HashSet<&str> = eligible.iter().map(String::as_str).collect();
+        let mut released: HashSet<&str> = HashSet::new();
+        let mut out = Vec::new();
+        for item in self.items.iter().filter(|item| eligible.contains(item.id.as_str())) {
+            let ready = item.after.as_deref().is_none_or(|after| released.contains(after) || handed.contains(after));
+            if ready {
+                released.insert(item.id.as_str());
+                out.push(item.id.clone());
             }
-        };
-        if !take {
-            continue;
         }
-        reclaimed = reclaimed.saturating_add(candidate.bytes);
-        if let Some(volume) = candidate.volume {
-            let on_volume = reclaimed_on.entry(volume).or_insert(0);
-            *on_volume = on_volume.saturating_add(candidate.bytes);
-        }
-        entries.push(PlanEntry {
-            id: candidate.card.id.clone(),
-            title: candidate.card.title.clone(),
-            size_bytes: candidate.bytes,
-            reason: candidate.reason.clone(),
-            delete_probability: candidate.probability,
-        });
+        out
     }
+}
 
-    let (goal_bytes, goal_met, eligible_bytes, volumes) = match goal {
-        ReclaimGoal::AllSafe => (None, true, total_bytes(eligible.iter()), Vec::new()),
-        ReclaimGoal::Bytes(target) => (Some(*target), reclaimed >= *target, total_bytes(eligible.iter()), Vec::new()),
-        ReclaimGoal::PerVolume(goals) => {
-            let volumes = volume_outcomes(goals, &eligible, &reclaimed_on);
-            let met = volumes.iter().all(|v| v.reclaimed_bytes >= v.goal_bytes);
-            let sum = goals.goals.values().fold(0u64, |acc, bytes| acc.saturating_add(*bytes));
-            let on_known = total_bytes(eligible.iter().filter(|c| c.volume.is_some()));
-            (Some(sum), met, on_known, volumes)
+/// `state/eviction-plan.json`: the plan as written every run, dry or not.
+#[derive(Debug, Serialize)]
+pub struct Manifest<'a> {
+    pub timestamp: String,
+    pub dry_run: bool,
+    pub forecast: &'a [VolumeForecast],
+    pub reclaim_target_bytes: u64,
+    pub total_reclaimed_bytes: u64,
+    pub total_regret: f64,
+    pub candidates_count: usize,
+    pub method: Option<Method>,
+    pub solver_error: Option<&'a str>,
+    pub items: &'a [PlanItem],
+}
+
+impl<'a> Manifest<'a> {
+    pub fn new(plan: &'a EvictionPlan, forecasts: &'a [VolumeForecast], dry_run: bool, now: u64) -> Self {
+        Self {
+            timestamp: crate::presence::format_utc(now),
+            dry_run,
+            forecast: forecasts,
+            reclaim_target_bytes: plan.target_bytes,
+            total_reclaimed_bytes: plan.total_reclaimed_bytes,
+            total_regret: plan.total_regret,
+            candidates_count: plan.candidates_count,
+            method: plan.method,
+            solver_error: plan.solver_error.as_deref(),
+            items: &plan.items,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum PlanError {
+    #[error(transparent)]
+    Config(#[from] InvalidPlannerConfig),
+    #[error("candidate {id} has a regret that is not a finite number of 0 or more")]
+    InvalidRegret { id: String },
+}
+
+/// Plan one run.
+///
+/// Each forecast's `target_reclaim_bytes` is a covering constraint on its
+/// volume. All zero: a healthy plan with no method and no items. Any forecast
+/// in an emergency: the greedy pass instead of HiGHS.
+pub fn generate_eviction_plan(
+    candidates: &[MediaCandidate],
+    forecasts: &[VolumeForecast],
+    config: &PlannerConfig,
+) -> Result<EvictionPlan, PlanError> {
+    config.validate()?;
+    if let Some(bad) = candidates.iter().find(|c| !(c.regret.value.is_finite() && c.regret.value >= 0.0)) {
+        return Err(PlanError::InvalidRegret { id: bad.id.clone() });
+    }
+    let exclusion = |candidate: &MediaCandidate| {
+        candidate.exclusion.or_else(|| candidate.volume.is_none().then_some(Exclusion::NoGovernedDisk)).or_else(|| {
+            (candidate.age_days < config.grace_period_days as f32).then_some(Exclusion::Grace { days: config.grace_period_days })
+        })
     };
-
-    Plan { entries, reclaimed_bytes: reclaimed, goal_bytes, goal_met, eligible_bytes, volumes, quality: quality_of(&decided) }
-}
-
-fn total_bytes<'a>(candidates: impl Iterator<Item = &'a Candidate<'a>>) -> u64 {
-    candidates.fold(0u64, |acc, candidate| acc.saturating_add(candidate.bytes))
-}
-
-/// One row per volume that has a goal or holds an eligible item, so an idle
-/// run still reports each volume's reserve.
-fn volume_outcomes(goals: &VolumeGoals, eligible: &[Candidate], reclaimed_on: &BTreeMap<&str, u64>) -> Vec<VolumeOutcome> {
-    let mut rows: BTreeMap<&str, VolumeOutcome> = BTreeMap::new();
-    let row = |volume: &str| -> VolumeOutcome {
-        VolumeOutcome {
-            volume: volume.to_string(),
-            goal_bytes: goals.goal(volume),
-            reclaimed_bytes: reclaimed_on.get(volume).copied().unwrap_or(0),
-            eligible_bytes: 0,
-        }
-    };
-    for volume in goals.goals.keys() {
-        rows.insert(volume.as_str(), row(volume));
-    }
-    for candidate in eligible {
-        if let Some(volume) = candidate.volume {
-            let entry = rows.entry(volume).or_insert_with(|| row(volume));
-            entry.eligible_bytes = entry.eligible_bytes.saturating_add(candidate.bytes);
-        }
-    }
-    rows.into_values().collect()
-}
-
-fn quality_of(decided: &[(&ArchiveCard, Reason, f32)]) -> Option<QualityReport> {
-    let observations: Vec<Observation> = decided
+    let units: Vec<Unit> = candidates
         .iter()
-        .map(|(_, reason, probability)| {
-            let label = crate::policy::is_safe_label(reason);
-            Observation { predicted: *probability, outcome: label }
+        .map(|candidate| Unit {
+            size_bytes: candidate.size_bytes,
+            regret: candidate.regret.value,
+            volume: candidate.volume.clone().unwrap_or_default(),
+            sequence: candidate.sequence.clone(),
+            selectable: exclusion(candidate).is_none(),
+            handed: candidate.handed,
         })
         .collect();
-    calibration_report(&observations, 10).map(|report| QualityReport {
-        items: observations.len(),
-        brier: report.brier,
-        ece: report.ece,
-        sharpness: report.sharpness,
+    let targets: BTreeMap<String, u64> = forecasts.iter().map(|f| (f.volume.clone(), f.forecast.target_reclaim_bytes)).collect();
+    let healthy = targets.values().all(|bytes| *bytes == 0);
+    let (method, solver_error, chosen) = if healthy {
+        (None, None, Vec::new())
+    } else {
+        let emergency = forecasts.iter().any(|f| f.forecast.is_emergency);
+        let selection = knapsack::select(&units, &targets, config.quantum_bytes(), emergency);
+        (Some(selection.method), selection.solver_error, selection.chosen)
+    };
+
+    let items: Vec<PlanItem> = knapsack::release_order(&units, &chosen)
+        .into_iter()
+        .map(|(index, after)| {
+            let candidate = &candidates[index];
+            PlanItem {
+                id: candidate.id.clone(),
+                title: candidate.title.clone(),
+                size_bytes: candidate.size_bytes,
+                regret: candidate.regret.value,
+                reason: candidate.reason.clone(),
+                volume: units[index].volume.clone(),
+                announce: candidate.announce,
+                after: after.map(|prerequisite| candidates[prerequisite].id.clone()),
+            }
+        })
+        .collect();
+
+    let mut volumes: BTreeMap<&str, VolumeOutcome> = targets
+        .iter()
+        .map(|(volume, target)| {
+            (volume.as_str(), VolumeOutcome { volume: volume.clone(), target_bytes: *target, planned_bytes: 0, eligible_bytes: 0 })
+        })
+        .collect();
+    for unit in units.iter().filter(|unit| unit.selectable) {
+        if let Some(outcome) = volumes.get_mut(unit.volume.as_str()) {
+            outcome.eligible_bytes = outcome.eligible_bytes.saturating_add(unit.size_bytes);
+        }
+    }
+    for item in &items {
+        if let Some(outcome) = volumes.get_mut(item.volume.as_str()) {
+            outcome.planned_bytes = outcome.planned_bytes.saturating_add(item.size_bytes);
+        }
+    }
+    let volumes: Vec<VolumeOutcome> = volumes.into_values().collect();
+
+    let selected: std::collections::HashSet<&str> = items.iter().map(|item| item.id.as_str()).collect();
+    let kept = candidates
+        .iter()
+        .filter(|candidate| !selected.contains(candidate.id.as_str()))
+        .map(|candidate| {
+            let target = candidate.volume.as_deref().and_then(|volume| targets.get(volume)).copied().unwrap_or(0);
+            let why = match exclusion(candidate) {
+                Some(exclusion) => Kept::Excluded(exclusion),
+                None if target == 0 => Kept::Healthy,
+                None => Kept::NotNeeded,
+            };
+            (candidate.id.clone(), why)
+        })
+        .collect();
+
+    let sum = |values: &mut dyn Iterator<Item = u64>| values.fold(0u64, u64::saturating_add);
+    Ok(EvictionPlan {
+        method,
+        solver_error,
+        target_bytes: sum(&mut volumes.iter().map(|v| v.target_bytes)),
+        total_reclaimed_bytes: sum(&mut items.iter().map(|item| item.size_bytes)),
+        total_regret: items.iter().fold(0.0, |total, item| total + item.regret),
+        candidates_count: units.iter().filter(|unit| unit.selectable).count(),
+        eligible_bytes: sum(&mut volumes.iter().map(|v| v.eligible_bytes)),
+        items,
+        volumes,
+        kept,
     })
+}
+
+/// Items and bytes that never-played reclaim would add if it were on: the
+/// candidates excluded by that switch alone.
+pub fn never_played_preview(candidates: &[MediaCandidate]) -> (usize, u64) {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.exclusion == Some(Exclusion::NeverPlayedOff))
+        .fold((0, 0), |(count, bytes), candidate| (count + 1, bytes + candidate.size_bytes))
 }
 
 #[cfg(test)]

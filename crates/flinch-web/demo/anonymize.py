@@ -5,7 +5,7 @@ Usage: python3 crates/flinch-web/demo/anonymize.py <state-dir>
 
 Reads status.json, items.json and history.json from <state-dir> and writes
 anonymized copies next to this script. Renaming titles is not enough: an exact
-file size names the exact release, and years, genres, episode counts, air
+file size names the exact release, and years, episode counts, air
 dates and watch recency together name the title and the household's viewing.
 So every such figure gets random noise:
 
@@ -16,12 +16,14 @@ So every such figure gets random noise:
   item sizes (library, eligible, untracked, held bytes) is recomputed, disk
   totals are rounded to 1 GiB, and other byte totals get the same noise;
 - years: shifted by -3..+3, never past the snapshot's year nor past the last
-  air date; genre lists are shuffled among movies, and among shows;
+  air date;
 - per-item timestamps and day counts: moved by up to 30% of their age, one
   factor per movie or show, so spans keep their order, the past stays past,
   and no value crosses the 30 and 90 day lines the daemon's reasons rely on;
 - episode and file counts: +-30%; watched episodes stay within the total;
-- errors, sync problems, unmatched roots and the benchmark endpoint: generic.
+- errors, sync problems and unmatched roots: generic;
+- quality advice: the reclaim estimate, regret per GiB and the GiB the
+  explanation quotes are recomputed from the noisy size.
 
 Randomness comes from the OS (random.SystemRandom), never from a seed: a
 known seed would let anyone replay the noise and recover the real figures.
@@ -85,17 +87,15 @@ ANY_ID = re.compile(r"\b(?:radarr|sonarr)-\d+(?:-s\d+)?\b")
 SEASON_ID = re.compile(r"^(sonarr-\d+)-s\d+$")
 YEAR_SUFFIX = re.compile(r"\s*\(\d{4}\)$")
 SEASON_SUFFIX = re.compile(r"\s+s\d+$")
-FREES = re.compile(r"^frees [\d.]+ GiB$")
-ON_DISK = re.compile(r"^on disk \d+ d$")
-PLAYED = re.compile(r"^played \d+ d ago$")
+# The share of a file a compact release frees (`quality::DOWNGRADE_SHARE`).
+DOWNGRADE_SHARE = 0.80
+ABOUT_GIB = re.compile(r"about \d+ GiB")
 IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 HOSTNAME = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b", re.IGNORECASE)
 URL_HOST = re.compile(r"://([^/:\s]+)")
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 
 ITEM_TIMES = ("handed_at", "leaves_at")
-BENCHMARK_ENDPOINT = "http://127.0.0.1:8000"
-BENCHMARK_MODEL = "example-taste-model"
 GENERIC_ERROR = "Sonarr did not answer: connection refused"
 GENERIC_PROBLEM = "Tautulli did not answer: plays since the last run may be missing"
 
@@ -326,20 +326,6 @@ class Clock:
         return None if moved is None else moved - moved % DAY
 
 
-def shuffled_genres(items):
-    """Genre lists dealt out again among movies, and among shows."""
-    by_kind = {}
-    for item in items:
-        if item.get("genres") is not None:
-            by_kind.setdefault(item["kind"], {}).setdefault(title_key(item), item["genres"])
-    dealt = {}
-    for lists in by_kind.values():
-        keys, values = list(lists), list(lists.values())
-        RNG.shuffle(values)
-        dealt.update(zip(keys, values))
-    return dealt
-
-
 def shifted_year(year, latest):
     if year is None:
         return None
@@ -365,17 +351,19 @@ def noisy_episodes(item):
     return total, float(f"{watched / total:.8g}")
 
 
-def reworded(reasons, size, age_days, watched_days):
-    """The daemon's reason chips quote size and days: quote the new ones."""
-    out = []
-    for reason in reasons or []:
-        if FREES.match(reason) and size:
-            reason = f"frees {size / GIB:.1f} GiB"
-        elif ON_DISK.match(reason) and age_days is not None:
-            reason = f"on disk {age_days:.0f} d"
-        elif PLAYED.match(reason) and watched_days is not None:
-            reason = f"played {watched_days:.0f} d ago"
-        out.append(reason)
+def readvised(advice, size, regret):
+    """Quality advice quotes the item's size: requote it from the noisy one."""
+    if not advice:
+        return advice
+    out = json.loads(json.dumps(advice))
+    gib = size / GIB
+    if regret is not None:
+        out["marginal_regret_per_gb"] = float(f"{regret / gib if gib > 0 else regret:.6g}")
+    action = out["action"]
+    if action.get("type") == "downgrade_quality":
+        freed = int(size * DOWNGRADE_SHARE)
+        action["estimated_reclaim_bytes"] = freed
+        out["explanation"] = ABOUT_GIB.sub(f"about {freed / GIB:.0f} GiB", out["explanation"])
     return out
 
 
@@ -385,7 +373,6 @@ class Anonymizer:
         self.new_id = id_renumbering(input_ids(items, status))
         self.rating_keys = rating_key_renumbering(items)
         self.clock = Clock(status["ran_at_unix"], time_factors(items, status))
-        self.genres = shuffled_genres(items)
         self.latest_year = utc_year(status["ran_at_unix"])
         self.years = {}
         self.blurred = {}
@@ -421,8 +408,6 @@ class Anonymizer:
         # One factor per show, so its seasons keep one air date.
         out["last_aired_epoch"] = self.clock.date(key, item.get("last_aired_epoch"))
         out["year"] = self.show_year(key, item.get("year"), out["last_aired_epoch"])
-        if "genres" in item and item["genres"] is not None:
-            out["genres"] = self.genres[key]
         out["age_days"] = self.clock.age(key, item.get("age_days"))
         out["last_watched_days"] = self.clock.age(key, item.get("last_watched_days"))
         for field in ITEM_TIMES:
@@ -430,7 +415,7 @@ class Anonymizer:
         if item.get("on_disk") is not None:
             out["on_disk"] = [{field: self.clock.time(key, unix) for field, unix in span.items()} for span in item["on_disk"]]
         out["episodes"], out["watched_fraction"] = noisy_episodes(item)
-        out["reasons"] = reworded(item.get("reasons"), out["size_bytes"], out["age_days"], out["last_watched_days"])
+        out["advice"] = readvised(item.get("advice"), out["size_bytes"], item.get("regret"))
         if item.get("plex"):
             plex = dict(item["plex"])
             for field in ("rating_key", "season_rating_key"):
@@ -477,18 +462,26 @@ def ratio(part, whole):
     return float(f"{part / whole:.7g}") if whole else 0.0
 
 
+ELIGIBLE_REASON = "Not needed"
+
+
 def eligible_ids(items, volume, expected):
-    """Items counted in a volume's eligible reserve: delete candidates and
-    items eligible but held. Checked against the daemon's own total, so a
+    """Items counted in a volume's eligible bytes: the plan's picks and items
+    selectable but not needed. Checked against the daemon's own total, so a
     change in its accounting stops the script instead of skewing the demo."""
     ids = [
         item["id"] for item in items
-        if item.get("volume") == volume and (item.get("decision") == "delete" or item.get("reason", "").startswith("Eligible \u2014"))
+        if item.get("volume") == volume and (item.get("decision") == "delete" or item.get("reason", "").startswith(ELIGIBLE_REASON))
     ]
     got = sum(item["size_bytes"] for item in items if item["id"] in ids)
     if got != expected:
         fail(f"eligible items on {volume} add up to {got} bytes, the status says {expected}: update eligible_ids")
     return ids
+
+
+def planned_bytes(anon, path):
+    """The plan's picks on a volume, at their new sizes."""
+    return sum(out["size_bytes"] for item, out in anon.by_id.values() if item.get("volume") == path and item.get("decision") == "delete")
 
 
 def rebuild_volume(volume, anon, items, old_total):
@@ -500,15 +493,19 @@ def rebuild_volume(volume, anon, items, old_total):
     if library > used:
         fail(f"noisy library on {path} ({library} bytes) exceeds the disk's used bytes: run again")
     old_total[path] = volume["total_bytes"]
+    # The forecast keeps its shape: projection = used + the old growth on top.
+    growth = volume.get("projected_used_bytes", volume["used_bytes"]) - volume["used_bytes"]
     return {
         **volume,
         "total_bytes": total,
         "used_bytes": used,
         "utilization": ratio(used, total),
-        "deficit_bytes": round_gib(volume.get("deficit_bytes", 0)),
-        "release_gap_bytes": round_gib(volume.get("release_gap_bytes", 0)),
-        "goal_bytes": round_gib(volume.get("goal_bytes", 0)),
-        "reclaimed_bytes": anon.blur(volume.get("reclaimed_bytes", 0)),
+        "capacity_bytes": round_gib(volume.get("capacity_bytes", volume["total_bytes"])),
+        "daily_ingest_bytes": anon.blur(volume.get("daily_ingest_bytes", 0)),
+        "queue_bytes": anon.blur(volume.get("queue_bytes", 0)),
+        "projected_used_bytes": used + round_gib(growth),
+        "target_reclaim_bytes": round_gib(volume.get("target_reclaim_bytes", 0)),
+        "planned_bytes": planned_bytes(anon, path),
         "eligible_bytes": eligible,
         "pending_bytes": anon.blur(volume.get("pending_bytes", 0)),
         "handed_bytes": anon.blur(volume.get("handed_bytes", 0)),
@@ -528,29 +525,23 @@ def rebuild_capacity(capacity, anon, items):
     old_total = {}
     volumes = [rebuild_volume(volume, anon, items, old_total) for volume in capacity.get("volumes") or []]
     total, used = round_gib(capacity["total_bytes"]), round_gib(capacity["used_bytes"])
-    out = {
+    summed = lambda field: sum(volume[field] for volume in volumes)
+    return {
         **capacity,
         "total_bytes": total,
         "used_bytes": used,
-        "ceiling_bytes": round(total * capacity["ceiling"]),
-        "release_bytes": round(total * capacity["release"]),
-        "deficit_bytes": round_gib(capacity.get("deficit_bytes", 0)),
-        "release_gap_bytes": round_gib(capacity.get("release_gap_bytes", 0)),
         "utilization": ratio(used, total),
-        "goal_bytes": round_gib(capacity.get("goal_bytes", 0)),
+        "headroom_bytes": round_gib(capacity.get("headroom_bytes", 0)),
+        "target_reclaim_bytes": summed("target_reclaim_bytes") if volumes else round_gib(capacity.get("target_reclaim_bytes", 0)),
+        "planned_bytes": summed("planned_bytes") if volumes else anon.blur(capacity.get("planned_bytes", 0)),
+        "eligible_bytes": summed("eligible_bytes") if volumes else anon.blur(capacity.get("eligible_bytes", 0)),
         "volumes": volumes,
         "unmatched_roots": generic_roots(capacity.get("unmatched_roots")),
         "pending_bytes": anon.blur(capacity.get("pending_bytes", 0)),
         "handed_bytes": anon.blur(capacity.get("handed_bytes", 0)),
-        "held_bytes": sum(volume["held_bytes"] for volume in volumes) if volumes else anon.blur(capacity.get("held_bytes", 0)),
-        "untracked_bytes": sum(volume["untracked_bytes"] for volume in volumes) if volumes else round_gib(capacity.get("untracked_bytes", 0)),
+        "held_bytes": summed("held_bytes") if volumes else anon.blur(capacity.get("held_bytes", 0)),
+        "untracked_bytes": summed("untracked_bytes") if volumes else round_gib(capacity.get("untracked_bytes", 0)),
     }
-    if isinstance(capacity.get("covered"), int):
-        out["covered"] = round_gib(capacity["covered"])
-    for volume in volumes:
-        if isinstance(volume.get("covered"), int):
-            volume["covered"] = round_gib(volume["covered"])
-    return out
 
 
 def utilization_map(capacity):
@@ -568,8 +559,7 @@ def anonymize_status(status, anon, items):
     out["outside_deletions"] = deletions
     if out.get("capacity"):
         out["capacity"] = rebuild_capacity(out["capacity"], anon, items)
-        eligible = sum(volume["eligible_bytes"] for volume in out["capacity"]["volumes"])
-        out["eligible_bytes"] = eligible if out["capacity"]["volumes"] else anon.blur(out.get("eligible_bytes", 0))
+        out["eligible_bytes"] = out["capacity"]["eligible_bytes"]
     else:
         out["eligible_bytes"] = anon.blur(out.get("eligible_bytes", 0))
     out["reclaimed_bytes"] = anon.blur(out.get("reclaimed_bytes", 0))
@@ -587,10 +577,6 @@ def anonymize_status(status, anon, items):
         for field in ("scheduled_bytes", "announced_bytes"):
             if field in sync:
                 sync[field] = anon.blur(sync[field])
-    benchmark = out.get("benchmark")
-    if benchmark:
-        benchmark["endpoint"] = BENCHMARK_ENDPOINT
-        benchmark["model"] = BENCHMARK_MODEL
     return out
 
 

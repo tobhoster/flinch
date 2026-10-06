@@ -24,6 +24,7 @@ fn desired(protect: &[SyncItem], evict: &[SyncItem]) -> Desired {
         announced: Default::default(),
         collections: titles(),
         gone: Default::default(),
+        unresolved: Default::default(),
         seerr_configured: false,
     }
 }
