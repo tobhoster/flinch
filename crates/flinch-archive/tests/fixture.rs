@@ -1,30 +1,48 @@
-//! End-to-end fixture: the plan the shipped CLI produces for the checked-in
-//! `fixtures/arr/cards.json` card set.
-//!
-//! Hand-audited expectations (retention 90, dedupe movies, keep newest season):
-//! delete s01 (estate 1.8G), s05 (1.6G), s06 (2.3G), m01 (4.2G), m03 dup (6.2G);
-//! keep the other seven. If this test fails, the plan and the documented policy
-//! disagree — one of them is wrong.
+//! End to end over the checked-in `fixtures/arr/cards.json`: the engine the
+//! offline CLI and the daemon share, from cards to a plan.
 
+use flinch_archive::capacity::{CapacityConfig, SlidingWindowCapacityForecaster, VolumeForecast, VolumeLoad};
 use flinch_archive::card::ArchiveCard;
-use flinch_archive::plan::{build_plan, Baseline, ReclaimGoal};
-use flinch_archive::ArchivePolicy;
+use flinch_archive::plan::{candidates, generate_eviction_plan, EvictionPlan, Exclusion, PlannerConfig};
 
 const CARDS: &str = include_str!("../../../fixtures/arr/cards.json");
+const GIB: u64 = 1 << 30;
+const NOW: u64 = 2_000_000_000;
+
+fn plan_for(used_gib: u64, never_played: bool) -> (Vec<ArchiveCard>, EvictionPlan) {
+    let cards: Vec<ArchiveCard> = serde_json::from_str(CARDS).expect("fixture parses");
+    let forecaster = SlidingWindowCapacityForecaster::new(CapacityConfig { headroom_buffer_bytes: 0, ..CapacityConfig::default() })
+        .expect("default config");
+    let load = VolumeLoad { total_bytes: 100 * GIB, used_bytes: used_gib * GIB, daily_ingest: &[], queue_bytes: 0, in_flight_bytes: 0 };
+    let forecasts = [VolumeForecast { volume: "disk".to_string(), forecast: forecaster.forecast(&load).expect("measured") }];
+    let config = PlannerConfig::default();
+    let candidates = candidates::offline(&cards, "disk", (!never_played).then_some(Exclusion::NeverPlayedOff), NOW, &config);
+    (cards, generate_eviction_plan(&candidates, &forecasts, &config).expect("plans"))
+}
 
 #[test]
-fn the_shipped_fixture_produces_the_hand_audited_plan() {
-    let cards: Vec<ArchiveCard> = serde_json::from_str(CARDS).expect("fixture parses");
-    let policy = ArchivePolicy::default();
-    let model = Baseline::new(policy);
-    let plan = build_plan(&cards, &model, &policy, 0.95, &std::collections::HashMap::new(), &ReclaimGoal::AllSafe);
+fn a_disk_under_its_target_plans_nothing() {
+    let (_, plan) = plan_for(60, true);
+    assert_eq!(plan.method, None);
+    assert!(plan.items.is_empty());
+}
 
-    let mut deleted: Vec<&str> = plan.entries.iter().map(|e| e.id.as_str()).collect();
-    deleted.sort_unstable();
+#[test]
+fn a_full_disk_frees_its_target_without_touching_a_pinned_or_young_item() {
+    let (cards, plan) = plan_for(90, true);
+    assert!(plan.covered(), "10 GiB over an 80% target; the fixture holds more than that eligible");
+    assert!(plan.total_reclaimed_bytes >= 10 * GIB);
+    for item in &plan.items {
+        let card = cards.iter().find(|card| card.id == item.id).expect("planned item is a card");
+        assert!(!card.is_favorite && !card.in_keep_collection, "{} is pinned", card.id);
+        assert!(card.added_days_ago >= 30.0, "{} is in its grace period", card.id);
+    }
+}
 
-    let expected = vec!["m01", "m03", "s01", "s05", "s06"];
-    assert_eq!(deleted, expected, "the plan must match the hand audit exactly");
-
-    let expected_bytes = 1_800_000_000_u64 + 1_600_000_000 + 2_300_000_000 + 4_200_000_000 + 6_200_000_000;
-    assert_eq!(plan.reclaimed_bytes, expected_bytes, "reclaimed bytes must match");
+#[test]
+fn never_played_items_stay_unless_the_operator_enables_them() {
+    let (cards, plan) = plan_for(99, false);
+    let never_played =
+        |id: &str| cards.iter().any(|card| card.id == id && card.last_watched_days.is_none() && card.is_watched != Some(true));
+    assert!(plan.items.iter().all(|item| !never_played(&item.id)));
 }

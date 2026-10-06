@@ -118,63 +118,10 @@ proptest! {
 }
 
 #[test]
-fn threshold_stats_report_what_the_floor_actually_flags() {
-    let scores = [0.9, 0.8, 0.3, 0.2];
-    let labels = [1.0, 0.0, 1.0, 0.0];
-    let stats = at_threshold(&scores, &labels, 0.75);
-    assert_eq!(stats.flagged, 2);
-    assert!((stats.precision - 0.5).abs() < 1e-6, "one of two flagged was safe");
-    assert!((stats.recall - 0.5).abs() < 1e-6, "one of two safe items found");
-}
-
-#[test]
 fn brier_punishes_confidence_in_the_wrong_answer() {
     let confident_wrong = brier(&[0.95, 0.05], &[0.0, 1.0]);
     let hedged_wrong = brier(&[0.55, 0.45], &[0.0, 1.0]);
     assert!(confident_wrong > hedged_wrong);
-}
-
-#[test]
-fn the_zero_error_bound_matches_its_closed_form() {
-    // With no errors in n trials the bound is exactly 1 − δ^(1/n).
-    let bound = binomial_upper_bound(0, 125, 0.1);
-    let exact = 1.0 - 0.1f64.powf(1.0 / 125.0);
-    assert!((bound - exact).abs() < 1e-6, "{bound} vs {exact}");
-}
-
-#[test]
-fn more_errors_raise_the_bound_and_more_data_lowers_it() {
-    assert!(binomial_upper_bound(2, 125, 0.1) > binomial_upper_bound(1, 125, 0.1));
-    assert!(binomial_upper_bound(1, 125, 0.1) > binomial_upper_bound(0, 125, 0.1));
-    assert!(binomial_upper_bound(1, 500, 0.1) < binomial_upper_bound(1, 125, 0.1));
-}
-
-#[test]
-fn a_small_panel_cannot_certify_a_tight_risk_level() {
-    // 50 rows, not one error: still only α ≥ 1 − 0.1^(1/50) ≈ 4.5% can be
-    // vouched for. Asking for 1% must be refused, not rounded.
-    let scores = vec![0.9f32; 50];
-    let labels = vec![1.0f32; 50];
-    assert!(certified_floor(&scores, &labels, 0.01, 0.1).is_none());
-    assert!(certified_floor(&scores, &labels, 0.05, 0.1).is_some());
-}
-
-#[test]
-fn a_stricter_risk_level_never_lowers_the_floor() {
-    // Played items (label 0) only score below 0.70; 3 of them at exactly 0.69.
-    let mut scores = Vec::new();
-    let mut labels = Vec::new();
-    for index in 0..1000usize {
-        let score = 0.5 + (index % 50) as f32 / 100.0;
-        scores.push(score);
-        labels.push(if score < 0.695 && index % 7 == 0 { 0.0 } else { 1.0 });
-    }
-    let strict = certified_floor(&scores, &labels, 0.005, 0.1).expect("certifiable");
-    let loose = certified_floor(&scores, &labels, 0.05, 0.1).expect("certifiable");
-    assert!((strict.floor - 0.70).abs() < 1e-6, "strict stops above the first errors, got {}", strict.floor);
-    assert_eq!(strict.false_reclaims, 0);
-    assert!(loose.floor <= strict.floor, "looser α may go lower, never higher");
-    assert!(loose.upper_bound <= 0.05);
 }
 
 /// Ten items, three cut dates each: a decent but imperfect ranking, so AUC
@@ -238,42 +185,4 @@ fn confident_errors_count_the_wrong_side_of_ninety(
     let groups: Vec<&str> = groups.iter().map(String::as_str).collect();
     let result = spread(scores, labels, &groups);
     assert_eq!((result.confident, result.confident_wrong), (confident, wrong));
-}
-
-/// Twenty titles at three cut dates each; every fifth title was played.
-fn paired_panel() -> (Vec<f32>, Vec<String>) {
-    let labels = (0..60).map(|row| if (row / 3) % 5 == 0 { 0.0 } else { 1.0 }).collect();
-    let groups = (0..60).map(|row| format!("title-{}", row / 3)).collect();
-    (labels, groups)
-}
-
-#[test]
-fn a_model_against_itself_differs_by_exactly_nothing() {
-    let (labels, groups) = paired_panel();
-    let groups: Vec<&str> = groups.iter().map(String::as_str).collect();
-    let scores: Vec<f32> = labels.iter().enumerate().map(|(row, label)| 0.2 + 0.6 * label - 0.01 * (row % 3) as f32).collect();
-    let difference = paired_difference(&scores, &scores, &labels, &groups);
-    for interval in [difference.brier, difference.log_loss, difference.auc] {
-        assert_eq!(interval, Some([0.0, 0.0]));
-    }
-}
-
-#[test]
-fn a_calibrated_model_beats_a_miscalibrated_one_on_every_resample() {
-    let (labels, groups) = paired_panel();
-    let groups: Vec<&str> = groups.iter().map(String::as_str).collect();
-    // Same ranking, but one says 0.8 where the truth is 0.8, the other 0.3.
-    let calibrated: Vec<f32> = labels.iter().map(|label| if *label >= 0.5 { 0.85 } else { 0.6 }).collect();
-    let timid: Vec<f32> = labels.iter().map(|label| if *label >= 0.5 { 0.35 } else { 0.1 }).collect();
-    let difference = paired_difference(&calibrated, &timid, &labels, &groups);
-    let [low, high] = difference.brier.expect("an interval over twenty titles");
-    assert!(high < 0.0, "Brier [{low}, {high}] must favour the calibrated model");
-    assert!(difference.log_loss.is_some_and(|[_, high]| high < 0.0));
-    assert_eq!(difference.auc, Some([0.0, 0.0]), "same ranking, same AUC");
-}
-
-#[test]
-fn one_title_gives_no_paired_interval() {
-    let difference = paired_difference(&[0.9, 0.8], &[0.1, 0.2], &[1.0, 0.0], &["only", "only"]);
-    assert_eq!(difference, Difference::default());
 }

@@ -19,17 +19,6 @@ impl Volume {
     pub fn used_bytes(&self) -> u64 {
         self.total_bytes.saturating_sub(self.free_bytes)
     }
-
-    /// Bytes above `fraction` of this volume, rounded up so freeing them lands
-    /// at or under the line; 0 when already there.
-    pub(super) fn excess_over(&self, fraction: f64) -> u64 {
-        let line = self.total_bytes as f64 * fraction;
-        (self.used_bytes() as f64 - line).max(0.0).ceil() as u64
-    }
-
-    pub(super) fn budget(&self, fraction: f64) -> u64 {
-        (self.total_bytes as f64 * fraction).floor() as u64
-    }
 }
 
 /// Which *arr reported a mount. Paths are container-local, so they are only

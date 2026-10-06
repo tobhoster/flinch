@@ -1,197 +1,149 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { GiB, SectionTitle } from './ui.jsx';
+import { GiB, SectionTitle, day, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
 
-const pct = (p) => (p == null ? '—' : `${Math.round(p * 100)}%`);
+const HELD_LIMIT = 5;
+const METHOD = { milp: 'MILP', emergency: 'emergency greedy', solver_fallback: 'greedy fallback' };
 
 /** Share of the bar, 0..100, for a fraction that may sit outside 0..1. */
 const barPct = (f) => Math.max(0, Math.min(100, (f || 0) * 100));
 
-const day = (unix) => new Date(unix * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
-const HELD_LIMIT = 5;
+/** Tone of a disk (or the aggregate): emergency, short of its target, needing space, or fine. */
+const toneOf = (v) => (v.emergency || v.covered === false ? 'bad' : v.target_reclaim_bytes > 0 ? 'warn' : 'ok');
 
 /**
- * Where a disk (or the aggregate) stands. A latched disk with nothing left to
- * free but evicted bytes still credited — in a recycle bin, or held by
- * something else — is waiting, not done.
+ * Disk use against the projection. Each disk projects its use `window_days`
+ * ahead; past the target the plan must free `target_reclaim_bytes`. The
+ * daemon only publishes `capacity` when it measured the *arr disks.
  */
-function phaseOf(v) {
-  if (!v.latched) return 'idle';
-  if (v.covered === false) return 'short';
-  if (v.goal_bytes === 0 && (v.pending_bytes || 0) + (v.held_bytes || 0) > 0) return 'waiting';
-  return 'freeing';
-}
-const PHASE_TONE = { idle: 'ok', freeing: 'warn', waiting: 'warn', short: 'bad' };
-
-/**
- * What to do about a short disk while the daemon holds never-played reclaim
- * off (`status.never_played_hold`): arming it would change nothing. `held` when
- * the settings ask for the rule (`status.never_played_requested`), so lifting
- * the hold runs it; `off` when they do not, so lifting it alone frees nothing.
- */
-const HELD_HINT = {
-  leaving_soon_untitled: {
-    held: ' Name the Leaving Soon collection in Settings or review holds.',
-    off: ' Name a Leaving Soon collection, then arm never-played in Settings, or review holds.',
-  },
-  incomplete_evidence: { held: ' Review holds.', off: ' Review holds.' },
-};
-
-/**
- * Disk use against the watermarks. Crossing the ceiling latches eviction until
- * usage is back at the release mark; otherwise nothing is deleted. The daemon
- * only publishes `capacity` when it measured the *arr disks, so there is no
- * empty state.
- */
-export default function Capacity({ c, eligible, hold, requested }) {
-  const phase = phaseOf(c);
-  const tone = PHASE_TONE[phase];
-  const pending = c.pending_bytes || 0;
+export default function Capacity({ c }) {
+  const tone = toneOf(c);
   const volumes = c.volumes || [];
   const unmatched = c.unmatched_roots || [];
-  const untracked = c.untracked_bytes || 0;
   const held = volumes.flatMap((v) => v.held || []).sort((a, b) => b.bytes - a.bytes);
   const heldUntil = held.reduce((latest, h) => Math.max(latest, h.until || 0), 0);
-  const holdHint = HELD_HINT[hold]?.[requested ? 'held' : 'off'];
+  const marks = { target: c.target_utilization, emergency: c.emergency_utilization };
   return (
     <section className="rounded-lg border border-line bg-ink-900 px-4 py-3">
-      <SectionTitle hint={c.latched ? 'evicting' : 'idle'} term="watermarks">Storage</SectionTitle>
+      <SectionTitle hint={c.emergency ? 'emergency' : c.healthy ? 'healthy' : 'freeing space'} term="projection">Storage</SectionTitle>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <span>
           <span className={`num text-lg ${TEXT_TONES[tone]}`}>{((c.utilization || 0) * 100).toFixed(1)}%</span>
-          <span className="text-fg-muted"> used{volumes.length > 1 ? ` across ${volumes.length} disks` : ''}</span>
+          <span className="text-fg-muted"> used</span>
         </span>
         <span className="num text-fg-muted">{GiB(c.used_bytes)} / {GiB(c.total_bytes)} GiB</span>
       </div>
-      <Gauge className="mt-2 h-2" utilization={c.utilization} ceiling={c.ceiling} release={c.release} tone={tone} label="Storage used" />
-      <div className="mt-2 flex flex-wrap justify-end gap-x-4 text-xs text-fg-faint">
-        <span className="inline-flex items-center gap-1.5"><span className={`h-3 ${RELEASE_MARK}`} />release <span className="num">{pct(c.release)}</span></span>
-        <span className="inline-flex items-center gap-1.5"><span className={`h-3 ${CEILING_MARK}`} />ceiling <span className="num">{pct(c.ceiling)}</span></span>
+      <div className="mt-1 flex flex-wrap justify-end gap-x-4 text-xs text-fg-faint">
+        <span className="inline-flex items-center gap-1.5"><span className={`h-3 ${TARGET_MARK}`} />target <span className="num">{pct(c.target_utilization)}</span></span>
+        <span className="inline-flex items-center gap-1.5"><span className={`h-3 ${EMERGENCY_MARK}`} />emergency <span className="num">{pct(c.emergency_utilization)}</span></span>
+        <span className="inline-flex items-center gap-1.5"><span className={`h-2 w-3 ${PROJECTED_BAR}`} />in <span className="num">{c.window_days}</span> d</span>
       </div>
-      <p className="mt-1 text-fg-muted">
-        {phase !== 'idle' && untracked > 0 && <>
-          <span className="text-state-warn">
-            Before evicting anything: <span className="num">{GiB(untracked)} GiB</span> here isn't library media.
-          </span>
-          {' '}<Explain term="untracked" />{' '}
-        </>}
-        {phase === 'idle' && <>
-          Idle: nothing is deleted until usage reaches <span className="num">{pct(c.ceiling)}</span>.
-          {' '}<span className="num text-fg">{GiB(eligible)} GiB</span> eligible when space is needed. <Explain term="eligible" />
-        </>}
-        {phase === 'freeing' && <>
-          Freeing <span className="num text-state-warn">{GiB(c.goal_bytes)} GiB</span> to get back to <span className="num">{pct(c.release)}</span>,
-          {' '}least regret per GiB first. <Explain term="eviction_order" />
-          {' '}{c.goal_met
-            ? 'All of it is handed to Maintainerr, which deletes it on its own schedule.'
-            : <><span className="num text-fg">{GiB(c.handed_bytes)} GiB</span> handed to Maintainerr so far.</>}
-        </>}
-        {phase === 'short' && <>
-          <span className="text-state-bad">
-            Needs <span className="num">{GiB(c.goal_bytes)} GiB</span> but only <span className="num">{GiB(eligible)} GiB</span> is eligible.
-          </span>
-          {holdHint || (c.armed_never_played ? ' Review holds.' : ' Arm never-played in Settings or review holds.')} <Explain term="eligible" />
+      <ul className="mt-1 divide-y divide-line-soft">
+        {volumes.map((v) => <VolumeRow key={v.path} v={v} marks={marks} window={c.window_days} />)}
+      </ul>
+      <p className="mt-2 text-fg-muted">
+        {c.healthy ? <>
+          Healthy: every disk stays under its target. Nothing is planned.
+          {' '}<span className="num text-fg">{GiB(c.eligible_bytes)} GiB</span> eligible. <Explain term="eligible" />
+        </> : <>
+          Need <span className="num text-state-warn">{GiB(c.target_reclaim_bytes)} GiB</span>,
+          {' '}plan takes <span className="num text-fg">{GiB(c.planned_bytes)} GiB</span>
+          {c.method && <> ({METHOD[c.method] ?? c.method})</>}, total regret <span className="num text-fg">{(c.total_regret || 0).toFixed(2)}</span>. <Explain term="plan" />
+          {c.covered === false && <span className="text-state-bad"> Only <span className="num">{GiB(c.eligible_bytes)} GiB</span> is eligible.</span>}
+          {c.goal_met && ' All of it is handed to Maintainerr.'}
+          {c.goal_met === false && (c.handed_bytes || 0) > 0 && <> <span className="num text-fg">{GiB(c.handed_bytes)} GiB</span> handed so far.</>}
         </>}
       </p>
-      {phase === 'idle' && untracked > 0 && (
+      {c.method === 'solver_fallback' && (
+        <Warning>Solver failed{c.solver_error ? <>: <span className="text-fg">{c.solver_error}</span></> : ''}. Used the greedy fallback.</Warning>
+      )}
+      {(c.untracked_bytes || 0) > 0 && (
         <p className="mt-1 text-fg-muted">
-          <span className="num text-fg">{GiB(untracked)} GiB</span> of {volumes.length > 1 ? 'these disks' : 'this disk'} isn't library media:
-          {' '}downloads, recycle bins and files no app tracks. <Explain term="untracked" />
+          <span className="num text-fg">{GiB(c.untracked_bytes)} GiB</span> is not library media. <Explain term="untracked" />
         </p>
       )}
-      {c.latched && pending > 0 && (
+      {(c.pending_bytes || 0) > 0 && (
         <p className="mt-1 text-fg-muted">
-          <span className="num text-state-warn">{GiB(pending)} GiB</span> evicted, waiting for the recycle bin to release it. <Explain term="pending" />
+          <span className="num text-fg">{GiB(c.pending_bytes)} GiB</span> is in recycle bins. <Explain term="pending" />
         </p>
-      )}
-      {volumes.length > 1 && (
-        <ul className="mt-3 divide-y divide-line-soft border-t border-line-soft">
-          {volumes.map((v) => <VolumeRow key={v.path} v={v} ceiling={c.ceiling} release={c.release} />)}
-        </ul>
       )}
       {unmatched.length > 0 && (
-        <p className="mt-3 flex gap-2 rounded-md bg-state-warn/10 px-3 py-2 text-state-warn">
-          <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">
-            Not governed: <span className="font-mono text-fg">{unmatched.join(', ')}</span>.
-            {' '}<span className="text-fg-muted">Items there are never evicted because no disk FLINCH can measure holds them.</span>
-            {' '}<Explain term="not_governed" />
-          </span>
-        </p>
+        <Warning>
+          Not governed: <span className="font-mono text-fg">{unmatched.join(', ')}</span>. Nothing there is evicted. <Explain term="not_governed" />
+        </Warning>
       )}
       {(c.held_bytes || 0) > 0 && (
-        <div className="mt-3 flex gap-2 rounded-md bg-state-warn/10 px-3 py-2 text-state-warn">
-          <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
-          <div className="min-w-0 break-words">
-            <p>
-              <span className="num">{GiB(c.held_bytes)} GiB</span> handed over was never freed:
-              {' '}<span className="text-fg-muted">
-                the recycle bin's window passed and the disk did not drop. Something else still holds it, often a torrent seeding the same file.
-                {' '}FLINCH counts it as on its way out and evicts nothing more for it{heldUntil > 0 ? <> until <span className="num text-fg">{day(heldUntil)}</span></> : ''}.
-              </span>
-              {' '}<Explain term="held" />
-            </p>
-            {held.length > 0 && (
-              <ul className="mt-1 space-y-0.5 text-xs text-fg-muted">
-                {held.slice(0, HELD_LIMIT).map((h) => (
-                  <li key={h.id} className="truncate">
-                    <span className="text-fg">{h.title || h.id}</span>
-                    {' · '}<span className="num">{GiB(h.bytes)} GiB</span>
-                    {h.held_since > 0 && <>{' · '}since {day(h.held_since)}</>}
-                  </li>
-                ))}
-                {held.length > HELD_LIMIT && <li className="text-fg-faint">+{held.length - HELD_LIMIT} more</li>}
-              </ul>
-            )}
-          </div>
-        </div>
+        <Warning>
+          <span className="num">{GiB(c.held_bytes)} GiB</span> handed over was never freed
+          {heldUntil > 0 && <>; counted as freed until <span className="num text-fg">{day(heldUntil)}</span></>}. <Explain term="held" />
+          <ul className="mt-1 space-y-0.5 text-xs text-fg-muted">
+            {held.slice(0, HELD_LIMIT).map((h) => (
+              <li key={h.id} className="truncate">
+                <span className="text-fg">{h.title || h.id}</span> · <span className="num">{GiB(h.bytes)} GiB</span>
+                {h.held_since > 0 && <> · since {day(h.held_since)}</>}
+              </li>
+            ))}
+            {held.length > HELD_LIMIT && <li className="text-fg-faint">+{held.length - HELD_LIMIT} more</li>}
+          </ul>
+        </Warning>
       )}
     </section>
   );
 }
 
-/** One disk: path, a mini gauge with both markers, and what it is doing. */
-function VolumeRow({ v, ceiling, release }) {
-  const phase = phaseOf(v);
-  const tone = PHASE_TONE[phase];
-  const pending = v.pending_bytes || 0;
-  const state = {
-    idle: 'idle',
-    freeing: `freeing ${GiB(v.goal_bytes)} GiB, ${GiB(v.handed_bytes)} handed`,
-    waiting: pending > 0 ? `waiting on recycle bin, ${GiB(pending)} GiB` : 'waiting on space not yet freed',
-    short: `needs ${GiB(v.goal_bytes)} GiB, ${GiB(v.eligible_bytes)} GiB eligible`,
-  }[phase];
+function Warning({ children }) {
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-2 sm:grid-cols-[minmax(0,9rem)_minmax(0,1fr)_3rem_minmax(0,19rem)]">
+    <div className="mt-3 flex gap-2 rounded-md bg-state-warn/10 px-3 py-2 text-state-warn">
+      <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
+      <div className="min-w-0 break-words">{children}</div>
+    </div>
+  );
+}
+
+/** One disk: gauge (used, projected, marks), then ingest, queue and what it needs. */
+function VolumeRow({ v, marks, window }) {
+  const tone = toneOf(v);
+  const cap = v.capacity_bytes || v.total_bytes;
+  const projected = cap ? v.projected_used_bytes / cap : 0;
+  const need = v.target_reclaim_bytes > 0;
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-2 sm:grid-cols-[minmax(0,9rem)_minmax(0,1fr)_7rem]">
       <span className="truncate font-mono text-fg" title={v.path}>{v.path}</span>
-      <span className={`num text-right sm:order-3 ${TEXT_TONES[tone]}`}>{pct(v.utilization)}</span>
-      <Gauge className="col-span-2 h-1.5 sm:order-2 sm:col-span-1" utilization={v.utilization} ceiling={ceiling} release={release} tone={tone} label={`${v.path} used`} />
-      <span className="col-span-2 text-xs text-fg-muted sm:order-4 sm:col-span-1">
-        <span className={phase === 'idle' ? '' : TEXT_TONES[tone]}>{state}</span>
-        {phase !== 'waiting' && v.latched && pending > 0 && <>, {GiB(pending)} GiB in recycle bin</>}
-        {(v.held_bytes || 0) > 0 && <span className="text-state-warn">, {GiB(v.held_bytes)} GiB held</span>}
-        <span className="text-fg-faint"> · {GiB(v.used_bytes)} / {GiB(v.total_bytes)} GiB</span>
-        {(v.untracked_bytes || 0) > 0 && <span className="text-fg-faint"> · {GiB(v.untracked_bytes)} GiB not library media</span>}
+      <span className={`num text-right sm:order-3 ${TEXT_TONES[tone]}`}>{pct(v.utilization)} → {pct(projected)}</span>
+      <Gauge className="col-span-2 h-1.5 sm:order-2 sm:col-span-1" used={v.utilization} projected={projected} marks={marks} tone={tone} label={`${v.path} used`} />
+      <span className="col-span-2 text-xs text-fg-muted sm:order-4 sm:col-span-3">
+        {v.emergency
+          ? <span className="text-state-bad">emergency, </span>
+          : null}
+        {need
+          ? <span className={TEXT_TONES[tone]}>needs {GiB(v.target_reclaim_bytes)} GiB, plan {GiB(v.planned_bytes)} GiB{v.covered === false ? `, ${GiB(v.eligible_bytes)} GiB eligible` : ''}</span>
+          : 'under target'}
+        <span className="text-fg-faint">
+          {' · '}{GiB(v.used_bytes)} / {GiB(cap)} GiB · +{GiB(v.daily_ingest_bytes)} GiB/day · queue {GiB(v.queue_bytes)} GiB · {GiB(v.projected_used_bytes)} GiB in {window} d
+          {(v.pending_bytes || 0) > 0 && <> · {GiB(v.pending_bytes)} GiB in recycle bin</>}
+        </span>
+        {(v.held_bytes || 0) > 0 && <span className="text-state-warn"> · {GiB(v.held_bytes)} GiB held</span>}
       </span>
     </li>
   );
 }
 
-/** A use bar with the release mark (dotted) and the ceiling (solid). */
-function Gauge({ utilization, ceiling, release, tone, label, className }) {
+/** Use bar, a lighter extension to the projected use, and the target (solid) and emergency (red) marks. */
+function Gauge({ used, projected, marks, tone, label, className }) {
   return (
     <div className={`relative rounded-sm bg-ink-700 ${className}`}
-      role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(barPct(utilization))}>
-      <div className={`h-full rounded-sm ${BAR_TONES[tone]}`} style={{ width: `${barPct(utilization)}%` }} />
-      <div className={`absolute -bottom-1 -top-1 ${RELEASE_MARK}`} style={{ left: `${barPct(release)}%` }} title={`Release ${pct(release)}`} />
-      <div className={`absolute -bottom-1 -top-1 ${CEILING_MARK}`} style={{ left: `${barPct(ceiling)}%` }} title={`Ceiling ${pct(ceiling)}`} />
+      role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(barPct(used))}>
+      <div className={`absolute inset-y-0 left-0 rounded-sm ${PROJECTED_BAR}`} style={{ width: `${barPct(projected)}%` }} />
+      <div className={`absolute inset-y-0 left-0 rounded-sm ${BAR_TONES[tone]}`} style={{ width: `${barPct(used)}%` }} />
+      <div className={`absolute -bottom-1 -top-1 ${TARGET_MARK}`} style={{ left: `${barPct(marks.target)}%` }} title={`Target ${pct(marks.target)}`} />
+      <div className={`absolute -bottom-1 -top-1 ${EMERGENCY_MARK}`} style={{ left: `${barPct(marks.emergency)}%` }} title={`Emergency ${pct(marks.emergency)}`} />
     </div>
   );
 }
 
 const TEXT_TONES = { ok: 'text-state-ok', warn: 'text-state-warn', bad: 'text-state-bad' };
 const BAR_TONES = { ok: 'bg-state-ok', warn: 'bg-state-warn', bad: 'bg-state-bad' };
-/** The ceiling is a solid tick; the release mark a lighter dotted one. */
-const CEILING_MARK = 'w-0.5 -translate-x-1/2 bg-fg';
-const RELEASE_MARK = 'w-0 -translate-x-1/2 border-l-2 border-dotted border-fg-muted';
+const PROJECTED_BAR = 'bg-fg-faint/40';
+const TARGET_MARK = 'w-0.5 -translate-x-1/2 bg-fg';
+const EMERGENCY_MARK = 'w-0.5 -translate-x-1/2 bg-state-bad';

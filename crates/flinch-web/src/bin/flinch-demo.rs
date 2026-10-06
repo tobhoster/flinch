@@ -21,16 +21,7 @@ const RUN_AGE_S: i64 = 240;
 
 /// Every unix-seconds field in the snapshot, as JSON pointers: into status.json,
 /// into each item, into each item's `on_disk` span and into each history point.
-const STATUS_TIMES: &[&str] = &[
-    "/ran_at_unix",
-    "/next_run_unix",
-    "/last_error_at",
-    "/fit/fitted_at_unix",
-    "/fit/metrics/fitted_at_unix",
-    "/fit/taste/as_of",
-    "/benchmark/scored_at_unix",
-    "/benchmark/result/now_unix",
-];
+const STATUS_TIMES: &[&str] = &["/ran_at_unix", "/next_run_unix", "/last_error_at", "/fit/fitted_at_unix", "/fit/metrics/fitted_at_unix"];
 const ITEM_TIMES: &[&str] = &["/last_aired_epoch", "/handed_at", "/leaves_at"];
 const SPAN_TIMES: &[&str] = &["/from", "/to"];
 const HISTORY_TIMES: &[&str] = &["/ran_at_unix"];

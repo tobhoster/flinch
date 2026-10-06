@@ -1,329 +1,152 @@
 use super::*;
-use crate::daemon::RuntimeSettings;
-use crate::golden::golden_season;
-use crate::score::{self, HouseholdContext, ReclaimScore, ScoreWeights};
+use crate::capacity::CapacityForecast;
 use proptest::prelude::*;
-use rstest::rstest;
 
-const GB: u64 = 1_000_000_000;
+const GIB: u64 = 1 << 30;
 
-fn watched_cold_season(id: &str) -> ArchiveCard {
-    let mut c = golden_season();
-    c.id = id.to_string();
-    c.title = id.to_string();
-    c.season_state = Some(crate::card::SeasonState::Completed);
-    c.last_watched_days = Some(400.0);
-    c.is_newest_season = Some(false);
-    c
-}
-
-fn sized(id: &str, gb: u64) -> ArchiveCard {
-    let mut c = watched_cold_season(id);
-    c.size_bytes = gb * GB;
-    c
-}
-
-fn verdict(p_safe: f32) -> ScoreVerdict {
-    ScoreVerdict { p_safe, hard_guard: false, sibling_played: false }
-}
-
-fn baseline_plan(cards: &[ArchiveCard], verdicts: &HashMap<String, ScoreVerdict>, goal: &ReclaimGoal) -> Plan {
-    let policy = ArchivePolicy::default();
-    build_plan(cards, &Baseline::new(policy), &policy, 0.95, verdicts, goal)
-}
-
-fn ids(plan: &Plan) -> Vec<&str> {
-    plan.entries.iter().map(|e| e.id.as_str()).collect()
-}
-
-#[test]
-fn the_gate_keeps_items_below_the_floor_even_when_the_policy_says_delete() {
-    // A future head at 0.6 must not delete; the deterministic policy alone
-    // would.
-    struct Shy;
-    impl ArchiveModel for Shy {
-        fn delete_probability(&self, _: &ArchiveCard, _: &Reason) -> Probability {
-            Probability::new(0.6).expect("in-range")
-        }
+fn candidate(id: &str, volume: &str, gib: u64, regret: f64) -> MediaCandidate {
+    MediaCandidate {
+        id: id.to_string(),
+        title: id.to_string(),
+        size_bytes: gib * GIB,
+        volume: Some(volume.to_string()),
+        regret: Regret::new(regret, 1.0, 1.0),
+        reason: format!("{id} reason"),
+        age_days: 400.0,
+        exclusion: None,
+        sequence: None,
+        handed: false,
+        announce: false,
+        protect: false,
+        quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), false, 0),
+        eviction_safety: 0.0,
     }
-    let cards = vec![watched_cold_season("shy")];
-    let plan = build_plan(&cards, &Shy, &ArchivePolicy::default(), 0.95, &HashMap::new(), &ReclaimGoal::AllSafe);
-    assert!(plan.entries.is_empty(), "0.6 < 0.95 must keep the item");
-    assert_eq!(plan.eligible_bytes, 0, "a gated item is not reserve either");
 }
 
-#[test]
-fn a_confident_model_can_delete_what_the_policy_allows() {
-    let cards = vec![watched_cold_season("ok"), watched_cold_season("ok2")];
-    let plan = baseline_plan(&cards, &HashMap::new(), &ReclaimGoal::AllSafe);
-    assert_eq!(plan.entries.len(), 2);
-    assert!(plan.goal_met, "everything safe was taken");
-    assert_eq!(plan.goal_bytes, None);
-}
-
-#[test]
-fn armed_never_played_reclaim_actually_reaches_the_plan() {
-    // The preview counted these items; the plan must be able to act on them.
-    let mut card = golden_season();
-    card.id = "never-played".to_string();
-    card.season_state = Some(crate::card::SeasonState::Empty);
-    card.is_newest_season = Some(false);
-    card.last_watched_days = None;
-    card.added_days_ago = 300.0;
-    let mut armed = ArchivePolicy::default();
-    armed.unwatched_reclaim.enabled = true;
-    let verdicts: HashMap<String, ScoreVerdict> = [(card.id.clone(), verdict(0.9))].into_iter().collect();
-    let plan = build_plan(&[card], &Baseline::new(armed), &armed, 0.95, &verdicts, &ReclaimGoal::AllSafe);
-    assert_eq!(plan.entries.len(), 1, "a permitted never-played reclaim must be planned");
-}
-
-#[test]
-fn protections_never_reach_the_plan() {
-    let mut fav = watched_cold_season("fav");
-    fav.is_favorite = true;
-    let plan = baseline_plan(&[fav], &HashMap::new(), &ReclaimGoal::AllSafe);
-    assert!(plan.entries.is_empty());
-}
-
-#[test]
-fn a_byte_goal_stops_once_covered_taking_larger_items_first_at_equal_regret() {
-    let cards: Vec<ArchiveCard> = (0..6).map(|i| sized(&format!("s{i}"), 2 * (i + 1))).collect();
-    let plan = baseline_plan(&cards, &HashMap::new(), &ReclaimGoal::Bytes(15 * GB));
-    // Baseline P = 1.0 everywhere: zero regret, so size decides — fewest deletes.
-    assert_eq!(ids(&plan), ["s5", "s4"], "12 + 10 GB covers 15 GB in two deletes");
-    assert!(plan.goal_met);
-    assert_eq!(plan.goal_bytes, Some(15 * GB));
-}
-
-#[test]
-fn a_zero_byte_goal_plans_nothing_but_still_reports_the_reserve() {
-    let cards = vec![sized("a", 10), sized("b", 20)];
-    let plan = baseline_plan(&cards, &HashMap::new(), &ReclaimGoal::Bytes(0));
-    assert!(plan.entries.is_empty(), "zero bytes means nothing — never 'everything'");
-    assert!(plan.goal_met);
-    assert_eq!(plan.eligible_bytes, 30 * GB, "the reserve is still visible");
-}
-
-#[test]
-fn eviction_takes_the_least_expected_regret_per_byte_first() {
-    // c: certain (0 regret) · a: 1% over 10 GB · b: 10% over 50 GB (2x a's density).
-    let cards = vec![sized("a", 10), sized("b", 50), sized("c", 5)];
-    let verdicts: HashMap<String, ScoreVerdict> =
-        [("a", 0.99), ("b", 0.90), ("c", 1.0)].into_iter().map(|(id, p)| (id.to_string(), verdict(p))).collect();
-    let plan = baseline_plan(&cards, &verdicts, &ReclaimGoal::AllSafe);
-    assert_eq!(ids(&plan), ["c", "a", "b"]);
-}
-
-#[rstest]
-#[case::clears_the_floor(Some(0.90), true)]
-#[case::below_the_floor(Some(0.70), false)]
-#[case::exactly_on_the_floor(Some(0.80), true)]
-#[case::no_verdict_is_judged_by_the_rules_alone(None, true)]
-#[case::a_nan_score_never_clears(Some(f32::NAN), false)]
-fn the_score_floor_gates_what_the_policy_permits(#[case] p_safe: Option<f32>, #[case] planned: bool) {
-    let card = sized("x", 10);
-    let verdicts: HashMap<String, ScoreVerdict> = p_safe.map(|p| (card.id.clone(), verdict(p))).into_iter().collect();
-    let policy = ArchivePolicy { score_floor: 0.80, ..ArchivePolicy::default() };
-    let plan = build_plan(&[card], &Baseline::new(policy), &policy, 0.95, &verdicts, &ReclaimGoal::AllSafe);
-    assert_eq!(!plan.entries.is_empty(), planned);
-}
-
-/// What the priors hold at the default floor: a film finished 100 d ago, one
-/// nobody played with no watch evidence at all, and a season Tautulli saw
-/// nobody start.
-fn held_by_the_priors() -> Vec<(ArchiveCard, HouseholdContext)> {
-    let mut finished = crate::golden::golden_movie();
-    finished.id = "finished".to_string();
-    finished.last_watched_days = Some(100.0);
-    finished.added_days_ago = 400.0;
-    finished.rewatch_score = None;
-    finished.size_bytes = 20 * GB;
-    let mut unseen = finished.clone();
-    unseen.id = "no-evidence".to_string();
-    unseen.is_watched = Some(false);
-    unseen.last_watched_days = None;
-    let mut unstarted = watched_cold_season("unstarted");
-    unstarted.season_state = Some(crate::card::SeasonState::Empty);
-    unstarted.episodes_watched = Some(0);
-    unstarted.last_watched_days = None;
-    unstarted.added_days_ago = 120.0;
-    let plex = HouseholdContext { watch_source: Some(crate::watch::WatchSource::Plex), ..Default::default() };
-    let tautulli = HouseholdContext { watch_source: Some(crate::watch::WatchSource::TautulliAbsence), ..Default::default() };
-    vec![(finished, plex), (unseen, HouseholdContext::default()), (unstarted, tautulli)]
-}
-
-/// The ids the plan makes eligible when `scorer` scores every card, at the
-/// default floors with never-played reclaim armed.
-fn eligible_under(scorer: impl Fn(&ArchiveCard, HouseholdContext) -> ReclaimScore) -> Vec<String> {
-    let rows = held_by_the_priors();
-    let cards: Vec<ArchiveCard> = rows.iter().map(|(card, _)| card.clone()).collect();
-    let verdicts: HashMap<String, ScoreVerdict> = rows
-        .iter()
-        .map(|(card, ctx)| {
-            let scored = scorer(card, *ctx);
-            (card.id.clone(), ScoreVerdict { p_safe: scored.p_safe, hard_guard: scored.hard_guard.is_some(), sibling_played: false })
-        })
-        .collect();
-    let mut policy = ArchivePolicy { score_floor: RuntimeSettings::default().score_floor, ..ArchivePolicy::default() };
-    policy.unwatched_reclaim.enabled = true;
-    let plan = build_plan(&cards, &Baseline::new(policy), &policy, 0.95, &verdicts, &ReclaimGoal::AllSafe);
-    ids(&plan).into_iter().map(String::from).collect()
-}
-
-#[test]
-fn an_adopted_recalibration_never_widens_the_eligible_set() {
-    // Shaped like a recalibration a household panel can adopt: the priors'
-    // weights with a bias of 6 at temperature 2, about 3 logits toward "safe".
-    let recalibrated = ScoreWeights { bias: 6.0, ..ScoreWeights::default() };
-    let prior_temperature = RuntimeSettings::default().score_temperature;
-    let priors = eligible_under(|card, ctx| score::score(card, ctx, &ScoreWeights::default(), prior_temperature));
-    assert!(priors.is_empty(), "the priors hold all three: {priors:?}");
-    // Gated on the fit alone, all three would go: one on no evidence at all.
-    let unfenced = eligible_under(|card, ctx| score::score(card, ctx, &recalibrated, 2.0));
-    assert_eq!(unfenced, ["finished", "no-evidence", "unstarted"], "the fit alone must pass what the priors hold");
-    let fenced = eligible_under(|card, ctx| score::score_fenced(card, ctx, &recalibrated, 2.0, prior_temperature));
-    assert_eq!(fenced, priors, "a fit may narrow the eligible set, never widen it");
-}
-
-fn on_volumes(pairs: &[(&str, &str)], goals: &[(&str, u64)]) -> ReclaimGoal {
-    ReclaimGoal::PerVolume(VolumeGoals {
-        goals: goals.iter().map(|(v, gb)| (v.to_string(), gb * GB)).collect(),
-        volume_of: pairs.iter().map(|(id, v)| (id.to_string(), v.to_string())).collect(),
-        handed: HashSet::new(),
-    })
-}
-
-#[test]
-fn per_volume_goals_evict_only_on_the_volume_that_needs_space() {
-    let cards = vec![sized("m1", 20), sized("m2", 10), sized("t1", 30)];
-    let goal = on_volumes(&[("m1", "/movies"), ("m2", "/movies"), ("t1", "/tv")], &[("/movies", 15)]);
-    let plan = baseline_plan(&cards, &HashMap::new(), &goal);
-    assert_eq!(ids(&plan), ["m1"], "the 30 GB show would free the wrong disk");
-    assert!(plan.goal_met);
-    let tv = plan.volumes.iter().find(|v| v.volume == "/tv").expect("reserve row for /tv");
-    assert_eq!((tv.goal_bytes, tv.reclaimed_bytes, tv.eligible_bytes), (0, 0, 30 * GB));
-}
-
-#[test]
-fn an_item_on_no_known_volume_is_never_evicted_and_is_not_reserve() {
-    let cards = vec![sized("known", 10), sized("orphan", 90)];
-    let goal = on_volumes(&[("known", "/media")], &[("/media", 50)]);
-    let plan = baseline_plan(&cards, &HashMap::new(), &goal);
-    assert_eq!(ids(&plan), ["known"]);
-    assert!(!plan.goal_met, "10 GB cannot cover 50 GB");
-    assert_eq!(plan.eligible_bytes, 10 * GB, "the orphan can never relieve /media");
-}
-
-#[test]
-fn an_idle_per_volume_goal_evicts_nothing_and_reports_every_reserve() {
-    let cards = vec![sized("m1", 20), sized("t1", 30)];
-    let goal = on_volumes(&[("m1", "/movies"), ("t1", "/tv")], &[]);
-    let plan = baseline_plan(&cards, &HashMap::new(), &goal);
-    assert!(plan.entries.is_empty());
-    assert!(plan.goal_met, "no volume asked for anything");
-    assert_eq!(plan.volumes.len(), 2);
-}
-
-#[test]
-fn an_item_already_handed_over_is_taken_before_a_cheaper_newcomer() {
-    // Both cover the goal alone; the newcomer is the cheaper eviction.
-    let cards = vec![sized("announced", 10), sized("newcomer", 12)];
-    let verdicts = HashMap::from([("announced".to_string(), verdict(0.90)), ("newcomer".to_string(), verdict(0.99))]);
-    let mut goal = on_volumes(&[("announced", "/media"), ("newcomer", "/media")], &[("/media", 10)]);
-    assert_eq!(ids(&baseline_plan(&cards, &verdicts, &goal)), ["newcomer"]);
-
-    // Once handed over it stays chosen: re-planning would restart its window.
-    if let ReclaimGoal::PerVolume(goals) = &mut goal {
-        goals.handed.insert("announced".to_string());
+fn season(show: &str, index: u32, played: bool, regret: f64) -> MediaCandidate {
+    MediaCandidate {
+        sequence: Some(Sequence { group: show.to_string(), index, played }),
+        ..candidate(&format!("{show}-s{index}"), "tv", 10, regret)
     }
-    assert_eq!(ids(&baseline_plan(&cards, &verdicts, &goal)), ["announced"]);
 }
 
-/// (size in GB, P(safe), is favorite)
-fn specs() -> impl Strategy<Value = Vec<(u64, f32, bool)>> {
-    prop::collection::vec((1u64..=100, 0.0f32..=1.0, any::<bool>()), 0..24)
-}
-
-fn library(specs: &[(u64, f32, bool)]) -> (Vec<ArchiveCard>, HashMap<String, ScoreVerdict>) {
-    let mut cards = Vec::new();
-    let mut verdicts = HashMap::new();
-    for (i, (gb, p, favorite)) in specs.iter().enumerate() {
-        let mut card = sized(&format!("c{i:02}"), *gb);
-        card.is_favorite = *favorite;
-        verdicts.insert(card.id.clone(), verdict(*p));
-        cards.push(card);
+fn forecast(volume: &str, target_gib: u64, emergency: bool) -> VolumeForecast {
+    VolumeForecast {
+        volume: volume.to_string(),
+        forecast: CapacityForecast {
+            current_used_bytes: 0,
+            max_capacity_bytes: 1,
+            current_utilization: 0.0,
+            daily_ingest_rate_bytes: 0,
+            queue_bytes: 0,
+            in_flight_bytes: 0,
+            projected_used_bytes: 0,
+            target_reclaim_bytes: target_gib * GIB,
+            is_emergency: emergency,
+        },
     }
-    (cards, verdicts)
 }
 
-/// The eviction order recomputed independently of the implementation.
-fn oracle_order(specs: &[(u64, f32, bool)]) -> Vec<String> {
-    let mut rows: Vec<(f64, u64, String)> = specs
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, _, favorite))| !favorite)
-        .map(|(i, (gb, p, _))| (f64::from(1.0 - p) / (gb * GB) as f64, gb * GB, format!("c{i:02}")))
-        .collect();
-    rows.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
-    rows.into_iter().map(|(_, _, id)| id).collect()
+fn ids(plan: &EvictionPlan) -> Vec<&str> {
+    plan.items.iter().map(|item| item.id.as_str()).collect()
+}
+
+fn plan(candidates: &[MediaCandidate], forecasts: &[VolumeForecast]) -> EvictionPlan {
+    generate_eviction_plan(candidates, forecasts, &PlannerConfig::default()).expect("valid inputs")
+}
+
+#[test]
+fn a_healthy_forecast_plans_nothing_and_never_runs_the_solver() {
+    let library = [candidate("a", "movies", 10, 0.0)];
+    let healthy = plan(&library, &[forecast("movies", 0, false)]);
+    assert_eq!(healthy.method, None);
+    assert!(healthy.items.is_empty());
+    assert_eq!(healthy.kept["a"], Kept::Healthy);
+    assert_eq!(healthy.eligible_bytes, 10 * GIB, "the reserve is still reported");
+}
+
+#[test]
+fn the_plan_covers_the_target_at_least_regret_and_says_why_the_rest_stays() {
+    let library = [candidate("cheap", "movies", 10, 0.1), candidate("dear", "movies", 10, 5.0)];
+    let result = plan(&library, &[forecast("movies", 10, false)]);
+    assert_eq!(result.method, Some(Method::Milp));
+    assert_eq!(ids(&result), ["cheap"]);
+    assert_eq!(result.kept["dear"], Kept::NotNeeded);
+    assert!(result.covered());
+    assert_eq!((result.total_reclaimed_bytes, result.total_regret), (10 * GIB, 0.1));
+}
+
+#[test]
+fn every_exclusion_keeps_its_item_whatever_its_regret() {
+    let young = MediaCandidate { age_days: 3.0, ..candidate("young", "movies", 10, 0.0) };
+    let homeless = MediaCandidate { volume: None, ..candidate("homeless", "movies", 10, 0.0) };
+    let pinned = MediaCandidate { exclusion: Some(Exclusion::Pinned(Pin::Favorite)), ..candidate("pinned", "movies", 10, 0.0) };
+    let unknown = MediaCandidate { exclusion: Some(Exclusion::NoWatchEvidence), ..candidate("unknown", "movies", 10, 0.0) };
+    let fallback = candidate("fallback", "movies", 10, 9.0);
+    let result = plan(&[young, homeless, pinned, unknown, fallback], &[forecast("movies", 100, false)]);
+    assert_eq!(ids(&result), ["fallback"], "only the selectable item, even at the highest regret");
+    assert!(!result.covered(), "a target beyond the eligible set is reported short, not forced");
+    assert_eq!(result.kept["young"], Kept::Excluded(Exclusion::Grace { days: 30 }));
+    assert_eq!(result.kept["homeless"], Kept::Excluded(Exclusion::NoGovernedDisk));
+    assert_eq!(result.kept["pinned"].to_string(), "Pinned: favorite");
+}
+
+#[test]
+fn an_emergency_forecast_takes_the_greedy_path() {
+    let library = [candidate("a", "movies", 10, 1.0)];
+    assert_eq!(plan(&library, &[forecast("movies", 5, true)]).method, Some(Method::Emergency));
+}
+
+#[test]
+fn an_unplayed_show_is_never_left_without_its_beginning() {
+    // S1 is the cheapest by far, but taking it alone would orphan S2 and S3.
+    let show = [season("andor", 1, false, 0.01), season("andor", 2, false, 3.0), season("andor", 3, false, 3.0)];
+    let result = plan(&show, &[forecast("tv", 25, false)]);
+    assert_eq!(ids(&result), ["andor-s3", "andor-s2", "andor-s1"], "from the end, S3 first");
+    assert_eq!(result.items[1].after.as_deref(), Some("andor-s3"));
+}
+
+#[test]
+fn a_regret_that_is_not_a_number_is_refused_by_id() {
+    let library = [candidate("nan", "movies", 1, f64::NAN)];
+    assert_eq!(
+        generate_eviction_plan(&library, &[forecast("movies", 1, false)], &PlannerConfig::default()),
+        Err(PlanError::InvalidRegret { id: "nan".to_string() })
+    );
+}
+
+#[test]
+fn user_weights_match_names_case_insensitively_and_default_to_one() {
+    let config = PlannerConfig { user_weights: BTreeMap::from([("Ann".to_string(), 0.5)]), ..PlannerConfig::default() };
+    assert_eq!((config.weight("ann"), config.weight("bo")), (0.5, 1.0));
 }
 
 proptest! {
-    #[test]
-    fn a_byte_goal_evicts_a_minimal_prefix_of_the_regret_order(specs in specs(), goal_gb in 0u64..=600) {
-        let (cards, verdicts) = library(&specs);
-        let goal = goal_gb * GB;
-        let plan = baseline_plan(&cards, &verdicts, &ReclaimGoal::Bytes(goal));
-        let order = oracle_order(&specs);
+    #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
-        prop_assert_eq!(plan.reclaimed_bytes, plan.entries.iter().map(|e| e.size_bytes).sum::<u64>());
-        prop_assert_eq!(ids(&plan), order.iter().take(plan.entries.len()).map(String::as_str).collect::<Vec<_>>());
-        prop_assert_eq!(plan.goal_met, plan.reclaimed_bytes >= goal);
-        if let Some(last) = plan.entries.last() {
-            prop_assert!(plan.reclaimed_bytes - last.size_bytes < goal, "every eviction was needed");
-        }
-        if !plan.goal_met {
-            prop_assert_eq!(plan.reclaimed_bytes, plan.eligible_bytes, "a missed goal took the whole reserve");
-        }
-    }
-
+    /// The per-run caps take a prefix of the items: no prefix may hand over a
+    /// season before the one it must follow.
     #[test]
-    fn everything_safe_takes_the_whole_reserve_and_no_protection(specs in specs()) {
-        let (cards, verdicts) = library(&specs);
-        let plan = baseline_plan(&cards, &verdicts, &ReclaimGoal::AllSafe);
-        let order = oracle_order(&specs);
-        prop_assert_eq!(ids(&plan), order.iter().map(String::as_str).collect::<Vec<_>>());
-        prop_assert_eq!(plan.reclaimed_bytes, plan.eligible_bytes);
-    }
-
-    #[test]
-    fn per_volume_goals_never_cross_volumes_and_never_overshoot(
-        specs in specs(),
-        placement in prop::collection::vec(0usize..3, 24),
-        goals_gb in prop::collection::vec(0u64..=200, 3),
+    fn every_prefix_of_the_order_respects_precedence(
+        seasons in prop::collection::vec((0u32..3, 1u32..6, any::<bool>(), 0u32..500), 1..30),
+        target in 1u64..300,
+        emergency in any::<bool>(),
     ) {
-        let (cards, verdicts) = library(&specs);
-        let volume = |i: usize| format!("/v{}", placement[i]);
-        let goal = ReclaimGoal::PerVolume(VolumeGoals {
-            goals: goals_gb.iter().enumerate().map(|(v, gb)| (format!("/v{v}"), gb * GB)).collect(),
-            volume_of: cards.iter().enumerate().map(|(i, c)| (c.id.clone(), volume(i))).collect(),
-            handed: HashSet::new(),
-        });
-        let plan = baseline_plan(&cards, &verdicts, &goal);
-
-        for row in &plan.volumes {
-            let taken: Vec<&PlanEntry> = plan.entries.iter()
-                .filter(|e| cards.iter().position(|c| c.id == e.id).map(volume).as_deref() == Some(row.volume.as_str()))
-                .collect();
-            let reclaimed: u64 = taken.iter().map(|e| e.size_bytes).sum();
-            prop_assert_eq!(reclaimed, row.reclaimed_bytes);
-            if let Some(last) = taken.last() {
-                prop_assert!(reclaimed - last.size_bytes < row.goal_bytes, "{} overshot", row.volume);
+        let library: Vec<MediaCandidate> = seasons
+            .iter()
+            .enumerate()
+            .map(|(n, (show, index, played, regret))| MediaCandidate {
+                id: format!("{n}"),
+                ..season(&format!("show{show}"), *index, *played, f64::from(*regret) / 100.0)
+            })
+            .collect();
+        let result = plan(&library, &[forecast("tv", target, emergency)]);
+        let mut seen = std::collections::HashSet::new();
+        for item in &result.items {
+            if let Some(after) = &item.after {
+                prop_assert!(seen.contains(after.as_str()), "{} before {}", item.id, after);
             }
-            if row.reclaimed_bytes < row.goal_bytes {
-                prop_assert_eq!(row.reclaimed_bytes, row.eligible_bytes, "{} left reserve unused", row.volume);
-            }
+            seen.insert(item.id.as_str());
         }
-        prop_assert_eq!(plan.goal_met, plan.volumes.iter().all(|v| v.reclaimed_bytes >= v.goal_bytes));
     }
 }

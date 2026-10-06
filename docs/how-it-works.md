@@ -4,18 +4,30 @@ The [README](../README.md) is the short version. This page is the long one: how
 disks are measured, how items are matched across apps, how the forecast is
 checked, and what every part of the stack is asked for.
 
-## Storage governance: stay under 80%
+## Storage governance: a forecast per disk
 
-The daemon measures every disk that holds a library and governs each one with
-two watermarks — the Kubernetes image-GC high/low pattern:
+The daemon measures every disk that holds a library and forecasts each one a
+window ahead. Every cycle forecasts afresh from the measurement and the logs.
 
-- **Below the ceiling (80%), nothing is deleted.** A library under budget is
-  doing its job; deleting a safe-looking item there buys nothing.
-- **Crossing the ceiling latches eviction for that disk.** FLINCH frees the
-  **least expected regret per GiB first** — `(1 − P(safe)) / size`, so one large
-  item nobody will watch goes before fifty small ones — until the disk is back at
-  the **release mark (75%)**, then stops. The gap between the two is the
-  hysteresis: equal thresholds would delete one item after every download.
+```text
+v        = EWMA_α(bytes grabbed per day, last 30 days)
+U_proj   = U + v·W + queued bytes left − evictions not yet freed
+B_target = max(0, U_proj − θ_target·C_max + headroom)
+```
+
+- **U** is the disk's used bytes; **C_max** its size, or
+  `capacity.max_capacity_bytes` when that is smaller.
+- **v** is the daily download rate from Radarr's and Sonarr's grab history
+  (read at most every 6 hours, cached in `arr-grabs.json`), smoothed with
+  α = 0.2.
+- **Queued bytes left** come from their download queues; **evictions not yet
+  freed** are the recycle-bin and held credit below.
+- Defaults: W = 14 days, θ_target = 0.80, headroom = 50 GiB. All are in
+  Settings → Storage (`settings.json` `capacity`).
+
+B_target is what the plan must free on that disk. Zero on every disk means
+healthy: the solver does not run. A disk at θ_emerg (0.95) or more *now* is an
+emergency (see [The solver](#the-solver)).
 
 What "a disk" means is taken seriously, because each mistake here deletes the
 wrong thing:
@@ -31,10 +43,10 @@ wrong thing:
 - **Per disk, never pooled.** Freeing the TV disk does not relieve a full movie
   disk; each item is attributed to its disk through its own app and path, and a
   share mounted at `/movies` in Radarr and `/tv` in Sonarr is recognised as one
-  filesystem, so its goal is not counted twice.
+  filesystem, so its target is not counted twice.
 - **The recycle bin is credited.** Radarr/Sonarr delete into a recycle bin on the
   same disk, so freed space shows up late. FLINCH keeps a ledger of what it
-  handed over and credits those bytes against the goal until the bin's window
+  handed over and takes those bytes off the projection until the bin's window
   (read live from each app) passes and the disk shows them freed — otherwise
   every cycle in that window would evict a second batch for the same gap.
 - **Freed space is checked, not assumed.** After an eviction's recycle-bin
@@ -42,7 +54,7 @@ wrong thing:
   crediting the bytes for a 2-day grace. If no drop shows by then, the eviction
   is *held*: something else still holds the bytes, typically a torrent seeding
   the same hardlinked file, or a filesystem snapshot. Held bytes stay credited
-  against the goal, so nothing more is evicted for them, and are reported, for
+  in the projection, so nothing more is evicted for them, and are reported, for
   up to 14 days after they were marked held or until the drop shows (then the
   credit ends). An eligible item on such a disk says why it waits: "held while
   /movies waits for space handed over earlier that the disk has not released".
@@ -53,73 +65,130 @@ wrong thing:
   the Storage card say how much of the disk is neither library media nor an
   eviction FLINCH still credits: used − library − credited evictions, never
   below zero. Downloads, the recycle bins of other deletions and files no app
-  tracks land there. It is shown before anything is evicted, because over the
-  ceiling those leftovers are otherwise paid for with library titles.
-- **More aggressive only on measured evidence.** An unmeasured disk, malformed
-  watermarks or an unreadable app evict *nothing*.
+  tracks land there. It is shown before anything is evicted, because those
+  leftovers are otherwise paid for with library titles.
+- **More aggressive only on measured evidence.** An unmeasured disk or an
+  unreadable app evicts *nothing*. An unreadable grab history or queue counts
+  as zero and is reported.
 - **"Covered" and "met" are different claims.** The status says whether the
-  eligible set *covers* a disk's goal and how much is *handed* to Maintainerr so
-  far; the goal counts as met only once the handed bytes cover it, which grace
-  runs and per-run caps pace over a few runs.
+  eligible set *covers* a disk's target and how much is *handed* to Maintainerr
+  so far; the target counts as met only once the handed bytes cover it, which
+  grace runs and per-run caps pace over a few runs.
 
 ```bash
-# The same governance, offline, against the checked-in fixture
-./target/release/flinch-archive plan --used-gb 820 --total-gb 1000
-capacity 82.0% of 1000 GiB — ceiling 80%, release 75%
-over the ceiling: free 70.0 GiB to reach the release mark
-12 items scanned, 5 candidates, 15.0 GiB planned (15.0 GiB eligible)
+# The same forecast and plan, offline, against the checked-in fixture
+./target/release/flinch-archive --cards fixtures/arr/cards.json --used-gb 820 --total-gb 1000 --ingest-gb-per-day 2
+82.0% used, 848.0 GiB projected in 14 d: free 98.0 GiB
+9 of 12 items selectable; plan takes 9 (22.8 GiB, regret 1.23) by Milp
+  EVICT     5.77 GiB  Movie: Duplicate Pair A                   Watched 16 mo ago · P(watch) 1% · regret 0.02
+  …
 ```
 
-## The keep/reclaim reflex
+`--queue-gb`, `--target-pct`, `--emergency-pct`, `--window-days`,
+`--headroom-gb` and `--grace-days` set the rest of the forecast;
+`--never-played` lets unplayed items compete; `--plan out.json` writes the
+manifest. It never deletes anything.
 
-What *may* go is decided by deterministic rules; what goes *first* is decided by
-P(safe), capped at the hand-set priors once a model is adopted; nothing below a
-floor is ever touched.
+## The plan: least total regret
 
-- **Rules are absolute, and separate from the forecast.** Favorites,
-  keep-collections, the operator's own Maintainerr exclusions, the keep tag
-  (`flinch-keep` by default) as a Radarr/Sonarr tag *or* a Plex label or
-  collection, active items and the newest aired season are immune. The plan
-  gates on a score that carries these rules. The Movies and Series tables show
-  the forecast alone, with a lock beside any item a rule keeps; the Overview's
-  candidate lists show the P(safe) the plan gates on. Folding the rules into
-  the forecast used to make a guarded season read "99% sure to be played"
-  whether or not anyone would.
-- **The floors are on P(safe).** An item the rules allow is eligible only when
-  its P(safe), the score that carries the rules, is at least the operator's
-  `score_floor` (default 0.75). The rules allow a never-played item only while
-  never-played reclaim is armed (by its switch, or by default while eviction is
-  latched on a disk), after 90 days on disk by default, while no other season
-  of the show has been played, and when its P(safe) also clears that rule's own
-  floor (`unwatched_reclaim_floor`, default 0.75). The plan's model delete floor
-  (0.95) never sees a probability: it is checked against the rules' own answer,
-  1.0 for every delete they allow, so it adds no gate of its own.
-- **A fitted model can narrow, never widen.** The score floor, the never-played
-  floor and the eviction order read the lower of two P(safe)s: the running
-  model's and the hand-set priors' at the operator's `score_temperature`
-  (default 1.6). If either cannot be computed, the item is held. So adopting a
-  fit can hold an item the priors would pass, but never passes one they hold.
-  The forecast in the Movies and Series tables, which `/v1/systemone` also
-  answers with, stays the running model's, and nothing that deletes gates on
-  it; the Overview's candidate lists show the capped P(safe), so the two can
-  differ. To free more, lower the score floor, and for items nobody played the
-  never-played floor as well.
+### Regret
+
+```text
+R = P(watch within 90 days) × C_reacq × A_household
+```
+
+- **P(watch)** comes from an exponential hazard, λ = λ₀·exp(β·x) and
+  P = 1 − exp(−90·λ). The features are ln(1 + days since the last play)
+  (never played: days on disk), ln(1 + finished viewings), ln(1 + plays of
+  the show in the last 14 days), and cos(2π·days since the last play / 365.25)
+  for the film played every December. The hand-set priors are λ₀ = 0.004/day
+  and β = −0.5 (recency), 0 (viewings), +0.7 (show plays), +0.3 (annual
+  cycle), set from this household's record: finished titles are almost never
+  replayed, so finishing earns nothing, and watching the show now is the strong
+  signal; the [daily fit](#accuracy-you-can-check) replaces them only when it
+  beats them. When a viewer with a play in the last 30 days is 10–90% through
+  the item, P is at least 0.95. It is the only probability FLINCH computes.
+- **C_reacq**, the cost to download it again, is
+  max(0.1, 1 + 0.3·log₁₀(size / 1 GB) + 2 / max(seeders, 1) + 5·[no usenet copy
+  within retention]). The seeders and retention terms count only when Prowlarr
+  and SABnzbd supply them.
+- **A_household** is 1 + the largest w·(2·[watchlisted] + 1.5·[requested])
+  over Seerr users, with w from `planner.user_weights` (Seerr display name,
+  default 1). The leading 1 keeps an item nobody claimed at P × C, not 0.
+
+Each external source is best effort. One that is not configured or cannot be
+read adds one line to the status problems and counts as no grabs, no queue, no
+claims, or no seeders and retention terms (see
+[Integrations](#integrations-by-identity--never-by-title) for what each is
+asked, and [deploy/README.md](../deploy/README.md#configure) to connect them).
+
+### Who competes
+
+Every movie and season competes on regret alone, except:
+
+- **Pinned:** a favorite, a keep collection, the keep tag (`flinch-keep` by
+  default) as a Radarr/Sonarr tag or a Plex label or collection, or your own
+  Maintainerr exclusion.
+- **In its grace period:** on disk fewer than `planner.grace_period_days` (30).
+- **Not matched in Plex:** Maintainerr could not act on it.
+- **On no governed disk.**
+- **No watch evidence:** no watch source reported on it.
+- **Never played,** unless Settings → Planner → Never played is on. Even then
+  it is held while a watch source was not read in full or the Leaving Soon
+  title is blank.
+
 - **Watch state is external and fail-closed.** *arr knows files; only the media
   server knows "watched". A movie counts as watched when Plex counted a view or
   Tautulli recorded a stream of at least 85%; a play that stopped sooner, or a
   stream whose percentage Tautulli could not report, counts as started, not
   watched. Where Plex's and Tautulli's records disagree, the newest decides, so
   a later start that Plex did not count outweighs an earlier finished play.
-  Missing or partial evidence protects; it never deletes. Never-played reclaim
-  arms only when every configured watch source was read completely this cycle.
-  Even then, an item needs positive evidence: a watch source that reported on it
-  and found no finished play of a movie, or no play at all of a season. An item
-  no source reported on is never reclaimed as unplayed, however large or old it
-  is.
-- **Dwell starts when the file arrived**, not when the title was requested.
-- **Never a delete path for a model.** A model never deletes and never
-  overrides a protection. Its P(safe), capped at the priors, is checked
-  against the floors above and orders what passes.
+  Missing or partial evidence protects; it never deletes. Even with complete
+  evidence, an item needs positive evidence: a watch source that reported on
+  it and found no play. An item no source reported on is never reclaimed as
+  unplayed, however large or old it is.
+- **Days on disk start when the file arrived**, not when the title was
+  requested.
+
+Eviction safety, shown per item in the Movies and Series tables, gates
+nothing: clamp((1 − P(watch)) − max(0, C_reacq − 1)/10, 0, 1), so it never
+reads above 1 − P(watch). Neither does the [quality advice](#quality-advice-keep-downgrade-or-evict).
+
+### The solver
+
+```text
+min  Σ R_i·x_i
+s.t. Σ_{i on disk d} Ŝ_i·x_i ≥ B̂_d   for every disk d with a target
+     season order (below)
+     x_i ∈ {0, 1}
+```
+
+Sizes Ŝ and targets B̂ are rounded up to `planner.quantum_mb` (100 MiB). HiGHS
+solves it exactly. In an emergency, or if HiGHS fails, a greedy pass takes the
+most bytes per unit of regret first, under the same order. The status names
+the method: `milp`, `emergency` or `solver_fallback`.
+
+- **Season order.** Within a show, unplayed seasons leave from the last one
+  back, so the start of a show nobody began goes last. Played seasons leave
+  from the first forward. A season that cannot go keeps every season due to
+  leave after it: excluding season 5 of an unplayed show keeps seasons 1–4.
+- **Plan order.** Items are listed so each follows the one it depends on, and
+  the per-run caps never hand over a season before its predecessor.
+- **The plan file.** `state/eviction-plan.json` is written every cycle, dry run
+  or not: the forecast per disk, the target, the method, and each item with
+  its size, regret and reason.
+
+### Hand-off
+
+`planner.dry_run` is on by default (Settings → Planner → Dry run): the plan is
+written and every Maintainerr write is printed, not sent. `FLINCH_DRY_RUN=1`
+forces a dry run whatever the setting says. With dry run off, items that stay
+selected for the grace runs join a collection, within the per-run caps.
+
+FLINCH writes Maintainerr exclusions only for pinned items and for items
+someone is partway through (unless the plan takes them). Everything else is
+neither shielded nor evicted by FLINCH, so your own Maintainerr rules still
+apply to it.
 
 ## Leaving Soon: nothing unwatched goes without a warning (one exception: see Known limits)
 
@@ -139,7 +208,7 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
   recommended) or without a window ("Take action after days"), the status says
   so and the unwatched items wait. They are never sent to a delete collection
   instead. While the title is blank, never-played reclaim is held off too, so
-  unwatched items never count toward a disk's capacity goal and watched items
+  items nobody played never count toward a disk's target and watched items
   free the space instead. An item already waiting in a Leaving Soon
   collection that breaks later stays in it, and Maintainerr still acts on
   that collection's schedule. Clearing or renaming the title takes what waits
@@ -216,10 +285,13 @@ nothing). Every join goes through catalogue ids:
 
 | System | FLINCH reads | FLINCH writes |
 | --- | --- | --- |
-| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, each season's monitored flag, tags, root folders with their free space, disks, recycle-bin settings; import and removal history, once a day | nothing today (see Recyclarr) |
+| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, each season's monitored flag, tags, root folders with their free space, disks, recycle-bin settings; import and removal history, once a day; grabs of the last 30 days, every 6 hours; the download queue | nothing today (see Recyclarr) |
 | **Plex** | every library, paged, with `includeGuids`; each show's seasons with their episode counts (`/children`, because the section's own season listing leaves the counts out); full history; accounts; labels and collections named like the keep tag; episode GUIDs of a show whose season counts disagree | nothing |
 | **Tautulli** | full history, paged, per user; each user's and library's `keep_history` switch | nothing |
-| **Maintainerr** | version, whether Seerr is configured, collections with their *arr action, windows, Plex visibility and "Force delete Seerr request", memberships, exclusions | exclusions for kept items, collection adds for evictions (Leaving Soon or delete), release of its own exclusions for items proven gone — by Plex ratingKey |
+| **Maintainerr** | version, whether Seerr is configured, collections with their *arr action, windows, Plex visibility and "Force delete Seerr request", memberships, exclusions | exclusions for pinned items and items someone is partway through, collection adds for evictions (Leaving Soon or delete), release of its own exclusions for items proven gone — by Plex ratingKey |
+| **Seerr** (optional) | every request that was not declined, users, each user's Plex watchlist | nothing |
+| **Prowlarr** (optional) | one search per item, at most 20 per cycle, cached 7 days: the best-seeded torrent's seeders, the newest usenet post's age | nothing |
+| **SABnzbd** (optional) | its servers' retention | nothing |
 
 - **Plex ↔ *arr** join by GUID (`tmdb://`, `tvdb://`, `imdb://`). A season joins
   when Plex's episode count equals Sonarr's file count; when they differ, it
@@ -238,12 +310,12 @@ nothing). Every join goes through catalogue ids:
   `allLeaves`. They are fetched only while unjoined episode plays exist, and
   cached for 24 h in `episode-guids.json`. Legacy agent GUIDs and titles never
   join.
-- **Maintainerr** is driven through a planner FLINCH can test: it owns exactly
-  the exclusions and memberships it created, never touches an exclusion the
-  operator made (it treats one as a keep), validates each collection, hands
-  movies and seasons to their own collections within per-run caps, and verifies
-  every write by reading it back. With enforcement off it reads the live state
-  and prints every write it would send.
+- **Maintainerr** is driven through a sync plan FLINCH can test: it owns
+  exactly the exclusions and memberships it created, never touches an
+  exclusion the operator made (it treats one as a pin), validates each
+  collection, hands movies and seasons to their own collections within per-run
+  caps, and verifies every write by reading it back. In a dry run it reads the
+  live state and prints every write it would send.
 - **Exclusions for gone items are released.** FLINCH releases the exclusions
   it created for an item only once it is proven gone: no file in this cycle's
   complete Radarr/Sonarr read, *and* absent from a complete Plex listing
@@ -269,149 +341,60 @@ nothing). Every join goes through catalogue ids:
 - **Secrets stay out of logs.** Plex and Tautulli take their token in the URL;
   FLINCH strips the URL from every error before printing the full cause.
 
-## Recyclarr: steering what comes in
+## Quality advice: keep, downgrade or evict
 
-Keeping under 80% is cheaper upstream. Recyclarr owns what quality profiles
-*are*, so FLINCH never writes a profile — it advises, per item, which tier the
-household's evidence says it deserves (`premium` / `compact`). The companion
-config is [`deploy/recyclarr/recyclarr.flinch.yml`](../deploy/recyclarr/recyclarr.flinch.yml).
+Each item also gets advice on its quality, from the same P(watch), regret and
+C_reacq the planner uses, first match wins:
+
+- **Keep the original** when someone is partway through it, P(watch) ≥ 0.50,
+  or regret ≥ 1.0.
+- **Downgrade** when P(watch) ≥ 0.15 and the file is at least 15 GiB: a
+  compact release is assumed to free about 80% of it.
+- **Keep** when C_reacq > 3: it would be hard to get back.
+- **Eligible for eviction** otherwise.
+
+The advice is published only (`items.json` `advice`, and the counts in
+`status.json` `quality`). Recyclarr owns what quality profiles *are*, so FLINCH
+never writes a profile or moves an item between them. The companion config,
+[`deploy/recyclarr/recyclarr.flinch.yml`](../deploy/recyclarr/recyclarr.flinch.yml),
+defines a compact profile to downgrade into.
 
 ## Accuracy you can check
 
-The forecast is a question FLINCH can check against its own past: at many past
-cut dates, "given only what was known then, did anyone play this in the next 30
-days?". Presence at each date comes from the Radarr and Sonarr history, so a
-title re-downloaded after a library migration still counts from when the
-household first had it. The daemon builds that panel from the files it already
-publishes and fits the forecast **once a day**. Every row is judged out of fold:
-forecast by a model fitted without that title. Two models compete:
+P(watch) is a question FLINCH can check against its own past: at monthly cut
+dates back to 720 days, "given only the plays before then, did anyone play
+this in the next 90 days?". Only cuts whose 90 days have fully passed count.
+Presence at each date comes from the Radarr and Sonarr history, so a title
+re-downloaded after a library migration still counts from when the household
+first had it. The daemon builds that panel from the files it already publishes
+and fits the hazard **once a day**. Every row is judged out of fold, in 4 folds
+split by title, so no title is scored by a model fitted on it. Two candidates
+compete, both fitted on the complementary log-log likelihood by Fisher
+scoring:
 
-- **Recalibrated priors.** It keeps the hand-set priors' ranking and fits only
-  how sure to be: a slope and an intercept on their logit, pulled toward the
-  deployed mapping. Because it moves two numbers, it needs 40 questions and 2
-  played titles.
-- **Full fit.** It relearns every weight, genre taste included. It needs 120
-  questions and 12 of each outcome.
+- **Recalibrated priors.** ln λ = a + b·ln λ_prior: it keeps the priors'
+  ranking and fits only how sure to be. It needs 40 rows and 2 of each
+  outcome.
+- **Full fit.** It relearns all 5 parameters, pulled toward the hand-set
+  priors as if by 25 pseudo-observations. It needs 120 rows and 12 of each
+  outcome.
 
-Each must beat the priors' out-of-fold Brier without losing their ranking; of
-those that do, the one with the better log-loss is adopted. An adopted model
-sets the forecast, but it can only narrow what the floors pass (see the
-keep/reclaim reflex above). The UI's **Forecast model** card shows which model
-runs, what it learned from, its scores, and what is still missing.
-
-The same panel is exported for any other model, and scored side by side:
-
-```bash
-# One command: ask any System One server (JEV, or a local Kev, Laya or Nimble
-# server) every panel row, and score it against FLINCH on the same rows
-SYSTEMONE_API_KEY=… flinch-fit --state-dir /state --against https://api.typesafe.ai --model <name> --write
-
-# Or by hand: export the as-of-cut questions, ask anything, score the answers
-flinch-fit --state-dir /state --export-panel panel.jsonl
-flinch-fit --state-dir /state --now <printed by the export> --score predictions.jsonl   # {id, cut_days, p}
-```
-
-`--write` stores the result in `benchmark.json`, and the Forecast model card
-shows it beside FLINCH's own scores. Only the server's origin is printed or
-stored. The key is read from an environment variable (`--api-key-env`, default
-`SYSTEMONE_API_KEY`), never from the command line. Every comparison also
-reports FLINCH minus the other model with a 95% interval from a paired
-bootstrap over titles, so "better" is a claim with an interval, not a point.
-
-On this household, 2026-09-23: 79 questions over 13 titles, with the same as-of
-state and the same question sent to `typesafe/jev-1.13.0` and to Laya
-(`convaiinnovations/laya` 0.3.11, served locally on a CPU):
-
-| model | AUC ↑ | Brier ↓ | log-loss ↓ | ECE ↓ |
-| --- | --- | --- | --- | --- |
-| JEV | 0.734 | 0.069 | 0.294 | 0.228 |
-| Laya | 0.578 | 0.169 | 0.522 | 0.368 |
-| FLINCH priors (hand-set) | 0.838 | 0.264 | 0.748 | 0.446 |
-| **FLINCH, recalibrated priors (out of fold)** | **0.838** | **0.024** | **0.115** | **0.052** |
-| FLINCH, full fit (out of fold) | 0.448 | 0.025 | 0.151 | 0.011 |
-
-FLINCH minus the other model, 95% over resampled titles:
-
-| recalibrated FLINCH vs | Brier | log-loss | AUC |
-| --- | --- | --- | --- |
-| JEV | better [−0.061, −0.028] | better [−0.225, −0.125] | no clear difference [+0.000, +0.283] |
-| Laya | better [−0.191, −0.098] | better [−0.511, −0.304] | no clear difference [−0.038, +0.539] |
-
-**What this does and does not show.** These tables are a snapshot from
-2026-09-23 on 79 questions, with only 2 of the 13 titles played within 30 days
-of a cut. The recalibrated row is a candidate: the daily fit may or may not
-adopt it, and the Forecast model card shows which model runs. Its Brier and
-log-loss are better than JEV's and Laya's for this household, but on the same
-rows a constant forecast of the base rate scores Brier 0.0247 and log-loss
-0.118. So most of FLINCH's lead on probabilities is knowing this household's
-base rate, which a zero-shot model cannot know. Ranking is no clear difference
-with that few played titles, though FLINCH leads on the point estimate. The
-full fit alone loses to JEV at ranking (AUC 0.45); that is why recalibration
-comes first. The comparison reruns as the record grows.
-
-How FLINCH relates to the System-One models:
-
-| | JEV | Laya | Kev | Nimble | FLINCH |
-| --- | --- | --- | --- | --- | --- |
-| Source | TypeSafe AI, closed | Convai Innovations, Apache-2.0 | Jared Palmer, Apache-2.0 | Bespoke Labs, open | this repo, MIT |
-| Model | undisclosed; trained with RLCD | ModernBERT-large encoder, 512-token context | Qwen3.5 0.8B / 4B / 9B | Qwen3.5-9B LoRA, answer-token logits | logistic scorecard over atomic signals |
-| Runs on | cloud API, 70–500 ms | Apple Silicon (MLX) or PyTorch | CUDA, ROCm, MLX; 4B/9B fit a 32 GB Mac | Apple Silicon or a BF16 GPU | any CPU, microseconds |
-| Reads | text | text | text | text + flat schema | structured *arr / Plex / Tautulli state |
-| Learns your household | no | no | retrainable | retrainable | yes, daily, gated out of fold |
-
-## Genre taste: what this household reaches for
-
-A title nobody has played yet says little beyond "never played" and "on disk N
-days". FLINCH learns what this household reaches for from its own history: how
-often titles of each genre (from Radarr and Sonarr) were played within 30 days.
-No model server, no network, no settings.
-
-- **Small samples lean on the household.** A genre seen only a few times leans
-  toward the household's overall play rate, and a title with several genres gets
-  their average, so overlapping genres (Action and Thriller travel together)
-  are not counted twice.
-- **No leaks into the past.** The rate used at a date counts only outcomes that
-  had fully played out by then, so the backtest never sees the future. The
-  daily fit recomputes the rates and stores them in `state/fit.json`.
-- **It changes nothing on its own.** The signal starts with zero weight and
-  moves P(safe) only once the daily fit shows it improves the forecast on
-  held-out titles.
-
-## Ask FLINCH like any System One model
-
-`flinch-web` also serves TypeSafe's System One API at `POST /v1/systemone`. It
-is read-only and, like the rest of the JSON API, takes FLINCH's API key
-(`FLINCH_WEB_TOKEN`) the way Sonarr takes its own: as `X-Api-Key`, or as
-`Authorization: Bearer` for clients that only send that. So a Home Assistant
-`rest_command`, n8n or any HTTP client can ask FLINCH about an item the way it
-asks JEV, Kev or Laya. (TypeSafe's Python SDK is not supported yet.) The answer
-comes from the latest snapshot the daemon published.
+Either also needs played outcomes from at least 2 titles, an out-of-fold AUC
+(the C-index of the binary outcome) of at least 0.60 and no more than 0.02
+behind the priors', and a Brier at least 0.005 better than the priors'. Of the
+candidates that clear that gate, the one with the lower log-loss is adopted
+and written to `state/hazard.json`; when a later fit falls short, the file is
+removed and the priors run again. `state/fit.json` holds the last fit's
+report: the candidate, its out-of-fold AUC, Brier and ECE beside the priors',
+and its parameters. The UI's **Watch model** card shows it.
 
 ```bash
-curl -s -X POST https://flinch.example.com/v1/systemone -H "X-Api-Key: $FLINCH_WEB_TOKEN" \
-  -d '{"state": {"title": "Heat", "year": 1995},
-  "questions": {"safe": {"type": "noul"}, "decision": {"type": "choice", "criteria": ["keep", "delete"]}}}'
+flinch-fit --state-dir /state            # the same report, printed
+flinch-fit --state-dir /state --json     # the fitted model as JSON
+flinch-fit --state-dir /state --write    # and adopt it under the same gate
 ```
 
-`state` names one library item: an id (`"radarr-7"`, `"sonarr-21-s1"`),
-`{"id": …}`, or `{"title": …, "year"?: …, "season"?: …}`. A title must match
-exactly, ignoring case, and pick out a single item; otherwise the reply is a 400
-listing the candidate ids. FLINCH ignores free-text `instructions`, and the
-question key picks the meaning:
-
-- `safe` (noul): P(nobody plays it within the horizon)
-- `played` (noul): 1 − `safe`
-- `decision` (choice): the plan's verdict with probability 1.0; your
-  `criteria` must include it
-
-`safe` and `played` are the forecast alone: favorites, the keep tag and your
-Maintainerr exclusions do not enter it and no rule caps it, so a favorite can
-read `safe` 0.99. For the plan's verdict, ask `decision`. The endpoint only
-reports: a `decision` of `delete` is carried out by Maintainerr alone, and only
-while Enforcement is on, so an automation should never delete on any answer.
-
-Any other key, a wrong type, or an item with no forecast returns 400
-`{"error": …}` saying why.
+`--now <unix seconds>` pins the panel's date to reproduce a report.
 
 ## The web UI
 
@@ -420,11 +403,11 @@ publishes. Every API call needs either a session, which the browser gets by
 logging in with `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD`, or the API key
 (`FLINCH_WEB_TOKEN`) that automations send. The only things it writes are
 `settings.json` and the run trigger: never the stack. It shows each disk
-against its watermarks, what is being freed, what is waiting on a recycle bin,
-what is held and what isn't library media, every item's forecast and decision
-in plain words, the forecast model's standing, the Maintainerr sync with its
-warnings, deletions FLINCH did not make, evidence health, and a glossary for
-every term.
+against its forecast and target, what is being freed, what is waiting on a
+recycle bin, what is held and what isn't library media, every item's
+P(watch), eviction safety, quality advice and decision in plain words, the
+watch model's standing, the Maintainerr sync with its warnings, deletions
+FLINCH did not make, evidence health, and a glossary for every term.
 
 **Is it working?** The header says so on every tab: a green dot before
 "Last run …" when the last cycle succeeded on schedule, red "Overdue" when no
@@ -438,33 +421,37 @@ daemon itself is alive: "Last run" moves within seconds.
 ```mermaid
 flowchart LR
     subgraph IN["read"]
-        ARR["Radarr / Sonarr<br/>ids · files · disks"]
+        ARR["Radarr / Sonarr<br/>ids · files · disks · grabs · queue"]
         PX["Plex + Tautulli<br/>GUIDs · history"]
+        EXT["Seerr · Prowlarr · SABnzbd<br/>claims · availability"]
     end
     subgraph DECIDE["decide"]
-        ID["identity join<br/>(GUID)"] --> SC["forecast P(safe)"]
-        FIT["daily fit<br/>(held-out gate)"] --> SC
-        SC --> POL{"rules + floors"}
-        CAP["per-disk watermarks<br/>80% / 75% + recycle credit"] --> PLAN
-        POL -->|eligible| PLAN["least regret per GiB"]
-        POL -->|guarded| KEEP["keep"]
+        ID["identity join<br/>(GUID)"] --> REG["regret<br/>P(watch) × C_reacq × A"]
+        REG --> EXC{"excluded?"}
+        EXC -->|no| PLAN["MILP (HiGHS)<br/>greedy in an emergency"]
+        EXC -->|pinned| KEEP["keep"]
+        CAP["per-disk forecast<br/>B_target, recycle credit"] --> PLAN
+        FIT["daily fit<br/>(out-of-fold gate)"] --> REG
+        REG --> QA["quality advice<br/>keep · downgrade · evict"]
     end
     subgraph OUT["act"]
+        EP["eviction-plan.json"]
         MX["Maintainerr<br/>exclusions · collections"]
-        RC["Recyclarr tiers<br/>(advice)"]
+        QA_OUT["items.json advice<br/>(published only)"]
     end
     ARR --> ID
     PX --> ID
     PX --> FIT
+    EXT --> REG
     ARR --> CAP
-    PLAN -->|over the ceiling| MX
+    PLAN --> EP
+    PLAN -->|dry run off| MX
     KEEP --> MX
-    SC --> RC
+    QA --> QA_OUT
 ```
 
-Deterministic rules decide what is permitted; P(safe), capped at the hand-set
-priors once a model is adopted, decides what is preferred; below the confidence
-floor nothing happens.
+The forecast decides how much goes, exclusions decide what may go, and regret
+decides what goes.
 
 ## Known limits
 
@@ -479,6 +466,10 @@ One of these can delete without a warning:
   episodes included. Until a fix counts only the episodes on disk, keep
   watched episodes on disk, or keep such a season with the keep tag on its
   show or with a keep collection.
+
+One makes eviction less careful: a Seerr, Prowlarr or SABnzbd that is missing
+counts as no claim and no extra re-download cost, so items can look cheaper to
+lose than they are. The status problems name each missing source.
 
 The rest fail closed: the affected items are kept, never deleted.
 
@@ -502,9 +493,9 @@ The rest fail closed: the affected items are kept, never deleted.
   collection can hold a season).
 - A Tautulli-only household (no Plex) resolves nothing by GUID.
 - One Radarr and one Sonarr instance are supported.
-- Recyclarr tiers are advice: moving items between quality profiles is a
-  separate, explicit step.
-- While a named Leaving Soon collection is missing or broken, armed
-  never-played items still count toward a disk's goal and wait at the
-  hand-off, so the disk can stay over its ceiling until the collection is
+- Quality advice is published only: moving an item to another quality
+  profile is your step, and it can trigger a re-download.
+- While a named Leaving Soon collection is missing or broken, selected items
+  nobody finished still count toward a disk's target and wait at the
+  hand-off, so the disk can stay over its target until the collection is
   fixed; the Maintainerr card names the problem.

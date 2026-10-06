@@ -40,10 +40,7 @@ pub fn history_entries(targets: &[WatchTarget], resolution: &Resolution, rows: &
                 }
             }
         };
-        out.insert(
-            target.id.clone(),
-            WatchEntry { id: target.id.clone(), last_watched_epoch, progress, rewatch_score: None, source: WatchSource::PlexHistory },
-        );
+        out.insert(target.id.clone(), WatchEntry { id: target.id.clone(), last_watched_epoch, progress, source: WatchSource::PlexHistory });
     }
     out
 }

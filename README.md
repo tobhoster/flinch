@@ -8,9 +8,9 @@
 <h1 align="center">FLINCH</h1>
 
 <p align="center">
-  <b>Keeps your Plex library under 80% full, and never deletes what your household still wants.</b><br>
-  A calibrated forecast for the *arr stack. It learns your household, checks itself every day,
-  and leaves the deleting to Maintainerr.
+  <b>Keeps each Plex library disk under 80% full by freeing what your household will miss least.</b><br>
+  A storage planner for the *arr stack. It forecasts every disk, picks the evictions with the
+  least expected regret, and leaves the deleting to Maintainerr.
 </p>
 
 <p align="center">
@@ -23,30 +23,29 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/overview.png" alt="The FLINCH Overview: disk use against the 80% ceiling, how much of the disk isn't library media, the forecast model scored against another model, and why each item is kept" width="900">
+  <img src="docs/screenshots/overview.png" alt="The FLINCH Overview: each disk now and 14 days ahead against the 80% target, what the plan frees and at what regret, and what isn't library media" width="900">
 </p>
 
 ---
 
 ## ✨ What it does
 
-- **Keeps every disk under a ceiling.** Below 80% nothing is deleted. When a disk
-  crosses it, FLINCH frees space until the disk is back at 75%, then stops.
-- **Frees what nobody will miss, first.** For every movie and season it forecasts
-  the chance that nobody in the household plays it in the next 30 days, and frees
-  the least-missed gigabytes first.
-- **Learns your household.** The forecast comes from your own Plex, Tautulli,
-  Radarr and Sonarr history: who played what, when, and what sat untouched.
-- **Checks itself every day.** It replays its own past ("given what was known
-  then, did anyone play this?"), scores itself on titles it never saw, and only
-  switches to a learned model when that beats the built-in one.
+- **Plans ahead, per disk.** Nothing is deleted while a disk's two-week
+  forecast stays 50 GiB under 80%.
+- **Frees what nobody will miss, first.** It picks the set of evictions with
+  the least expected regret, from your household's plays, requests and
+  watchlists, and how hard each title is to download again.
+- **Checks its forecast every day.** A daily fit replays the household's own
+  past ("given what was known then, did anyone play this within 90 days?") and
+  adopts a fitted P(watch) only when it beats the hand-set priors on titles it
+  never saw.
 - **Warns before anything unwatched goes** (one exception: see
   [Known limits](docs/how-it-works.md#known-limits)). A title nobody finished
   goes to a *Leaving Soon* row on the Plex home screen first. Play it and
   FLINCH takes it back.
-- **Never touches what you protect.** Favorites, your keep tag, the newest aired
-  season and your own Maintainerr exclusions are off limits. Missing evidence
-  means keep.
+- **Never touches what you protect.** Favorites, your keep tag, keep
+  collections and your own Maintainerr exclusions are off limits, and so is
+  anything on disk less than 30 days. Missing evidence means keep.
 - **Says where the space went.** Each disk shows how much of it isn't library
   media, and any space an eviction should have freed that something still holds.
 - **Keeps Maintainerr tidy.** It releases its own exclusions for items that are
@@ -63,54 +62,36 @@ does the deleting, on its own schedule.
 
 ```mermaid
 flowchart LR
-    ARR["Radarr + Sonarr<br/>files · disks · history"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
+    ARR["Radarr + Sonarr<br/>files · disks · grabs · queue"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
     PX["Plex + Tautulli<br/>who played what, when"] --> ID
-    ID --> F["forecast<br/>P(nobody plays it in 30 days)"]
-    F --> R{"your rules<br/>and floors"}
-    R -- "kept" --> EX["Maintainerr exclusion"]
-    R -- "over 80%, least missed first" --> LS["Leaving Soon<br/>or delete collection"]
+    ID --> R["regret per item"]
+    EXT["Seerr · Prowlarr · SABnzbd"] --> R
+    ARR --> FC["forecast per disk<br/>14 days ahead"]
+    R --> S{"solver: least total regret<br/>that frees each target"}
+    FC --> S
+    S -- "selected" --> LS["Leaving Soon<br/>or delete collection"]
     LS --> M["Maintainerr deletes<br/>after the window"]
 ```
 
 1. **Match.** Every title is joined across Radarr, Sonarr, Plex and Tautulli by
    catalogue id, never by name. An item that does not match is left alone.
-2. **Forecast.** Each item gets P(safe), the chance nobody plays it in the next
-   30 days, with the reasons behind it.
-3. **Rules.** Deterministic rules decide what *may* go, and the forecast never
-   overrides a protection. Nothing below the confidence floor is touched.
-4. **Order.** Over the ceiling, items leave in order of expected regret per GiB,
-   `(1 − P(safe)) / size`, so one large file nobody will watch goes before fifty
-   small ones.
-5. **Hand off.** Kept items get a Maintainerr exclusion. Evictions join a
-   Maintainerr collection, and Maintainerr deletes them after its window. Every
-   write is read back to confirm it landed.
+2. **Forecast.** Each disk's use is projected 14 days ahead. The target is how
+   far that lands over 80%, plus 50 GiB. A target of zero on every disk means
+   nothing happens this cycle.
+3. **Regret.** Each item's regret is P(played within 90 days) × the cost to
+   download it again × how much the household claims it.
+4. **Exclude.** Pinned items, items in their 30-day grace period, items Plex
+   cannot address and items with no watch evidence never compete. Items nobody
+   played compete only when you allow it.
+5. **Solve.** An exact solver picks the cheapest set that covers each disk's
+   target, taking a show's seasons in order. At 95% full it switches to a fast
+   greedy pick.
+6. **Hand off.** The plan goes to `eviction-plan.json` every cycle. With dry
+   run off, selected items join a Maintainerr collection and Maintainerr
+   deletes them after its window. Every write is read back.
 
-The long version, down to recycle-bin accounting, is in
+The long version, with the formulas, is in
 [docs/how-it-works.md](docs/how-it-works.md).
-
-## 📊 Accuracy you can check
-
-FLINCH ships the harness that grades it. `flinch-fit` asks any
-[System One](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
-decision model the same question about the same state, and scores every answer
-side by side. On one household, 79 past questions over 13 titles (2026-09-23):
-
-| Model | AUC ↑ | Brier ↓ | Log-loss ↓ | ECE ↓ |
-| --- | --- | --- | --- | --- |
-| [JEV](https://typesafe.ai/blog/introducing-system-one-models-and-jev) (TypeSafe, cloud) | 0.734 | 0.069 | 0.294 | 0.228 |
-| [Laya](https://huggingface.co/convaiinnovations/laya) (local, CPU) | 0.578 | 0.169 | 0.522 | 0.368 |
-| **FLINCH**, scored on titles it never trained on | **0.838** | **0.024** | **0.115** | **0.052** |
-
-The table is a snapshot from 2026-09-23, with only 2 of the 13 titles played.
-The FLINCH row is the recalibrated priors: a candidate the daily fit may or may
-not adopt, not necessarily the model running. FLINCH's Brier and log-loss are
-better than both, with 95% intervals clear of zero, but on the same rows a
-constant forecast of the base rate scores Brier 0.0247 and log-loss 0.118. So
-most of that lead is knowing this household's base rate, which a zero-shot
-model cannot know. FLINCH also leads on ranking (AUC), but that lead is not
-yet significant. The comparison reruns as the history grows. Method, commands
-and the full table are in
-[docs/how-it-works.md](docs/how-it-works.md#accuracy-you-can-check).
 
 ## 🚀 Try the demo
 
@@ -126,7 +107,7 @@ docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
 Then open <http://localhost:7911> and log in as `demo` with the password `demo`.
 
 <p align="center">
-  <img src="docs/screenshots/movies.png" alt="The Movies table with one title open: its P(safe), its decision and the reasons behind it" width="900">
+  <img src="docs/screenshots/movies.png" alt="The Movies table with one title open: its P(watch), regret, decision and the reasons behind it" width="900">
 </p>
 
 ## ⬆️ Upgrading from 0.1.x
@@ -172,9 +153,10 @@ The full list is in the [0.2.0 release notes](https://github.com/tobhoster/flinc
 
 ## 📦 Install
 
-You need Radarr, Sonarr, Plex and Maintainerr 3.10 or newer; Tautulli is
-optional. FLINCH runs as two small pods on Kubernetes from one published image
-(`ghcr.io/tobhoster/flinch`, amd64 and arm64, about 35 MB, no GPU).
+You need Radarr, Sonarr, Plex and Maintainerr 3.10 or newer; Tautulli, Seerr,
+Prowlarr and SABnzbd are optional. FLINCH runs as two small pods on Kubernetes
+from one published image (`ghcr.io/tobhoster/flinch`, amd64 and arm64, about
+50 MB, no GPU).
 
 1. **Configure** the namespace and service URLs in
    [`deploy/kustomization.yaml`](deploy/kustomization.yaml).
@@ -190,17 +172,17 @@ optional. FLINCH runs as two small pods on Kubernetes from one published image
    ```
    `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD` are the UI's login; write
    every value without quotes. Plex goes in the same Secret or in
-   **Settings → Plex** later; Tautulli and a Maintainerr key are optional. See
+   **Settings → Plex** later; the other services' keys are optional. See
    [Configure](deploy/README.md#configure). Already running FLINCH with only
    the token? See [Upgrading from the access token](deploy/README.md#upgrading-from-the-access-token).
 3. **Install:** `kubectl apply -k deploy/`
 4. **Open the UI:** `kubectl -n media port-forward svc/flinch-web 7911:7911`,
    then <http://localhost:7911>, and log in with that username and password
    (see [Reach the UI](deploy/README.md#reach-the-ui)).
-   Enforcement starts **off**: FLINCH plans and logs every write it would
+   Dry run starts **on**: FLINCH writes its plan and logs every write it would
    make, and sends nothing.
 5. **Set up Maintainerr** (two delete collections and two *Leaving Soon*
-   collections), then turn on **Settings → Safety → Enforcement**.
+   collections), then turn off **Settings → Planner → Dry run**.
 
 The [install guide](deploy/README.md) covers each step, the exact Maintainerr
 settings, publishing the UI over HTTPS, running as a CronJob, building your
@@ -208,15 +190,12 @@ own image, and keeping your own values out of git.
 
 ## 🛡️ Safety
 
-- **Off until you say so.** A fresh install only plans and logs.
-- **Rules beat the model.** Favorites, the keep tag (`flinch-keep` by default: a
-  Radarr/Sonarr tag, a Plex label or a Plex collection), the newest aired
-  season, anything played in the last 30 days and your own Maintainerr
-  exclusions are never evicted, whatever the forecast says.
-- **A learned model can only narrow.** Adopting a fitted model never makes
-  more items eligible: the P(safe) the floors and the eviction order read is
-  capped at the hand-set priors. To free more, lower your Score floor (and,
-  for items nobody finished, the Never-played floor).
+- **Off until you say so.** Dry run is on by default: a fresh install only
+  writes its plan and logs.
+- **Pins beat the plan.** Favorites, the keep tag (`flinch-keep` by default: a
+  Radarr/Sonarr tag, a Plex label or a Plex collection), keep collections and
+  your own Maintainerr exclusions are never evicted. Neither is anything on
+  disk less than 30 days.
 - **Missing evidence keeps.** An item FLINCH cannot match, an item no watch
   source reported on, a watch source it could not read in full, or a disk it
   cannot measure means *keep*, never *delete*.
@@ -225,10 +204,11 @@ own image, and keeping your own values out of git.
   [Known limits](docs/how-it-works.md#known-limits)). With no *Leaving Soon*
   collection named, such items are held rather than sent to a delete
   collection.
-- **A floor on P(safe).** An item the rules allow must also clear your Score
-  floor (P(safe) ≥ 0.75 by default) before it can even be a candidate. One
-  nobody finished (a season: nobody played) is allowed only while never-played
-  reclaim is armed, and must clear its Never-played floor as well.
+- **Nothing unplayed unless you allow it.** Items nobody has played compete
+  only once you turn on **Settings → Planner → Never played**.
+- **Seasons leave in order.** A show's watched seasons go from the first,
+  unplayed ones from the last, and a season that must stay keeps every season
+  due to leave after it.
 - **Deletes only through Maintainerr.** FLINCH never deletes a file itself and
   never writes to Radarr or Sonarr. Every Maintainerr write is read back; a
   failed one is retried, never assumed.
@@ -240,8 +220,8 @@ own image, and keeping your own values out of git.
   for up to 14 days, so FLINCH evicts nothing more for them.
 
 The UI asks for a username and password (`FLINCH_WEB_USERNAME`,
-`FLINCH_WEB_PASSWORD`), because whoever can save Settings can turn on
-Enforcement; automations use the API key (`FLINCH_WEB_TOKEN`) instead. Serve
+`FLINCH_WEB_PASSWORD`), because whoever can save Settings can turn off dry
+run; automations use the API key (`FLINCH_WEB_TOKEN`) instead. Serve
 it over HTTPS and keep it off the internet; see
 [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.md).
 
@@ -251,38 +231,28 @@ it over HTTPS and keep it off the internet; see
 
 ## 🔌 Extras
 
-- **Ask FLINCH from your automations.** `POST /v1/systemone` answers in
-  TypeSafe's System One format, so a Home Assistant `rest_command` or n8n can
-  ask about any item the way they ask JEV, with your FLINCH API key
-  (`FLINCH_WEB_TOKEN`) in `X-Api-Key`, as Sonarr takes its own. `decision` is
-  the plan's verdict for the item; `safe` is the forecast alone and ignores
-  your keep rules, so never delete on it. The endpoint only reports: it changes
-  nothing, and only Maintainerr deletes.
-  [Details](docs/how-it-works.md#ask-flinch-like-any-system-one-model).
-- **Grade any model.** `flinch-fit --against <url>` benchmarks a System One
-  server on your own history.
-  [Details](docs/how-it-works.md#accuracy-you-can-check).
-- **Steer what comes in.** Per-item quality-tier advice for Recyclarr
-  (`premium` / `compact`).
-  [Details](docs/how-it-works.md#recyclarr-steering-what-comes-in).
+- **Quality advice.** Per item: keep the original, downgrade to a compact
+  release, or eligible for eviction. Published only; FLINCH never changes a
+  quality profile.
+  [Details](docs/how-it-works.md#quality-advice-keep-downgrade-or-evict).
 
 ## 🚧 Status
 
-- **737 tests pass**, with table-driven cases and property tests on everything
-  that decides a deletion: eviction order, watermark latching, recycle-bin
-  credit and the freed-bytes check, identity joins, Maintainerr sync and
-  exclusion releases, Leaving Soon routing and the forecast's no-leakage rules,
-  plus the API's login, session and API key checks, the settings bounds and
-  the response-size limit.
+- **Tested** with table-driven cases and property tests on everything that
+  decides a deletion: the disk forecast, regret, the solver and its season
+  order, recycle-bin credit and the freed-bytes check, identity joins,
+  Maintainerr sync and exclusion releases, Leaving Soon routing and the
+  forecast's no-leakage rules, plus the API's login, session and API key
+  checks, the settings bounds and the response-size limit.
 - **Checked on every change**: nothing merges into `main` without the tests,
   CodeQL and the Security workflow (secrets, dependency advisories and
   licenses, workflow linting, and a scan and smoke test of the image).
-- **In production on one homelab**, with enforcement on since 2026-09-22 (on
-  0.1.x; 0.2.0's changes merged on 2026-09-27).
-  Every keep-exclusion FLINCH writes is read back from Maintainerr each cycle.
-  Which model runs is not fixed: the daily fit adopts a fitted model only while
-  it beats the hand-set priors out of fold, and the Forecast model card on the
-  Overview shows which one is running.
+- **In production on one homelab**, handing items to Maintainerr since
+  2026-09-22 (on 0.1.x; 0.2.0's changes merged on 2026-09-27). The regret
+  planner is newer and unreleased. Every exclusion FLINCH writes is read back
+  from Maintainerr each cycle. The Watch model card on the Overview shows
+  whether a fitted P(watch) or the hand-set priors run: the daily fit adopts
+  one only while it beats the priors out of fold.
 - **TV on NFS can go ungoverned.** On that homelab, Sonarr's disk report left
   out all three of its NFS mounts, so FLINCH cannot measure those disks and never
   evicts from them. The Storage card says so.
@@ -296,6 +266,9 @@ it over HTTPS and keep it off the internet; see
   [docs/how-it-works.md](docs/how-it-works.md#known-limits).
 
 ## 🧑‍💻 Development
+
+Building needs CMake, make, a C++ compiler and libclang: the HiGHS solver
+compiles from source.
 
 ```bash
 cargo fmt --all                            # the style in rustfmt.toml
@@ -313,7 +286,7 @@ problems privately, as [SECURITY.md](SECURITY.md) describes.
 | Path | What it is |
 | --- | --- |
 | `crates/flinch-archive` | the daemon (`flinch-arrd`), the forecast and its daily fit (`flinch-fit`), and the offline planner (`flinch-archive`) |
-| `crates/flinch-web` | the UI server, its JSON API, the System One endpoint and `flinch-demo` |
+| `crates/flinch-web` | the UI server, its JSON API and `flinch-demo` |
 | `frontend/` | the React UI, built into the image |
 | `deploy/` | the Dockerfile, kustomize manifests (with an optional HTTPS Ingress), install guide and Recyclarr config |
 | `docs/` | how it works, and the screenshots above |

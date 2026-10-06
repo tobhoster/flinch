@@ -4,11 +4,15 @@
 //! *arr knows files; only the media server knows "watched". This module is the
 //! seam: an exported JSON file (or, later, a live Plex token) fills the fields
 //! the archive reflex makes its sharpest calls on:
-//! `season_state`, `is_watched`, `last_watched_days`, `rewatch_score`.
+//! `is_watched`, `episodes_watched`, `last_watched_days`.
 
-use crate::card::{ArchiveCard, SeasonState};
+use crate::card::ArchiveCard;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Watched fraction at which an item counts as finished: a movie played to
+/// the end, every episode of a season.
+pub const COMPLETE: f32 = 0.999;
 
 /// Where a watch verdict came from.
 ///
@@ -104,9 +108,6 @@ pub struct WatchEntry {
     /// Fraction of the item consumed (0.0 - 1.0). A season at 1.0 is Completed;
     /// a movie at 1.0 is watched.
     pub progress: f32,
-    /// Rewatch propensity from history, 0.0 - 1.0. Absent when unknown.
-    #[serde(default)]
-    pub rewatch_score: Option<f32>,
     /// Provenance of this entry. Files predating this field are exports.
     #[serde(default)]
     pub source: WatchSource,
@@ -193,7 +194,7 @@ impl EvidenceHealth {
 /// Apply watch state to cards in place.
 ///
 /// Fail-closed: when media server data is missing the item's watch state stays
-/// unknown, and the policy then refuses to delete it as unwatched. A daemon
+/// unknown, and the planner then excludes it (no watch evidence). A daemon
 /// with a dead media-server export protects everything until it is healthy
 /// again, which is the safe direction.
 pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
@@ -204,24 +205,16 @@ pub fn apply(cards: &mut [ArchiveCard], watch: &HashMap<String, WatchEntry>) {
             // source that saw the item unplayed, which never-played reclaim
             // acts on.
             card.is_watched = None;
-            card.season_state = None;
+            card.episodes_watched = None;
             continue;
         };
         card.last_watched_days = entry.last_watched_epoch.map(|epoch| (now_epoch().saturating_sub(epoch)) as f32 / 86_400.0);
         match card.kind {
             crate::card::LibraryKind::Season => {
-                card.season_state = Some(if entry.progress >= 0.999 {
-                    SeasonState::Completed
-                } else if entry.progress > 0.0 {
-                    SeasonState::Partial
-                } else {
-                    SeasonState::Empty
-                });
                 card.episodes_watched = card.episodes_total.map(|total| (total as f32 * entry.progress.clamp(0.0, 1.0)).round() as u32);
             }
             crate::card::LibraryKind::Movie => {
-                card.is_watched = Some(entry.progress >= 0.999);
-                card.rewatch_score = entry.rewatch_score;
+                card.is_watched = Some(entry.progress >= COMPLETE);
             }
         }
     }
@@ -303,7 +296,6 @@ mod tests {
                 id: "season-mvp".to_string(),
                 last_watched_epoch: Some(now_epoch() - 864_000),
                 progress: 1.0,
-                rewatch_score: None,
                 source: WatchSource::Plex,
             },
         );
@@ -313,23 +305,21 @@ mod tests {
                 id: "movie-rewatch".to_string(),
                 last_watched_epoch: Some(now_epoch() - 864_000),
                 progress: 1.0,
-                rewatch_score: Some(0.9),
                 source: WatchSource::Plex,
             },
         );
         apply(&mut cards, &watch);
 
-        assert_eq!(cards[0].season_state, Some(SeasonState::Completed));
+        assert_eq!(cards[0].episodes_watched, Some(6));
         assert!(cards[0].last_watched_days.unwrap() < 11.0);
         assert_eq!(cards[1].is_watched, Some(true));
-        assert_eq!(cards[1].rewatch_score, Some(0.9));
     }
 
     #[test]
     fn missing_media_server_entry_fails_closed() {
         let mut cards = vec![golden_season(), golden_movie()];
         apply(&mut cards, &HashMap::new());
-        assert_eq!(cards[0].season_state, None, "no source reported on the season: unknown, not unplayed");
+        assert_eq!(cards[0].episodes_watched, None, "no source reported on the season: unknown, not unplayed");
         assert_eq!(cards[1].is_watched, None, "no source reported on the movie: unknown, not unwatched");
         assert!(cards[1].last_watched_days.is_none());
     }
@@ -343,12 +333,12 @@ mod tests {
         let watch = cards
             .iter()
             .map(|card| {
-                let entry = WatchEntry { id: card.id.clone(), last_watched_epoch: None, progress: 0.0, rewatch_score: None, source };
+                let entry = WatchEntry { id: card.id.clone(), last_watched_epoch: None, progress: 0.0, source };
                 (entry.id.clone(), entry)
             })
             .collect();
         apply(&mut cards, &watch);
-        assert_eq!(cards[0].season_state, Some(SeasonState::Empty));
+        assert_eq!(cards[0].episodes_watched, Some(0));
         assert_eq!(cards[1].is_watched, Some(false));
     }
 

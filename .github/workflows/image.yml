@@ -121,7 +121,7 @@ jobs:
           for digest in *; do refs+=("${IMAGE}@sha256:${digest}"); done
           docker buildx imagetools create "${tags[@]}" \
             --annotation "index:org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --annotation "index:org.opencontainers.image.description=Keeps a Plex library under its disk ceiling and leaves the deleting to Maintainerr" \
+            --annotation "index:org.opencontainers.image.description=Plans least-regret evictions that keep Plex library disks under their target and leaves the deleting to Maintainerr" \
             --annotation "index:org.opencontainers.image.licenses=MIT" \
             "${refs[@]}"
       - name: Inspect

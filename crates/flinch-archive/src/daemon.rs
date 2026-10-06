@@ -1,99 +1,52 @@
-//! One planning cycle: inventory -> cards -> plan. It is pure: it decides keep
-//! or evict for every card and touches nothing. Maintainerr sync
+//! One planning cycle: candidates -> plan. It is pure: it decides keep or
+//! evict for every candidate and touches nothing. Maintainerr sync
 //! ([`crate::maintainerr`]) turns the decisions into exclusions and collection
 //! members, and owns what persists between cycles about them.
 
-use crate::arr::{ArrMovie, ArrSeries};
+use crate::capacity::VolumeForecast;
 use crate::card::ArchiveCard;
-use crate::plan::{build_plan, Baseline, ReclaimGoal, VolumeOutcome};
-use crate::policy::{ArchivePolicy, ScoreVerdict};
+use crate::plan::{generate_eviction_plan, EvictionPlan, MediaCandidate, PlanError, PlannerConfig};
 use crate::watch;
-use std::collections::{BTreeSet, HashMap, HashSet};
-
-/// The model's delete gate. The baseline answers 1.0 for every reclaiming
-/// reason, so `score_floor` on P(safe) is the gate that bites.
-const DELETE_FLOOR: f32 = 0.95;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone)]
 pub struct ReconcileOutput {
-    /// Cards to evict, in eviction order (least regret per byte first). The
-    /// per-run caps meet them in this order, never a hash order.
+    pub plan: EvictionPlan,
+    /// Selected cards in the order they leave (prerequisites first). The
+    /// per-run caps take a prefix of this order, never a hash order.
     pub deleted_ids: Vec<String>,
-    /// Of `deleted_ids`: the evictions nobody finished (see
-    /// [`crate::policy::announces`]). They are announced in Leaving Soon
-    /// before they go, and wait while it is unusable. While it is unnamed
-    /// there are none: never-played reclaim is held (see [`NeverPlayedHold`]).
+    /// Of `deleted_ids`: the evictions nobody finished. They are announced in
+    /// Leaving Soon before they go, and wait while it is unusable.
     pub announced_ids: BTreeSet<String>,
-    /// Cards the policy or a floor keeps: the ones to protect.
-    pub kept_ids: Vec<String>,
-    /// Cards eligible for eviction that the goal did not need this cycle: the
-    /// reserve. The daemon protects them like kept cards (below the ceiling
-    /// nothing may go, and the operator's own Maintainerr rules would otherwise
-    /// take them); the sync releases that exclusion when one is evicted.
-    pub reserve_ids: Vec<String>,
+    /// Cards Maintainerr must never take, whatever its own rules say: pinned,
+    /// or someone is partway through (unless the plan takes it).
+    pub protected_ids: Vec<String>,
     pub scanned: usize,
-    pub delete_candidates: usize,
-    /// Everything not evicted: kept plus reserve.
-    pub kept: usize,
-    pub reclaimed_bytes: u64,
-    /// Whether the plan covered its goal. Vacuously true when the goal was
-    /// "everything safe" or no volume asked for space.
-    pub goal_met: bool,
-    /// Everything the goal could have taken: the reserve for when space is needed.
-    pub eligible_bytes: u64,
-    /// Per-volume accounting when the goal is per volume.
-    pub volumes: Vec<VolumeOutcome>,
 }
 
-/// Plan one cycle.
-///
-/// - `movies` / `series`: inventory items (already fetched).
-/// - `watch_state`: id -> media-server truth; missing entries fail closed.
-/// - `operator_keeps`: cards the operator protects in Maintainerr (see
-///   [`crate::maintainerr::operator_keeps`]); a hard keep guard.
-/// - `goal`: how much of the eligible set is taken this cycle.
+/// Plan one cycle over `candidates` (see [`crate::plan::candidates`]).
 pub fn reconcile(
-    movies: &[ArrMovie],
-    series: &[ArrSeries],
-    watch_state: &HashMap<String, watch::WatchEntry>,
-    operator_keeps: &BTreeSet<String>,
-    policy: &ArchivePolicy,
-    verdicts: &HashMap<String, ScoreVerdict>,
-    goal: &ReclaimGoal,
-) -> ReconcileOutput {
-    let mut cards: Vec<ArchiveCard> =
-        movies.iter().filter_map(ArrMovie::to_card).chain(series.iter().flat_map(ArrSeries::to_cards)).collect();
-    watch::apply(&mut cards, watch_state);
-    guard_operator_keeps(&mut cards, operator_keeps);
-
-    let model = Baseline::new(*policy);
-    let plan = build_plan(&cards, &model, policy, DELETE_FLOOR, verdicts, goal);
-    // The same plan without a goal takes every permitted card: the eligible set.
-    let eligible: HashSet<String> = build_plan(&cards, &model, policy, DELETE_FLOOR, verdicts, &ReclaimGoal::AllSafe)
-        .entries
-        .into_iter()
-        .map(|entry| entry.id)
+    candidates: &[MediaCandidate],
+    forecasts: &[VolumeForecast],
+    config: &PlannerConfig,
+) -> Result<ReconcileOutput, PlanError> {
+    let plan = generate_eviction_plan(candidates, forecasts, config)?;
+    let deleted_ids: Vec<String> = plan.items.iter().map(|item| item.id.clone()).collect();
+    // Someone partway through raises regret but does not exclude: when the
+    // plan still takes it, the eviction wins over the protection.
+    let selected: std::collections::HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
+    let protected_ids = candidates
+        .iter()
+        .filter(|candidate| candidate.protect && !selected.contains(candidate.id.as_str()))
+        .map(|candidate| candidate.id.clone())
         .collect();
-    let announced_ids: BTreeSet<String> =
-        plan.entries.iter().filter(|entry| crate::policy::announces(&entry.reason)).map(|entry| entry.id.clone()).collect();
-    let deleted_ids: Vec<String> = plan.entries.into_iter().map(|entry| entry.id).collect();
-    let deleted: HashSet<&str> = deleted_ids.iter().map(String::as_str).collect();
-    let (reserve_ids, kept_ids): (Vec<String>, Vec<String>) =
-        cards.iter().filter(|card| !deleted.contains(card.id.as_str())).map(|card| card.id.clone()).partition(|id| eligible.contains(id));
-
-    ReconcileOutput {
-        scanned: cards.len(),
-        delete_candidates: deleted_ids.len(),
-        kept: kept_ids.len() + reserve_ids.len(),
+    Ok(ReconcileOutput {
+        announced_ids: plan.items.iter().filter(|item| item.announce).map(|item| item.id.clone()).collect(),
         deleted_ids,
-        announced_ids,
-        kept_ids,
-        reserve_ids,
-        reclaimed_bytes: plan.reclaimed_bytes,
-        goal_met: plan.goal_met,
-        eligible_bytes: plan.eligible_bytes,
-        volumes: plan.volumes,
-    }
+        protected_ids,
+        scanned: candidates.len(),
+        plan,
+    })
 }
 
 /// A card the operator protects in Maintainerr (an exclusion FLINCH does not
@@ -142,23 +95,6 @@ impl NeverPlayedHold {
             Self::LeavingSoonUntitled => "until a Leaving Soon collection is named",
         }
     }
-}
-
-/// Hold never-played reclaim off while `hold` says so: clears the operator's
-/// switch on `policy`, and returns the settings capacity governs by, which then
-/// never arm the rule under disk pressure either.
-pub fn hold_never_played(settings: &RuntimeSettings, hold: Option<NeverPlayedHold>, policy: &mut ArchivePolicy) -> RuntimeSettings {
-    policy.unwatched_reclaim.enabled &= hold.is_none();
-    RuntimeSettings { capacity_arm_never_played: settings.capacity_arm_never_played && hold.is_none(), ..settings.clone() }
-}
-
-/// Whether the operator's settings ask never-played reclaim to run this cycle:
-/// its switch, or "While evicting" while a disk evicts. Read from the settings
-/// as saved, not as held: held and not asked for, lifting the hold alone runs
-/// nothing, so the UI names both steps (status.json `never_played_requested`).
-pub fn never_played_requested(settings: &RuntimeSettings, action: &crate::capacity::CapacityAction) -> bool {
-    settings.unwatched_reclaim_enabled
-        || (settings.capacity_arm_never_played && matches!(action, crate::capacity::CapacityAction::Evict { .. }))
 }
 
 #[cfg(test)]

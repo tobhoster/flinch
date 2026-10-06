@@ -13,7 +13,6 @@ use flinch_archive::capacity::EvictionLedger;
 use flinch_archive::outside::{self, OutsideDeletion, Removal};
 use flinch_archive::presence::{self, FileEvent, Span};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
 
 /// How long a read of the history serves.
 const REFRESH_SECS: u64 = 86_400;
@@ -98,7 +97,7 @@ impl App {
 pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [ArrMovie], series: &mut [ArrSeries]) -> Vec<Removal> {
     let path = super::state_dir().join("arr-history.json");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
-    let mut cache = read_cache(&path);
+    let mut cache: Cache = super::read_state(&path);
     let mut refreshed = Vec::new();
     for app in [App::Radarr, App::Sonarr] {
         let fresh = app
@@ -119,18 +118,17 @@ pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [
     }
     if !refreshed.is_empty() {
         println!("[flinch-arrd] arr history refreshed: {}", refreshed.join("; "));
-        if let Err(error) = write_cache(&path, &cache) {
-            eprintln!("[flinch-arrd] arr-history.json write failed, the history is read again next cycle: {error}");
-        }
+        super::write_state(&path, &cache);
     }
     let spans =
         |history: &Option<AppHistory>, id: String| history.as_ref().and_then(|history| history.items.get(&id)).cloned().unwrap_or_default();
     for movie in movies.iter_mut() {
-        movie.on_disk = spans(&cache.radarr, format!("radarr-{}", movie.id));
+        movie.on_disk = spans(&cache.radarr, movie.card_id());
     }
     for show in series.iter_mut() {
-        for season in &mut show.seasons {
-            season.on_disk = spans(&cache.sonarr, format!("sonarr-{}-s{}", show.id, season.season_number));
+        let ids: Vec<String> = show.seasons.iter().map(|season| show.season_card_id(season.season_number)).collect();
+        for (season, id) in show.seasons.iter_mut().zip(ids) {
+            season.on_disk = spans(&cache.sonarr, id);
         }
     }
     [cache.radarr, cache.sonarr].into_iter().flatten().flat_map(|history| history.removals.unwrap_or_default()).collect()
@@ -238,24 +236,4 @@ fn spans_for(app: App, records: &[HistoryRecord], movies: &[ArrMovie], series: &
         .filter(|removal| now.saturating_sub(removal.at) <= outside::WINDOW_SECS)
         .collect();
     (AppHistory { refreshed_at: now, records: records.len(), items, removals: Some(removals) }, summary)
-}
-
-/// A missing cache is a first run; an unreadable one is read again from the *arrs.
-fn read_cache(path: &Path) -> Cache {
-    let parsed = match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Cache::default(),
-        Err(error) => Err(error.to_string()),
-    };
-    parsed.unwrap_or_else(|error| {
-        eprintln!("[flinch-arrd] {} unreadable, reading the history again: {error}", path.display());
-        Cache::default()
-    })
-}
-
-fn write_cache(path: &Path, cache: &Cache) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    flinch_archive::persist::replace(path, &serde_json::to_vec(cache)?)
 }

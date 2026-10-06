@@ -16,7 +16,7 @@
 //!   Un-schedules come first; the executor verifies each.
 //! - Protect: an exclusion is added only when no row covers the item. A row
 //!   FLINCH does not own is the operator's: it is never touched, and the card
-//!   is reported as an operator keep (a hard keep guard for the policy).
+//!   is reported as an operator keep (pinned for the planner).
 //! - A card without PlexIds is unresolved: never protected, never scheduled.
 //! - Wrong copy: an eviction whose ratingKey a kept card also resolves to, or
 //!   whose Plex item has several copies (FLINCH cannot tell which one its
@@ -28,9 +28,10 @@
 //!   own is held under an exclusion until it is out: FLINCH never removes a
 //!   membership it did not record, and never announces an item that could
 //!   still leave unwarned.
-//! - Gone: an exclusion FLINCH made for an item Plex no longer holds (see
-//!   [`OwnedState::vanished`]) protects nothing and is released. Only
-//!   FLINCH's own rows go; the operator's stay.
+//! - Release: FLINCH keeps its own exclusion only on a card it protects. On
+//!   any other card it is not evicting, its rows are released, so the
+//!   operator's own rules apply again; cards Plex no longer holds (see
+//!   [`OwnedState::vanished`]) are reported as gone. The operator's rows stay.
 
 use super::validate::{self, CollectionTitles, Handover, Misconfigured, Route};
 use super::{CollectionInfo, ExclusionRow, MaintainerrTarget, MaintainerrVersion, OwnedState};
@@ -85,6 +86,9 @@ pub struct Desired {
     /// Cards whose FLINCH exclusion protects nothing any more: the item left
     /// the library and Plex (see [`OwnedState::vanished`]).
     pub gone: BTreeSet<String>,
+    /// Library cards with no Plex ids this cycle. They cannot be judged, so
+    /// FLINCH leaves their rows as they are.
+    pub unresolved: BTreeSet<String>,
     /// Maintainerr has Seerr configured, so a collection that leaves Seerr
     /// requests behind is worth a warning.
     pub seerr_configured: bool,
@@ -257,7 +261,7 @@ fn wrong_copy(item: &SyncItem, kept_keys: &BTreeMap<&str, &str>) -> Option<Block
 }
 
 /// Cards the operator protects in Maintainerr. The daemon sets their keep
-/// guard before planning, so the policy never picks them.
+/// guard before planning, so the planner never picks them.
 pub fn operator_keeps(items: &[SyncItem], observed: &Observed, owned: &OwnedState) -> BTreeSet<String> {
     let owned_ids = owned.exclusion_ids();
     items
@@ -464,10 +468,12 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         }
     }
 
-    // An exclusion on an item Plex no longer holds protects nothing: release
-    // FLINCH's own rows for it. A card still kept or evicted is never gone.
-    for id in desired.gone.iter().filter(|id| !keep.contains(id.as_str()) && !evicting.contains(id.as_str())) {
-        let Some(entry) = owned.protected.get(id) else { continue };
+    // FLINCH keeps an exclusion only while it protects the card: release its
+    // own rows on every other card it is not evicting. An exclusion left on a
+    // card FLINCH no longer protects would shield it from the operator's own
+    // Maintainerr rules forever. Gone cards are the subset Plex dropped.
+    let wanted: BTreeSet<&str> = keep.iter().copied().chain(desired.evict.iter().map(|item| item.card_id.as_str())).collect();
+    for (id, entry) in owned.protected.iter().filter(|(id, _)| !wanted.contains(id.as_str()) && !desired.unresolved.contains(*id)) {
         let Some(rows) = observed.exclusions.get(entry.target.media_id()) else { continue };
         let releases: Vec<SyncAction> = rows
             .iter()
@@ -475,7 +481,9 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
             .map(|row| SyncAction::RemoveExclusion { card_id: id.clone(), target: entry.target.clone(), exclusion_id: row.id })
             .collect();
         if !releases.is_empty() {
-            plan.gone.insert(id.clone());
+            if desired.gone.contains(id) {
+                plan.gone.insert(id.clone());
+            }
             plan.actions.extend(releases);
         }
     }

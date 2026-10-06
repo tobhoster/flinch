@@ -48,10 +48,9 @@ spec:
             - { name: MAINTAINERR_URL, value: "http://maintainerr:6246" }
             - { name: FLINCH_WATCH_STATE, value: "/cfg/watch-state.json" }
             - { name: FLINCH_STATE_DIR, value: "/state" }
-            # Enforcement is a setting (Settings > Safety > Enforcement), off by
-            # default, so a fresh install only plans and logs. Do not add
-            # FLINCH_ENFORCE here: it turns enforcement on whatever the
-            # setting says.
+            # Dry run is a setting (Settings > Planner > Dry run), on by
+            # default, so a fresh install only writes eviction-plan.json and
+            # logs. FLINCH_DRY_RUN=1 forces a dry run whatever the setting says.
             - name: RADARR_API_KEY
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: RADARR_API_KEY } }
             - name: SONARR_API_KEY
@@ -74,6 +73,22 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_URL, optional: true } }
             - name: FLINCH_PLEX_TOKEN
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_TOKEN, optional: true } }
+            # Optional signals for the regret score. Each one missing is
+            # reported and treated as neutral. Seerr: requests and watchlists.
+            - name: SEERR_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: SEERR_URL, optional: true } }
+            - name: SEERR_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: SEERR_API_KEY, optional: true } }
+            # Prowlarr: seeders, for how hard a title is to download again.
+            - name: PROWLARR_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: PROWLARR_URL, optional: true } }
+            - name: PROWLARR_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: PROWLARR_API_KEY, optional: true } }
+            # SABnzbd: usenet retention.
+            - name: SABNZBD_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_URL, optional: true } }
+            - name: SABNZBD_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_API_KEY, optional: true } }
           # Everything it writes goes to /state or /data; the image stays as built.
           securityContext:
             allowPrivilegeEscalation: false

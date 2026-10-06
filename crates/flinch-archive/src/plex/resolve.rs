@@ -350,7 +350,6 @@ impl Resolution {
                     id: id.clone(),
                     last_watched_epoch: found.watch.last_viewed_unix,
                     progress: found.watch.watched_fraction,
-                    rewatch_score: None,
                     source: WatchSource::Plex,
                 };
                 (id.clone(), entry)

@@ -1,13 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, ExternalLink, Lock, PanelRightOpen, Search } from 'lucide-react';
-import { Card, DropdownMenu, EmptyState, GiB, Sheet, Tooltip } from './ui.jsx';
+import { ArrowDown, ArrowUp, Copy, ExternalLink, PanelRightOpen, Search } from 'lucide-react';
+import { Card, DropdownMenu, EmptyState, GiB, Sheet, day, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
-import { Disk, PlexIds, QualityTier } from './DetailCells.jsx';
-import { loadSettings } from './api.js';
+import { Advice, Disk, PlexIds, Reacquisition } from './DetailCells.jsx';
 
 const isNum = (v) => v !== null && v !== undefined;
-// Truncated, not rounded: a value just under the floor must never read as the floor.
-const pct = (p) => `${Math.floor(p * 100 + 1e-9)}%`;
 
 /** Sources that can testify to absence of playback (as opposed to only presence). */
 const ABSENCE_SOURCES = ['plex', 'plex_show', 'export', 'tautulli_no_stream'];
@@ -21,9 +18,9 @@ const onDisk = (i) => (i.size_bytes || 0) > 0;
  */
 const FILTERS = [
   { key: 'on_disk', label: 'On disk', test: onDisk },
-  { key: 'delete', label: 'Flagged', test: (i) => onDisk(i) && i.decision === 'delete' },
+  { key: 'delete', label: 'Planned', test: (i) => onDisk(i) && i.decision === 'delete' },
   { key: 'protected', label: 'Protected', test: (i) => onDisk(i) && i.protected },
-  { key: 'rule', label: 'Rule-held', test: (i) => onDisk(i) && i.decision === 'keep' && !i.protected },
+  { key: 'kept', label: 'Kept', test: (i) => onDisk(i) && i.decision === 'keep' && !i.protected },
   {
     key: 'unwatched', label: 'Never played',
     test: (i) => onDisk(i) && ABSENCE_SOURCES.includes(i.watch_source) && !isNum(i.last_watched_days),
@@ -40,9 +37,6 @@ const SOURCE_LABEL = {
   export: 'export',
 };
 
-const GUARD_LABEL = { 'newest-season': 'Newest aired season' };
-const guardLabel = (g) => GUARD_LABEL[g] ?? g.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase());
-
 /**
  * Watch state as text. Every contract state has its own branch:
  * no source → "no data"; dated → "Nd ago"; fraction ≥ 1 without a date →
@@ -57,8 +51,6 @@ function watchState(item) {
   return 'never played';
 }
 
-const leaveDate = (unix) => new Date(unix * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
-
 /**
  * The decision as the row states it, from what Maintainerr holds first: a
  * membership leaves on its collection's schedule whatever this run decided.
@@ -69,22 +61,22 @@ function decisionOf(item) {
     return {
       text: 'Still in collection',
       tone: 'text-state-bad',
-      title: 'FLINCH keeps it, but it stays in its Maintainerr collection until an enforced run takes it back',
+      title: 'Kept, but still in its Maintainerr collection until a live run takes it back',
     };
   }
   if (item.decision === 'delete') {
     if (item.handed_at) {
       return {
-        text: item.leaves_at ? `Leaves ${leaveDate(item.leaves_at)}` : 'Handed over',
+        text: item.leaves_at ? `Leaves ${day(item.leaves_at)}` : 'Handed over',
         tone: 'text-state-warn',
         title: announced ? 'In Leaving Soon: Plex shows it, and playing it takes it back' : 'In its delete collection',
       };
     }
     if (announced) return { text: 'Leaving soon', tone: 'text-state-warn', title: 'Announced in Leaving Soon before it is deleted' };
-    return { text: 'Candidate', tone: 'text-state-warn' };
+    return { text: 'Planned', tone: 'text-state-warn' };
   }
   if (item.protected) return { text: 'Protected', tone: 'text-fg' };
-  if (item.decision === 'keep') return { text: 'Held', tone: 'text-fg-muted' };
+  if (item.decision === 'keep') return { text: 'Kept', tone: 'text-fg-muted' };
   return { text: item.size_bytes ? 'No action' : 'Not on disk', tone: 'text-fg-faint' };
 }
 
@@ -96,8 +88,10 @@ function decisionOf(item) {
 const COLUMNS = [
   { key: 'size_bytes', label: 'Size', right: true, render: (i) => <Size bytes={i.size_bytes} /> },
   { key: 'age_days', label: 'On disk', right: true, render: (i) => <Days value={i.age_days} /> },
-  { key: 'forecast', label: 'P(safe)', term: 'p_safe', right: true, render: (i, ctx) => <PSafe item={i} floor={ctx.floor} /> },
+  { key: 'p_watch', label: 'P(watch)', term: 'p_watch', right: true, render: (i) => <Num value={i.p_watch} format={pct} /> },
+  { key: 'regret', label: 'Regret', term: 'regret', right: true, render: (i) => <Num value={i.regret} format={(r) => r.toFixed(2)} /> },
   { key: 'last_watched_days', label: 'Watched', wide: true, render: (i) => <Watched item={i} /> },
+  { key: null, label: 'Advice', render: (i) => <Advice advice={i.advice} /> },
   { key: null, label: 'Decision', render: (i) => <Decision item={i} /> },
 ];
 
@@ -111,18 +105,7 @@ export default function MediaTable({ items, kind }) {
   const [filter, setFilter] = useState('on_disk');
   const [sort, setSort] = useState({ key: 'size_bytes', dir: -1 });
   const [sel, setSel] = useState(null);
-  const [floor, setFloor] = useState(0.75);
   const inputRef = useRef(null);
-
-  useEffect(() => {
-    let live = true;
-    // Without settings the default floor stays: it only tints the P(safe) column.
-    loadSettings().then((s) => {
-      const f = Number(s?.score_floor);
-      if (live && Number.isFinite(f)) setFloor(f);
-    }).catch(() => {});
-    return () => { live = false; };
-  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -156,7 +139,6 @@ export default function MediaTable({ items, kind }) {
   }, [searched, filter, sort]);
 
   const toggle = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : (key === 'title' ? 1 : -1) }));
-  const ctx = { floor };
   const noun = kind === 'movie' ? 'movies' : 'seasons';
   const totalBytes = rows.reduce((sum, i) => sum + (i.size_bytes || 0), 0);
 
@@ -230,7 +212,7 @@ export default function MediaTable({ items, kind }) {
                   className="cursor-pointer border-b border-line-soft last:border-0 hover:bg-ink-800/60 focus:bg-ink-800/60 focus:outline-none">
                   <td className="px-3 py-1"><TitleCell item={i} /></td>
                   {COLUMNS.map((c) => (
-                    <td key={c.label} className={`whitespace-nowrap px-3 py-1 ${c.right ? 'text-right' : ''}`}>{c.render(i, ctx)}</td>
+                    <td key={c.label} className={`whitespace-nowrap px-3 py-1 ${c.right ? 'text-right' : ''}`}>{c.render(i)}</td>
                   ))}
                   <td className="px-2 py-1 text-right" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu items={actions(i)} />
@@ -253,7 +235,7 @@ export default function MediaTable({ items, kind }) {
                   {COLUMNS.map((c) => (
                     <div key={c.label} className={`min-w-0 ${c.wide ? 'col-span-2' : ''}`}>
                       <dt className="text-xs text-fg-muted">{c.label}</dt>
-                      <dd className="break-words">{c.render(i, ctx)}</dd>
+                      <dd className="break-words">{c.render(i)}</dd>
                     </div>
                   ))}
                 </dl>
@@ -265,7 +247,7 @@ export default function MediaTable({ items, kind }) {
 
       {/* Outside the spacing container so the fixed overlay inherits no margins. */}
       <Sheet open={!!sel} onClose={() => setSel(null)} title={sel?.title || ''}>
-        {sel && <ItemDetail item={sel} floor={floor} actions={actions(sel)} />}
+        {sel && <ItemDetail item={sel} actions={actions(sel)} />}
       </Sheet>
     </>
   );
@@ -334,31 +316,10 @@ function Days({ value }) {
   return <span className="num text-fg-muted">{Math.round(value)}d</span>;
 }
 
-/**
- * The forecast, from evidence alone. A rule that keeps the item is marked
- * beside it, never folded into the number; with no evidence there is nothing
- * to forecast. Snapshots from before the split carry only `p_safe`.
- */
-function PSafe({ item, floor }) {
-  const p = isNum(item.forecast) ? item.forecast : item.p_safe;
-  if (!isNum(p)) return <span className="text-fg-faint">—</span>;
-  if (!item.watch_source) {
-    return (
-      <Tooltip text="No watch evidence, so there is nothing to forecast from.">
-        <span className="text-fg-faint">—</span>
-      </Tooltip>
-    );
-  }
-  if (item.hard_guard) {
-    return (
-      <Tooltip text={`Kept by rule (${guardLabel(item.hard_guard).toLowerCase()}), whatever the forecast says.`}>
-        <span className="num inline-flex items-center gap-0.5 text-fg-muted">
-          <Lock size={10} aria-label="kept by rule" />{pct(p)}
-        </span>
-      </Tooltip>
-    );
-  }
-  return <span className={`num ${p >= floor ? 'text-state-warn' : ''}`}>{pct(p)}</span>;
+/** A nullable number; null means the item is not a candidate. */
+function Num({ value, format }) {
+  if (!isNum(value)) return <span className="text-fg-faint">—</span>;
+  return <span className="num text-fg-muted">{format(value)}</span>;
 }
 
 function Watched({ item }) {
@@ -403,7 +364,7 @@ function actionsFor(item, openDetails) {
   ];
 }
 
-/** Factual reasons: the hard guard first, then the decision reason, then scoring evidence. */
+/** Factual reasons: the decision reason, then Maintainerr state. */
 function whyOf(item) {
   const lines = [];
   const seen = new Set();
@@ -411,37 +372,32 @@ function whyOf(item) {
     const k = s.trim().toLowerCase();
     if (k && !seen.has(k)) { seen.add(k); lines.push(s.charAt(0).toUpperCase() + s.slice(1)); }
   };
-  if (item.hard_guard) {
-    const g = guardLabel(item.hard_guard);
-    lines.push(`${g} — kept by rule, whatever the forecast says`);
-    seen.add(g.toLowerCase());
-  }
   if (item.reason) add(item.reason);
-  for (const r of item.reasons || []) add(r);
   if (item.protected) add('Maintainerr exclusion written');
   if (item.handed_at) {
-    add(`${item.route === 'leaving_soon' ? 'In Leaving Soon' : 'In its delete collection'} since ${leaveDate(item.handed_at)}`);
+    add(`${item.route === 'leaving_soon' ? 'In Leaving Soon' : 'In its delete collection'} since ${day(item.handed_at)}`);
   } else if (item.route === 'leaving_soon') {
-    add('Nobody finished it, so it goes to Leaving Soon first and playing it takes it back');
+    add('Goes to Leaving Soon first; playing it takes it back');
   }
   return lines;
 }
 
-function ItemDetail({ item, floor, actions }) {
+function ItemDetail({ item, actions }) {
   const { text, tone, title } = decisionOf(item);
   const meta = metaOf(item);
   const why = whyOf(item);
   const rows = [
     ['Decision', <span className={tone} title={title}>{text}</span>],
-    ['P(safe)', isNum(item.forecast ?? item.p_safe)
-      ? <><PSafe item={item} floor={floor} /> <span className="text-fg-faint">floor {pct(floor)}</span></>
-      : <span className="text-fg-faint">—</span>],
+    ['Watch likelihood', <Num value={item.p_watch} format={(p) => `${pct(p)} (next 90 d)`} />],
+    ['Regret', <Num value={item.regret} format={(r) => r.toFixed(3)} />],
+    ['Reacquisition', <Reacquisition friction={item.friction} />],
+    ['Eviction safety', <Num value={item.eviction_safety} format={pct} />],
+    ['Recommendation', <Advice advice={item.advice} full />],
     ['Watched', <Watched item={item} />],
     ['Size', <Size bytes={item.size_bytes} />],
     ['On disk', <Days value={item.age_days} />],
     ['Disk', <Disk volume={item.volume} />],
     ['Plex', <PlexIds plex={item.plex} />],
-    ['Quality tier', <QualityTier inflow={item.inflow} />],
     ['Library id', <span className="num break-all text-fg-muted">{item.id}</span>],
   ];
   return (
@@ -460,7 +416,7 @@ function ItemDetail({ item, floor, actions }) {
         </div>
       </div>
 
-      <dl className="grid grid-cols-[96px_minmax(0,1fr)] gap-y-1.5">
+      <dl className="grid grid-cols-[144px_minmax(0,1fr)] gap-y-1.5">
         {rows.map(([k, v]) => (
           <React.Fragment key={k}>
             <dt className="flex items-center gap-1.5 text-fg-muted">{k}{TERMS[k] && <Explain term={TERMS[k]} />}</dt>
@@ -491,4 +447,11 @@ function ItemDetail({ item, floor, actions }) {
 }
 
 /** Detail rows whose label has a glossary entry. */
-const TERMS = { 'P(safe)': 'p_safe', Watched: 'evidence', 'Quality tier': 'quality_tier' };
+const TERMS = {
+  'Watch likelihood': 'p_watch',
+  Regret: 'regret',
+  Reacquisition: 'reacquisition',
+  'Eviction safety': 'eviction_safety',
+  Recommendation: 'advice',
+  Watched: 'evidence',
+};

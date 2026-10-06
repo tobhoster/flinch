@@ -22,7 +22,7 @@ Only the latest release gets fixes.
   (`FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD`) or the API key
   (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or `Authorization: Bearer`), and refuses
   everything when neither is set. Both grant everything the UI can do,
-  including turning on Enforcement, so treat them like an *arr API key. Serve
+  including turning off dry run, so treat them like an *arr API key. Serve
   the UI over HTTPS, and never publish it to the internet. Upgrading from the
   token alone: see
   [Upgrading from the access token](deploy/README.md#upgrading-from-the-access-token).

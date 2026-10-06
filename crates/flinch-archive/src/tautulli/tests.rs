@@ -185,7 +185,7 @@ fn only_a_readable_percent_finishes_a_stream(#[case] percent_field: &str, #[case
     assert!(progress > 0.0, "a play either way: {progress}");
     assert_eq!(progress >= 0.999, finished, "the movie reads watched only when finished: {progress}");
     let plays = crate::fit::plays::PlayLog::new(&[], std::slice::from_ref(&movie));
-    assert_eq!(plays.item_plays(&resolution.join(&targets[0]))[0].complete, finished, "the fitter reads it as the daemon does");
+    assert_eq!(plays.item_plays(&resolution.join(&targets[0]))[0].complete(), finished, "the fitter reads it as the daemon does");
     let episode = stream(&format!(
         r#"{{"media_type":"episode","rating_key":"11","parent_media_index":"1","media_index":"1","date":"{}"{percent_field}}}"#,
         NOW - 3 * DAY

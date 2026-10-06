@@ -3,11 +3,13 @@
 FLINCH runs as two pods that share one volume:
 
 - `flinch-arrd`, the daemon. Each cycle it reads the inventory from Radarr and
-  Sonarr and the watch evidence from Plex and Tautulli, plans, and syncs the
-  plan to Maintainerr. Items it keeps get a Maintainerr exclusion; items it
-  evicts join a Maintainerr collection, and Maintainerr deletes them on its own
-  schedule. Both are addressed by Plex ratingKey, so an item whose Plex GUID
-  join failed is left alone. It has no Service or Ingress: it only calls out.
+  Sonarr, the watch evidence from Plex and Tautulli, and the optional signals
+  from Seerr, Prowlarr and SABnzbd. It forecasts each disk, plans, writes the
+  plan to `eviction-plan.json`, and syncs it to Maintainerr when dry run is
+  off: selected items join a Maintainerr collection, and Maintainerr deletes
+  them on its own schedule. Both are addressed by Plex ratingKey, so an item
+  whose Plex GUID join failed is left alone. It has no Service or Ingress: it
+  only calls out.
 - `flinch-web`, the UI and its JSON API on port 7911. It reads the state the
   daemon writes and writes `settings.json` when you save Settings. People log
   in with `FLINCH_WEB_USERNAME` and `FLINCH_WEB_PASSWORD`; automations send the
@@ -19,7 +21,7 @@ FLINCH runs as two pods that share one volume:
 | `deploy/base/` | the manifests: state volume, ConfigMap, both Deployments, Service |
 | `deploy/ingress/` | optional: an HTTPS Ingress for the UI |
 | `deploy/Dockerfile` | the image |
-| `deploy/recyclarr/recyclarr.flinch.yml` | optional Recyclarr changes for the premium and compact tiers |
+| `deploy/recyclarr/recyclarr.flinch.yml` | optional Recyclarr changes, including a compact profile for FLINCH's downgrade advice |
 
 ## Try the demo first
 
@@ -54,6 +56,9 @@ FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist \
   needs. Without Plex every item is held.
 - Tautulli, optional. It keeps every play with the user who played it, so
   FLINCH sees plays Plex no longer reports.
+- Seerr, Prowlarr and SABnzbd, optional. Seerr's requests and watchlists,
+  Prowlarr's seeders and SABnzbd's retention feed the
+  [regret](../docs/how-it-works.md#regret) of each item.
 - A Kubernetes cluster and `kubectl` (kustomize is built in).
 - A storage class that supports ReadWriteMany (NFS, Longhorn, CephFS, ...).
   With ReadWriteOnce only, both pods must run on the same node; see
@@ -64,7 +69,7 @@ FLINCH_STATE_DIR=/tmp/flinch-demo FLINCH_WEB_DIR=frontend/dist \
 `ghcr.io/tobhoster/flinch` is built by this repository's CI for amd64 and
 arm64, with a build provenance attestation and an SBOM. One image carries the
 binaries (`flinch-arrd`, `flinch-fit`, `flinch-web`, `flinch-demo`) and the
-built UI; the two Deployments differ only in `command:`. It is about 35 MB
+built UI; the two Deployments differ only in `command:`. It is about 50 MB
 (Rust and Alpine; no GPU, no Python) and runs as uid 1000.
 
 | Tag | What it is |
@@ -126,6 +131,12 @@ FLINCH_WEB_TOKEN=<generated above>
 RADARR_API_KEY=<radarr api key>
 SONARR_API_KEY=<sonarr api key>
 MAINTAINERR_API_KEY=<maintainerr api key>
+SEERR_URL=http://seerr:5055
+SEERR_API_KEY=<seerr api key>
+PROWLARR_URL=http://prowlarr:9696
+PROWLARR_API_KEY=<prowlarr api key>
+SABNZBD_URL=http://sabnzbd:8080
+SABNZBD_API_KEY=<sabnzbd api key>
 PLEX_URL=http://plex:32400
 PLEX_TOKEN=<plex token>
 TAUTULLI_URL=http://tautulli:8181
@@ -135,15 +146,21 @@ TAUTULLI_API_KEY=<tautulli api key>
 | Key | Needed | Notes |
 | --- | --- | --- |
 | `FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD` | yes, for the UI | the UI's login. The username matches exactly, case included; spaces around either value are ignored. Without both, the UI says how to set them |
-| `FLINCH_WEB_TOKEN` | no | the API key for automations (Home Assistant, n8n, System One clients), sent as `X-Api-Key` or `Authorization: Bearer`: any long random string. With neither it nor a login, the API refuses everything |
+| `FLINCH_WEB_TOKEN` | no | the API key for automations (Home Assistant, n8n), sent as `X-Api-Key` or `Authorization: Bearer`: any long random string. With neither it nor a login, the API refuses everything |
 | `RADARR_API_KEY` | yes | Radarr > Settings > General |
 | `SONARR_API_KEY` | yes | Sonarr > Settings > General |
 | `MAINTAINERR_API_KEY` | no | Maintainerr checks no key today; FLINCH sends one when it is set |
 | `PLEX_URL`, `PLEX_TOKEN` | no | or set both in the UI (Settings > Plex), which then wins over the Secret; the pair always comes from one place |
 | `TAUTULLI_URL`, `TAUTULLI_API_KEY` | no | without them FLINCH reads Tautulli's address from Maintainerr, but Maintainerr returns the key masked, so set them here to use Tautulli |
+| `SEERR_URL`, `SEERR_API_KEY` | no | Overseerr or Jellyseerr (Settings > General): requests and watchlists raise an item's regret |
+| `PROWLARR_URL`, `PROWLARR_API_KEY` | no | Prowlarr (Settings > General): seeders, for how hard a title is to download again |
+| `SABNZBD_URL`, `SABNZBD_API_KEY` | no | SABnzbd (Config > General): the servers' retention |
 
 Leave out the keys you do not use. The Radarr and Sonarr keys are required
 (the daemon exits without them), and the UI stays locked without the login.
+The daemon also takes the optional three as `--seerr-url`, `--seerr-key`,
+`--prowlarr-url`, `--prowlarr-key`, `--sabnzbd-url` and `--sabnzbd-key`. What
+a missing one changes: see [Regret](../docs/how-it-works.md#regret).
 
 ## Install
 
@@ -187,9 +204,8 @@ Up to 0.1.1, one token in `FLINCH_WEB_TOKEN` opened both the UI and the API.
 From 0.2.0 on:
 
 - Automations keep working unchanged: the token is now the API key.
-  `Authorization: Bearer <FLINCH_WEB_TOKEN>` is still accepted everywhere,
-  `POST /v1/systemone` included, and `X-Api-Key: <FLINCH_WEB_TOKEN>` now is
-  too.
+  `Authorization: Bearer <FLINCH_WEB_TOKEN>` is still accepted everywhere, and
+  `X-Api-Key: <FLINCH_WEB_TOKEN>` now is too.
 - The UI asks for a username and password, and deletes the token the browser
   kept. Until both are in the Secret and `flinch-web` runs the new release's
   manifests, it shows **No login set**.
@@ -224,9 +240,9 @@ never passes the login, so the UI keeps saying **No login set**. If
 
 ## First run
 
-Enforcement is off by default (Settings > Safety > Enforcement). A fresh
-install only plans and logs: nothing is sent to Maintainerr. Each write FLINCH
-would send is printed instead.
+Dry run is on by default (Settings > Planner > Dry run). A fresh install
+writes its plan to `eviction-plan.json` and sends nothing to Maintainerr. Each
+write FLINCH would send is printed instead.
 
 The first cycle starts when the daemon starts. The next one follows after the
 Scan interval (Settings > Schedule, one hour by default), or when you press
@@ -239,33 +255,34 @@ Open the UI and read the Overview. Settings shows the state of each connection
 kubectl -n media logs deploy/flinch-arrd        # add -f to follow
 ```
 
-The per-action lines are shaped for grep. With enforcement off:
+The per-action lines are shaped for grep. In a dry run:
 
 ```
 [dry-run] would exclude ratingKey 4511 (mediaId 4502)
 [dry-run] would add ratingKey 812 (mediaId 812) to collection 3
 ```
 
-With enforcement on, each action ends with its outcome:
+With dry run off, each action ends with its outcome:
 
 ```
 [flinch-arrd] protect sonarr-11-s2 (ratingKey 4511): done, verified
 [flinch-arrd] schedule radarr-7 (ratingKey 812, 41.2 GiB) into collection 3: failed, retried next cycle: …
 ```
 
-On the volume, `plan.json` holds the summary of the last cycle and
+On the volume, `eviction-plan.json` holds the last cycle's forecast and plan
+(see [The plan](../docs/how-it-works.md#the-plan-least-total-regret)) and
 `status.json` its `sync` block.
 
-Rules the daemon obeys (all under test): favorites, keep collections and the
-newest season are immune; an item you excluded in Maintainerr is a keep;
-missing watch state fails closed; a Maintainerr **201 with `{"code":0,
-"result":"Failed - no metadata"}` is a failure**, never a silent success;
-nothing is handed to a Maintainerr older than 3.10, or to a collection that is
-inactive, of the wrong type, bound to another Plex library, or whose *arr
-action frees nothing or is one Maintainerr refuses for its type; with
-enforcement off, every write is only printed. An item nobody finished goes
-only to a Leaving Soon collection that is active, shown in Plex and has a
-window of at least one day; while none is named or validates, it waits
+Rules the daemon obeys (all under test): pinned items (favorites, keep
+collections, the keep tag, your own Maintainerr exclusions) are never
+selected; missing watch state fails closed; a Maintainerr **201 with
+`{"code":0, "result":"Failed - no metadata"}` is a failure**, never a silent
+success; nothing is handed to a Maintainerr older than 3.10, or to a
+collection that is inactive, of the wrong type, bound to another Plex
+library, or whose *arr action frees nothing or is one Maintainerr refuses for
+its type; in a dry run, every write is only printed. An item nobody finished
+goes only to a Leaving Soon collection that is active, shown in Plex and has
+a window of at least one day; while none is named or validates, it waits
 instead of going to a delete collection. FLINCH releases only exclusions it
 created, and only for an item proven gone: no file in Radarr/Sonarr and
 absent from a complete Plex listing.
@@ -273,13 +290,15 @@ absent from a complete Plex listing.
 ## Maintainerr setup
 
 FLINCH fills Maintainerr collections; Maintainerr deletes. The collection
-names are in Settings > Maintainerr collections.
+names are in Settings > Maintainerr collections. FLINCH writes exclusions
+only for pinned items and items someone is partway through, so your other
+Maintainerr rule groups still act on everything else.
 
 1. Make the two delete collections, Movies (`Watched Movies Cleanup` by
    default) and Seasons (`Watched Seasons Cleanup`), manual-membership
    collections with a delete action. If they also keep their own rules,
-   Maintainerr will delete what those rules select regardless of the 80%
-   ceiling. A season collection needs "Unmonitor and delete existing episodes"
+   Maintainerr will delete what those rules select regardless of FLINCH's
+   plan. A season collection needs "Unmonitor and delete existing episodes"
    ("Unmonitor and delete season", or deleting the show if empty, work too).
    Never "Unmonitor and delete all": Maintainerr refuses it for seasons, so
    nothing would ever leave. FLINCH reports it and hands that collection
@@ -296,7 +315,7 @@ names are in Settings > Maintainerr collections.
    deletes: Maintainerr skips it. Turn on the overlay if the leave date should
    show on the poster. Until both validate, the status names what is wrong and
    unwatched evictions wait. A blank title holds never-played reclaim off, so
-   nothing unwatched is handed over or counts toward the capacity goal.
+   nothing nobody played is selected.
 3. If Seerr is configured in Maintainerr, turn on **Force delete Seerr
    request** on every collection FLINCH uses. Otherwise a removed title's
    Seerr request stays until Seerr's availability sync notices, and it cannot
@@ -311,12 +330,13 @@ Deleted Movies** in Radarr and **Unmonitor Deleted Episodes** in Sonarr
 (Settings > Media Management). FLINCH lists such deletions on the Overview,
 with whether each one will download again.
 
-## Turn on enforcement
+## Turn off dry run
 
 Before you do:
 
-1. Run at least one cycle with enforcement off and read the log: every write
-   FLINCH would send is printed, with the Plex ratingKey it targets.
+1. Run at least one cycle in dry run and read the log and
+   `eviction-plan.json`: every write FLINCH would send is printed, with the
+   Plex ratingKey it targets.
 2. Finish the [Maintainerr setup](#maintainerr-setup) and the
    [Radarr and Sonarr setup](#radarr-and-sonarr-setup).
 3. If Tautulli is connected, turn **Keep History** on for every user and for
@@ -324,20 +344,22 @@ Before you do:
    is off, the log says `tautulli keeps no history for …` and never-played
    reclaim stays held, because Tautulli's silence then proves nothing.
 4. Mark anything the household must never lose with the keep tag (Settings >
-   Safety > Keep tag, `flinch-keep` by default): as a tag in Radarr/Sonarr, a
+   Rules > Keep tag, `flinch-keep` by default): as a tag in Radarr/Sonarr, a
    label on the movie or show in Plex, or by putting it in a Plex collection
    with that name (a collection can also hold single seasons). The log prints
-   `plex keep markers ('flinch-keep'): N item(s) kept`, and the UI lists them
-   under "Kept by you".
+   `plex keep markers ('flinch-keep'): N item(s) kept`, and the Overview lists
+   them under Pinned.
 5. Optional: if you use Recyclarr, merge `deploy/recyclarr/recyclarr.flinch.yml`
    into your Recyclarr config and run `recyclarr sync --preview` first.
 
-Then turn on Settings > Safety > Enforcement (**Schedule deletions**) and
-press **Save settings**. It applies on the next run.
+Then turn off Settings > Planner > Dry run and press **Save settings**. It
+applies on the next run.
 
-`FLINCH_DRY_RUN=1` on the daemon keeps every write printed only, whatever the
-setting says. `FLINCH_ENFORCE=1` does the opposite and turns enforcement on
-regardless of the setting; leave it unset.
+`FLINCH_DRY_RUN=1` on the daemon forces a dry run, whatever the setting says.
+
+Upgrading from a release with the Enforcement switch: it is gone, along with
+`--enforce` and `FLINCH_ENFORCE`. An existing `settings.json` loads with dry
+run on, so turn it off again once the new plan looks right.
 
 ## State on the volume
 
@@ -353,15 +375,16 @@ file reads as "nothing yet".
 | --- | --- | --- |
 | `settings.json` | settings from the UI | defaults; an unparseable or out-of-range file keeps the last good settings in force |
 | `status.json`, `items.json`, `history.json` | what the UI shows | rebuilt next cycle |
-| `capacity.json` | which disks are latched (evicting toward the release mark) | a disk between 75% and 80% stops evicting until it crosses 80% again |
+| `eviction-plan.json` | the last cycle's forecast per disk and its plan: method, items, sizes, regret and reasons | nothing; written again next cycle |
+| `arr-grabs.json` | Radarr and Sonarr grabs of the last 30 days, the download rate's input (read again after 6 hours) | read again from the *arrs on the next cycle |
+| `releases.json` | per item, the last Prowlarr search: seeders and the newest usenet post's age (each kept 7 days) | searched again, 20 items per cycle; until then re-download cost uses size only |
 | `evictions.json` | bytes handed to Maintainerr that a recycle bin may still hold or that are held, and each hand-over for 120 days (to tell FLINCH's deletions from others) | evictions in flight or held go uncredited, and FLINCH's own recent deletions may be listed as ones it did not make |
 | `protected.json`, `scheduled.json` | exclusions and collection members FLINCH created | FLINCH forgets it owns them and leaves them alone |
 | `candidates.json` | grace-run streaks | every candidate re-earns its grace window |
 | `operator-keeps.json` | the cards your own Maintainerr exclusions keep, as last read | rewritten by the next cycle that reads Maintainerr; an outage before then plans without them (nothing is synced during it) |
 | `playback.json`, `tautulli.json` | raw plays, the daily fit's input | fitting waits for new history |
-| `fit.json` | the last daily fit: which model was judged (recalibrated priors or full fit), its out-of-fold scores against the priors, why it was or was not adopted, and the genre play-rates genre taste reads | refitted on the next cycle; no genre taste until then |
-| `weights.json` | the adopted model, present only while it beats the priors out of fold | the priors run until a model earns adoption again |
-| `benchmark.json` | the last `flinch-fit --against … --write`: an external model scored against FLINCH on the same panel | the Forecast model card shows no comparison until the next run |
+| `fit.json` | the last daily fit: the candidate judged (recalibrated priors or full fit), its out-of-fold AUC, Brier and ECE beside the priors', its parameters, and why it was or was not adopted | refitted on the next cycle |
+| `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate | the priors run until a fit is adopted again |
 | `episode-guids.json` | episode `plex://` GUIDs of resolved shows, for plays recorded before a library migration (refreshed at most daily, only while such plays exist) | re-read from Plex on the next cycle that needs it |
 | `arr-history.json` | when each title was on disk, and the files removed in the last 30 days, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
 
@@ -423,6 +446,12 @@ spec:
                 - { name: FLINCH_TAUTULLI_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: TAUTULLI_API_KEY, optional: true } } }
                 - { name: FLINCH_PLEX_URL, valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_URL, optional: true } } }
                 - { name: FLINCH_PLEX_TOKEN, valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_TOKEN, optional: true } } }
+                - { name: SEERR_URL, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SEERR_URL, optional: true } } }
+                - { name: SEERR_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SEERR_API_KEY, optional: true } } }
+                - { name: PROWLARR_URL, valueFrom: { secretKeyRef: { name: flinch-secrets, key: PROWLARR_URL, optional: true } } }
+                - { name: PROWLARR_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: PROWLARR_API_KEY, optional: true } } }
+                - { name: SABNZBD_URL, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_URL, optional: true } } }
+                - { name: SABNZBD_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_API_KEY, optional: true } } }
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -489,7 +518,7 @@ kubectl apply -k deploy/local
   API request without a session from logging in (`FLINCH_WEB_USERNAME`,
   `FLINCH_WEB_PASSWORD`) or the API key (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or
   `Authorization: Bearer`), and everything when neither is set. Either one can
-  change Settings, including Enforcement, so treat both like the *arr API
+  change Settings, including dry run, so treat both like the *arr API
   keys.
 - **Sessions.** The session cookie is `HttpOnly` and `SameSite=Strict`, and
   `Secure` behind an HTTPS ingress. A session lasts 30 days from its last use,

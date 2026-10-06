@@ -1,16 +1,17 @@
-//! The swarm daemon: inventory -> cards -> plan -> protect, on a tick.
+//! The daemon: inventory -> forecast -> plan -> hand-off, on a tick.
 //!
-//! Run this as a long-lived process (container/CronJob in a homelab). Each
-//! cycle pulls the *arr libraries, merges media-server watch state, decides
-//! what is safe to reclaim, and adds Maintainerr exclusions for everything it
-//! keeps. It never deletes; the plan file is the operator-facing output.
+//! Run this as a long-lived process. Each cycle pulls the *arr libraries,
+//! merges media-server watch state, forecasts every library volume, plans the
+//! least-regret evictions that fit each forecast, and writes the plan to
+//! `state/eviction-plan.json`. It hands the plan to Maintainerr only when the
+//! planner's `dry_run` is off, and never deletes anything itself.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use flinch_archive::daemon::{reconcile, NeverPlayedHold};
 use flinch_archive::maintainerr::{self as mx, HttpMaintainerr, OwnedState, SyncItem};
-use flinch_archive::ArchivePolicy;
-use std::collections::HashMap;
+use flinch_archive::plan::{candidates, Exclusion, Manifest};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,10 +22,10 @@ mod history;
 mod media;
 mod model;
 mod publish;
+mod signals;
 mod sink;
 mod snapshot;
 mod storage;
-mod taste;
 
 use fetch::{fetch_disks, fetch_inventory, Fetched};
 use sink::Sink;
@@ -44,16 +45,27 @@ struct Args {
     maintainerr_url: String,
     #[arg(long, default_value = "")]
     maintainerr_key: String,
+    /// Seerr (Overseerr/Jellyseerr): requests and watchlists. Empty disables.
+    #[arg(long, default_value = "")]
+    seerr_url: String,
+    #[arg(long, default_value = "")]
+    seerr_key: String,
+    /// Prowlarr: seeders per title, for how hard a re-download would be.
+    #[arg(long, default_value = "")]
+    prowlarr_url: String,
+    #[arg(long, default_value = "")]
+    prowlarr_key: String,
+    /// SABnzbd: the usenet servers' retention.
+    #[arg(long, default_value = "")]
+    sabnzbd_url: String,
+    #[arg(long, default_value = "")]
+    sabnzbd_key: String,
     /// JSON export of media-server watch state (see examples/watch-state.json).
     #[arg(long)]
     watch_state: Option<PathBuf>,
     /// Run once and exit instead of looping.
     #[arg(long)]
     once: bool,
-    /// Hand schedule-eligible candidates to Maintainerr (deletion happens on
-    /// Maintainerr's own schedule). Default OFF: flip on after one verified run.
-    #[arg(long)]
-    enforce: bool,
     // Grace runs, per-run caps and collections are operator settings
     // (state/settings.json, set from the UI); they have no flags.
     #[arg(long, default_value_t = 3600)]
@@ -73,14 +85,20 @@ fn resolve(args: &mut Args) {
     args.radarr_url = env_or("RADARR_URL", args.radarr_url.clone());
     args.sonarr_url = env_or("SONARR_URL", args.sonarr_url.clone());
     args.maintainerr_url = env_or("MAINTAINERR_URL", args.maintainerr_url.clone());
-    if args.radarr_key.is_empty() {
-        args.radarr_key = env_or("RADARR_API_KEY", String::new());
-    }
-    if args.sonarr_key.is_empty() {
-        args.sonarr_key = env_or("SONARR_API_KEY", String::new());
-    }
-    if args.maintainerr_key.is_empty() {
-        args.maintainerr_key = env_or("MAINTAINERR_API_KEY", String::new());
+    args.seerr_url = env_or("SEERR_URL", args.seerr_url.clone());
+    args.prowlarr_url = env_or("PROWLARR_URL", args.prowlarr_url.clone());
+    args.sabnzbd_url = env_or("SABNZBD_URL", args.sabnzbd_url.clone());
+    for (key, env) in [
+        (&mut args.radarr_key, "RADARR_API_KEY"),
+        (&mut args.sonarr_key, "SONARR_API_KEY"),
+        (&mut args.maintainerr_key, "MAINTAINERR_API_KEY"),
+        (&mut args.seerr_key, "SEERR_API_KEY"),
+        (&mut args.prowlarr_key, "PROWLARR_API_KEY"),
+        (&mut args.sabnzbd_key, "SABNZBD_API_KEY"),
+    ] {
+        if key.is_empty() {
+            *key = env_or(env, String::new());
+        }
     }
     if let Ok(value) = std::env::var("FLINCH_WATCH_STATE") {
         if !value.is_empty() {
@@ -95,13 +113,34 @@ fn resolve(args: &mut Args) {
     if std::env::var("FLINCH_ONCE").map(|v| v == "1" || v == "true").unwrap_or(false) {
         args.once = true;
     }
-    if std::env::var("FLINCH_ENFORCE").map(|v| v == "1" || v == "true").unwrap_or(false) {
-        args.enforce = true;
-    }
 }
 
 fn state_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(std::env::var("FLINCH_STATE_DIR").unwrap_or_else(|_| "state".to_string()))
+}
+
+/// A missing state file is a first run; an unreadable one starts over.
+pub(crate) fn read_state<T: serde::de::DeserializeOwned + Default>(path: &std::path::Path) -> T {
+    let parsed = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return T::default(),
+        Err(error) => Err(error.to_string()),
+    };
+    parsed.unwrap_or_else(|error| {
+        eprintln!("[flinch-arrd] {} unreadable, starting it over: {error}", path.display());
+        T::default()
+    })
+}
+
+pub(crate) fn write_state<T: serde::Serialize>(path: &std::path::Path, value: &T) {
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| serde_json::to_vec(value).map_err(std::io::Error::from))
+        .and_then(|bytes| flinch_archive::persist::replace(path, &bytes));
+    if let Err(error) = written {
+        eprintln!("[flinch-arrd] {} write failed, it is read again next cycle: {error}", path.display());
+    }
 }
 
 /// The shortest gap between the starts of two cycles when run.now asks for
@@ -176,17 +215,13 @@ async fn run(args: &Args) -> Result<()> {
     }
 }
 
-/// One full pass: inventory → evidence → score → govern → plan → publish.
+/// One full pass: inventory → evidence → forecast → plan → hand-off → publish.
 async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::daemon::RuntimeSettings, interval_s: u64) -> Result<()> {
-    let grace_runs = settings.grace_runs;
-    let max_items = settings.max_items;
-    let max_gib = settings.max_gib;
-    let enforce = settings.enforce || args.enforce;
-    let Fetched { movies, series, removals } = fetch_inventory(&http, args, &settings.keep_tag).await?;
-    let disks = fetch_disks(&http, args).await;
+    let Fetched { movies, series, removals } = fetch_inventory(http, args, &settings.keep_tag).await?;
+    let disks = fetch_disks(http, args).await;
 
     // Cards first: the same set decides and displays, and Plex watch state
-    // must be merged in BEFORE the policy runs or the guard stays blind.
+    // must be merged in BEFORE anything decides or the guard stays blind.
     let mut cards: Vec<flinch_archive::ArchiveCard> =
         movies.iter().filter_map(|movie| movie.to_card()).chain(series.iter().flat_map(|show| show.to_cards())).collect();
 
@@ -204,14 +239,13 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         plex_listed,
     } = evidence::gather(args, http, settings, &movies, &series, &cards, cycle_now).await?;
 
-    // --- Maintainerr, read first: an operator's exclusion is a hard keep guard
-    // for the score and the plan alike (XC-02). ---
-    let dry_run = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
-    // Enforcement off (or FLINCH_DRY_RUN) means no write reaches Maintainerr: the
-    // dry-run sink reads the live state and prints every write it would send.
-    let enforcing = enforce && !dry_run;
+    // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
+    let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let dry_run = settings.planner.dry_run || forced_dry;
+    // --- Maintainerr, read first: an operator's exclusion pins its item. A dry
+    // run reads the live state and prints every write it would send. ---
     let maintainerr = HttpMaintainerr::new(&args.maintainerr_url, &args.maintainerr_key)?;
-    let mut api = if enforcing { Sink::Live(maintainerr) } else { Sink::DryRun(maintainerr) };
+    let mut api = if dry_run { Sink::DryRun(maintainerr) } else { Sink::Live(maintainerr) };
     let titles = settings.collection_titles();
     let mut owned = OwnedState::read(&state_dir());
     // Plex ids come only from the GUID join; a card without them is never
@@ -254,102 +288,76 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     // exclusions, and the keep tag as a Plex label or collection.
     let keeps: std::collections::BTreeSet<String> = operator_keeps.union(&plex_keeps).cloned().collect();
     flinch_archive::daemon::guard_operator_keeps(&mut cards, &keeps);
-    // Merge watch state into the cards the score sees. Without this the
-    // score would read every item as "no evidence" while the snapshot showed
-    // a match: the display and the decision would disagree again.
     flinch_archive::watch::apply(&mut cards, &watch);
     let play_log = flinch_archive::fit::plays::PlayLog::new(&plex_history_rows, &tautulli_rows);
     let joins: HashMap<&str, flinch_archive::plex::PlayJoin> =
         watch_targets.iter().map(|target| (target.id.as_str(), resolution.join(target))).collect();
-    let ended_by_show: HashMap<&str, bool> = series
-        .iter()
-        .map(|s| {
-            let ended = flinch_archive::score::series_ended_as_of(s.status.as_deref(), s.last_aired_epoch(), cycle_now);
-            (s.title.as_str(), ended)
-        })
-        .collect();
+    // P(watch) runs on the daily fit when one beat the priors, else the priors.
+    let (hazard, model_label) = model::hazard(&state_dir(), cycle_now);
 
-    let activity = flinch_archive::score::ShowActivity::new(&cards, &watch);
-    let settings_for_score = &settings;
-    let scoring = model::Scoring {
-        cards: &cards,
-        watch: &watch,
-        activity: &activity,
-        play_log: &play_log,
-        joins: &joins,
-        ended_by_show: &ended_by_show,
-        movies: &movies,
-        series: &series,
-        now: cycle_now,
-    };
-    let (scored, model_label) = model::score_cycle(settings, &state_dir(), scoring);
-
-    let verdicts: HashMap<String, flinch_archive::policy::ScoreVerdict> = cards
-        .iter()
-        .zip(scored.iter())
-        .map(|(card, score)| {
-            (
-                card.id.clone(),
-                flinch_archive::policy::ScoreVerdict {
-                    p_safe: score.p_safe,
-                    hard_guard: score.hard_guard.is_some(),
-                    // Another season of the same show is being watched: the
-                    // household picks shows up as a whole, so an unplayed
-                    // season of an active show is catch-up queue, not litter.
-                    sibling_played: {
-                        let siblings = activity.siblings(card, &watch);
-                        siblings.played || siblings.completed
-                    },
-                },
-            )
-        })
-        .collect();
-
-    let mut policy = ArchivePolicy::default();
-    policy.unwatched_reclaim = flinch_archive::policy::UnwatchedReclaim {
-        enabled: settings_for_score.unwatched_reclaim_enabled,
-        floor: settings_for_score.unwatched_reclaim_floor,
-        min_dwell_days: settings_for_score.unwatched_reclaim_dwell_days,
-    };
-    policy.score_floor = settings_for_score.score_floor;
-
-    // XC-03: a partly read watch record never arms never-played reclaim — not
-    // by the operator's switch, and not by capacity pressure. Deleting on the
-    // strength of *absent* plays needs every source read completely. Nor does
-    // a blank Leaving Soon title: its items could never be announced, so they
-    // would fill the capacity goal and never leave.
+    // XC-03: deleting on the strength of *absent* plays needs every watch
+    // source read completely, and a Leaving Soon collection to announce in.
     let never_played_hold = NeverPlayedHold::of(&health, &titles);
-    if let Some(hold) = never_played_hold.filter(|_| policy.unwatched_reclaim.enabled) {
-        let why = match hold {
-            NeverPlayedHold::IncompleteEvidence => health.problems().join("; "),
-            NeverPlayedHold::LeavingSoonUntitled => "the Leaving Soon title is blank".to_string(),
-        };
-        eprintln!("[flinch-arrd] never-played reclaim held off this cycle: {why}");
+    let never_played = if !settings.unwatched_reclaim_enabled {
+        Some(Exclusion::NeverPlayedOff)
+    } else {
+        never_played_hold.map(Exclusion::NeverPlayedHeld)
+    };
+    if let (true, Some(hold)) = (settings.unwatched_reclaim_enabled, never_played_hold) {
+        eprintln!("[flinch-arrd] never-played reclaim held off this cycle {}", hold.until());
     }
-    let governing = flinch_archive::daemon::hold_never_played(settings, never_played_hold, &mut policy);
 
-    // Capacity: measure the library volumes, decide per volume, set the goal;
-    // what Maintainerr already holds is taken first, so no window restarts.
-    let (mut governance, mut ledger) = storage::govern(&disks, (&movies, &series), &cards, &plex_ids, &governing, &mut policy, cycle_now);
-    governance.take_handed_first(owned.scheduled.keys().cloned().collect());
-    // Never-played reclaim the settings (or disk pressure) would run now, held
-    // only by `never_played_hold`: the items must say why.
-    let never_played_requested = flinch_archive::daemon::never_played_requested(settings_for_score, &governance.decision.action);
-    let never_played_held = never_played_hold.filter(|_| never_played_requested);
+    let signals = signals::gather(http, args, &cards, cycle_now).await;
+    for problem in &signals.problems {
+        eprintln!("[flinch-arrd] signals: {problem}");
+    }
+    let (governance, mut ledger) = storage::govern(&disks, (&movies, &series), &cards, &signals, &settings.capacity, cycle_now);
 
-    // What arming the never-played rule would add. Computed in the library
-    // (tested), by card id — never by pairing iteration orders.
-    let (shadow_count, shadow_bytes) = flinch_archive::shadow::preview(&cards, &verdicts, &policy);
-    let shadow_gib = shadow_bytes as f32 / 1_073_741_824.0;
-    println!(
-        "[flinch-arrd] never-played preview: {shadow_count} item(s) / {shadow_gib:.1} GiB would additionally qualify if armed (floor {:.2}, dwell {:.0} d)",
-        policy.unwatched_reclaim.floor, policy.unwatched_reclaim.min_dwell_days
+    let plays: HashMap<String, candidates::Plays> = cards
+        .iter()
+        .filter_map(|card| {
+            let join = joins.get(card.id.as_str())?;
+            Some((card.id.clone(), (play_log.item_plays(join), play_log.audience_plays(join))))
+        })
+        .collect();
+    let in_plex: HashSet<String> = plex_ids.keys().cloned().collect();
+    let handed: HashSet<String> = owned.scheduled.keys().cloned().collect();
+    let candidates = candidates::build(
+        &candidates::Library {
+            cards: &cards,
+            movies: &movies,
+            series: &series,
+            watch: &watch,
+            plays: &plays,
+            located: &governance.located,
+            in_plex: &in_plex,
+            handed: &handed,
+            signals: &signals,
+            never_played,
+            now: cycle_now,
+        },
+        &settings.planner,
+        &hazard,
     );
-
-    let report = reconcile(&movies, &series, &watch, &keeps, &policy, &verdicts, &governance.goal);
+    let report = reconcile(&candidates, &governance.forecasts, &settings.planner).context("planning")?;
+    let plan = &report.plan;
+    let gib = |bytes: u64| bytes as f64 / 1_073_741_824.0;
+    println!(
+        "[flinch-arrd] plan: {} item(s), {:.1} of {:.1} GiB needed, regret {:.2}{}",
+        plan.items.len(),
+        gib(plan.total_reclaimed_bytes),
+        gib(plan.target_bytes),
+        plan.total_regret,
+        plan.method.map_or(" (healthy: solver skipped)".to_string(), |method| format!(" ({method:?})")),
+    );
+    if let Some(error) = &plan.solver_error {
+        eprintln!("[flinch-arrd] HiGHS failed, plan made greedily: {error}");
+    }
     std::fs::create_dir_all(state_dir()).ok();
+    let manifest = serde_json::to_vec_pretty(&Manifest::new(plan, &governance.forecasts, dry_run, cycle_now))?;
+    flinch_archive::persist::replace(&state_dir().join("eviction-plan.json"), &manifest)?;
 
-    // --- automation: grace window, caps, then hand off to Maintainerr ---
+    // --- grace streaks, then the hand-off ---
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     // A cycle that cannot read Maintainerr is not an appearance: it can hand
     // nothing over and planned without the operator's exclusions, so counting
@@ -357,23 +365,17 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     let eligible = if observed.is_ok() {
         let candidates_path = state_dir().join("candidates.json");
         let mut cstate = flinch_archive::daemon::read_candidate_state(&candidates_path);
-        let grace = flinch_archive::daemon::Grace { runs: grace_runs, interval_s };
-        let eligible = flinch_archive::daemon::advance_streaks(&mut cstate, &report.deleted_ids, grace, now);
+        let grace = flinch_archive::daemon::Grace { runs: settings.grace_runs, interval_s };
+        let past_grace = flinch_archive::daemon::advance_streaks(&mut cstate, &report.deleted_ids, grace, now);
         flinch_archive::daemon::write_candidate_state(&candidates_path, &cstate)?;
-        eligible
+        plan.releasable(&past_grace, &handed)
     } else {
         Vec::new()
     };
+    if dry_run {
+        println!("[flinch-arrd] dry run: plan written, nothing handed to Maintainerr");
+    }
 
-    println!(
-        "[flinch-arrd] {} item(s) selected from {:.1} GiB eligible (policy ∧ P(safe) floor {:.2})",
-        report.deleted_ids.len(),
-        report.eligible_bytes as f64 / 1_073_741_824.0,
-        settings_for_score.score_floor
-    );
-
-    // --- Maintainerr sync: keeps become exclusions, evictions past the grace
-    // window become collection members, least regret first. ---
     let by_id: HashMap<&str, &SyncItem> = sync_items.iter().map(|item| (item.card_id.as_str(), item)).collect();
     let names: HashMap<&str, &str> = cards.iter().map(|card| (card.id.as_str(), card.title.as_str())).collect();
     let handoff = handoff::Handoff {
@@ -382,8 +384,8 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         report: &report,
         eligible: &eligible,
         titles: &titles,
-        caps: mx::Caps::new(max_items, max_gib),
-        enforcing,
+        caps: mx::Caps::new(settings.max_items, settings.max_gib),
+        enforcing: !dry_run,
         now,
         plex_listed: plex_listed.as_ref(),
         seerr: fetch::maintainerr_seerr_configured(http, args).await,
@@ -395,11 +397,9 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
 
     let items = snapshot::build_items(snapshot::ItemInputs {
         cards: &cards,
-        scored: &scored,
+        candidates: &candidates,
         movies: &movies,
         series: &series,
-        policy: &policy,
-        verdicts: &verdicts,
         governance: &governance,
         owned: &owned,
         titles: &titles,
@@ -408,25 +408,25 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         report: &report,
         plex_ids: &plex_ids,
         play_keys: &play_keys,
-        never_played_held,
     });
     if let Err(error) = ledger.write(&storage::ledger_path()) {
         eprintln!("[flinch-arrd] evictions.json write failed: {error}");
     }
 
+    let (shadow_count, shadow_bytes) = flinch_archive::plan::never_played_preview(&candidates);
     publish::publish(
         publish::Run {
             report: &report,
             sync,
             governance: &governance,
             handed: owned.scheduled.keys().filter_map(|id| by_id.get(id.as_str()).map(|item| (id.as_str(), item.bytes))).collect(),
-            enforcing,
+            dry_run,
             interval_s: (!args.once).then_some(interval_s),
             model: model_label,
-            shadow: (shadow_count as u64, shadow_gib),
+            shadow: (shadow_count as u64, gib(shadow_bytes) as f32),
             health,
             never_played_hold,
-            never_played_requested,
+            never_played_requested: settings.unwatched_reclaim_enabled,
             outside: history::outside(&removals, &ledger, (&movies, &series), now),
         },
         &items,

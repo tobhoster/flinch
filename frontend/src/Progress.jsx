@@ -1,19 +1,15 @@
 import React, { useMemo } from 'react';
-import { GiB, SectionTitle } from './ui.jsx';
+import { GiB, SectionTitle, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
 
 const LIMIT = 10;
 const TIME = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-/** The default storage ceiling; history rows do not record the one in force. */
-const CEILING_WARN = 0.8;
 
-/** The last runs from `/api/history`, newest first. */
-export default function RecentRuns({ history }) {
+/** The last runs from `/api/history`, newest first. `target` tints use at or above it. */
+export default function RecentRuns({ history, target }) {
   const rows = useMemo(() => history.slice(-LIMIT).reverse(), [history]);
-  // history.json only carries a mode once the daemon writes one per run; until
-  // then the column would be a stack of dashes, so it is left out.
+  // Older rows carry no mode or disk use; a column of dashes is left out.
   const hasMode = rows.some((h) => typeof h.dry_run === 'boolean');
-  // Same for disk use: older rows predate the capacity measurement.
   const hasUsed = rows.some((h) => typeof h.utilization === 'number');
 
   return (
@@ -47,12 +43,12 @@ export default function RecentRuns({ history }) {
                   <td className={`num py-1.5 pr-3 text-right ${h.delete_candidates > 0 ? 'text-state-warn' : ''}`}>{h.delete_candidates ?? '—'}</td>
                   <td className={`num whitespace-nowrap py-1.5 text-right ${hasUsed || hasMode ? 'pr-3' : ''}`}>{GiB(h.reclaimed_bytes)} GiB</td>
                   {hasUsed && (
-                    <td className={`num py-1.5 text-right ${hasMode ? 'pr-3' : ''} ${h.utilization >= CEILING_WARN ? 'text-state-warn' : ''}`}>
-                      {typeof h.utilization === 'number' ? `${Math.round(h.utilization * 100)}%` : '—'}
+                    <td className={`num py-1.5 text-right ${hasMode ? 'pr-3' : ''} ${target != null && h.utilization >= target ? 'text-state-warn' : ''}`}>
+                      {typeof h.utilization === 'number' ? pct(h.utilization) : '—'}
                     </td>
                   )}
                   {hasMode && (
-                    <td className="py-1.5 text-fg-muted">{typeof h.dry_run === 'boolean' ? (h.dry_run ? 'Dry run' : 'Enforced') : '—'}</td>
+                    <td className="py-1.5 text-fg-muted">{typeof h.dry_run === 'boolean' ? (h.dry_run ? 'Dry run' : 'Live') : '—'}</td>
                   )}
                 </tr>
               ))}

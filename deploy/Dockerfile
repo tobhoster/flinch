@@ -10,14 +10,18 @@ RUN npm run build
 
 FROM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS builder
 WORKDIR /build
-RUN apk add --no-cache musl-dev
+# cmake, g++ and libclang (bindgen) build HiGHS, the eviction planner's MILP solver, from source.
+RUN apk add --no-cache musl-dev cmake g++ make clang-dev
+# Linked dynamically against musl: bindgen's build script must dlopen libclang,
+# which a static musl binary cannot. The runtime stage carries the C++ runtime.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo build --release --locked -p flinch-archive --bin flinch-arrd --bin flinch-fit \
     && cargo build --release --locked -p flinch-web --bin flinch-web --bin flinch-demo
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 flinch
+RUN apk add --no-cache ca-certificates tzdata libstdc++ libgcc && adduser -D -u 1000 flinch
 WORKDIR /data
 COPY --from=builder /build/target/release/flinch-arrd /usr/local/bin/flinch-arrd
 COPY --from=builder /build/target/release/flinch-fit /usr/local/bin/flinch-fit

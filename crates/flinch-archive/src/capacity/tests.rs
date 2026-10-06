@@ -1,14 +1,10 @@
 use super::*;
-use crate::plan::VolumeOutcome;
-use crate::policy::UnwatchedReclaim;
+use crate::plan::{EvictionPlan, VolumeOutcome};
 use proptest::prelude::*;
 use rstest::rstest;
 
 const GB: u64 = 1_000_000_000;
-
-fn marks() -> Watermarks {
-    Watermarks::new(0.80, 0.75).expect("valid watermarks")
-}
+const DAY: u64 = 86_400;
 
 fn vol(path: &str, total_gb: u64, used_gb: u64) -> Volume {
     Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB }
@@ -19,27 +15,151 @@ fn disks(app: App, diskspace: Vec<Volume>, roots: &[&str]) -> AppDisks {
     AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled }
 }
 
-fn latch(paths: &[&str]) -> Latch {
-    Latch { latched: paths.iter().map(|p| p.to_string()).collect() }
+/// Target 80%, 10-day window, no headroom: round numbers to reason about.
+fn forecaster(headroom_gb: u64) -> SlidingWindowCapacityForecaster {
+    SlidingWindowCapacityForecaster::new(CapacityConfig {
+        sliding_window_days: 10,
+        headroom_buffer_bytes: headroom_gb * GB,
+        ..CapacityConfig::default()
+    })
+    .expect("valid config")
 }
 
-fn measured(volumes: &[Volume]) -> CapacitySnapshot {
-    CapacitySnapshot::of(volumes, marks()).expect("measured")
+fn load(total_gb: u64, used_gb: u64, daily: &[u64]) -> VolumeLoad<'_> {
+    VolumeLoad { total_bytes: total_gb * GB, used_bytes: used_gb * GB, daily_ingest: daily, queue_bytes: 0, in_flight_bytes: 0 }
+}
+
+#[test]
+fn flat_growth_under_the_target_needs_nothing() {
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    let forecast = forecaster(0).forecast(&load(1000, 700, &quiet)).expect("measured");
+    assert_eq!(forecast.daily_ingest_rate_bytes, 0);
+    assert_eq!(forecast.projected_used_bytes, 700 * GB);
+    assert_eq!(forecast.target_reclaim_bytes, 0);
+    assert!(!forecast.is_emergency);
+}
+
+#[test]
+fn steady_ingest_projects_the_window_ahead() {
+    // 10 GB a day for 10 days lands 100 GB on a disk at 750 of 1000: 50 GB
+    // over the 800 GB target.
+    let steady = [10 * GB; INGEST_HISTORY_DAYS];
+    let forecast = forecaster(0).forecast(&load(1000, 750, &steady)).expect("measured");
+    assert_eq!(forecast.daily_ingest_rate_bytes, 10 * GB);
+    assert_eq!(forecast.projected_used_bytes, 850 * GB);
+    assert_eq!(forecast.target_reclaim_bytes, 50 * GB);
+}
+
+#[test]
+fn a_spike_ramps_the_target_by_alpha_of_it_not_all_of_it() {
+    let mut history = [0u64; INGEST_HISTORY_DAYS];
+    let quiet = forecaster(0).forecast(&load(1000, 790, &history)).expect("measured");
+    history[INGEST_HISTORY_DAYS - 1] = 100 * GB;
+    let spiked = forecaster(0).forecast(&load(1000, 790, &history)).expect("measured");
+    assert_eq!(quiet.target_reclaim_bytes, 0);
+    assert_eq!(spiked.daily_ingest_rate_bytes, 20 * GB, "α = 0.2 of one 100 GB day");
+    assert_eq!(spiked.target_reclaim_bytes, 190 * GB, "790 + 20·10 − 800");
+}
+
+#[test]
+fn rising_ingest_raises_the_target_day_by_day() {
+    let mut targets = Vec::new();
+    for days in 0..=INGEST_HISTORY_DAYS {
+        let mut history = [0u64; INGEST_HISTORY_DAYS];
+        history[INGEST_HISTORY_DAYS - days..].fill(20 * GB);
+        targets.push(forecaster(0).forecast(&load(1000, 700, &history)).expect("measured").target_reclaim_bytes);
+    }
+    assert!(targets.windows(2).all(|pair| pair[1] >= pair[0]), "{targets:?}");
+    assert_eq!(targets[0], 0);
+    assert!(targets[INGEST_HISTORY_DAYS] > 0);
+}
+
+#[test]
+fn headroom_queue_and_in_flight_evictions_move_the_target() {
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    let at = |headroom: u64, queue: u64, in_flight: u64| {
+        let load = VolumeLoad { queue_bytes: queue * GB, in_flight_bytes: in_flight * GB, ..load(1000, 790, &quiet) };
+        forecaster(headroom).forecast(&load).expect("measured").target_reclaim_bytes / GB
+    };
+    assert_eq!(at(0, 0, 0), 0);
+    assert_eq!(at(50, 0, 0), 40, "790 − 800 + 50");
+    assert_eq!(at(0, 30, 0), 20, "queued downloads land in the window");
+    assert_eq!(at(0, 30, 25), 0, "evictions already on their way out are not evicted twice");
 }
 
 #[rstest]
-#[case::default_band(0.80, 0.75, true)]
-#[case::no_hysteresis(0.80, 0.80, true)]
-#[case::full_disk_allowed(1.00, 1.00, true)]
-#[case::release_above_ceiling_never_releases(0.80, 0.85, false)]
-#[case::zero(0.00, 0.00, false)]
-#[case::above_one(1.10, 0.75, false)]
-#[case::zero_release(0.80, 0.00, false)]
-#[case::nan_ceiling(f32::NAN, 0.75, false)]
-#[case::nan_release(0.80, f32::NAN, false)]
-#[case::infinite(f32::INFINITY, 0.75, false)]
-fn watermarks_need_zero_below_release_at_or_below_ceiling_at_or_below_one(#[case] ceiling: f32, #[case] release: f32, #[case] valid: bool) {
-    assert_eq!(Watermarks::new(ceiling, release).is_some(), valid);
+#[case::below(940, false)]
+#[case::at_the_mark(950, true)]
+#[case::over(990, true)]
+fn emergency_is_current_usage_at_or_over_the_emergency_ratio(#[case] used_gb: u64, #[case] emergency: bool) {
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    assert_eq!(forecaster(0).forecast(&load(1000, used_gb, &quiet)).expect("measured").is_emergency, emergency);
+}
+
+#[test]
+fn an_operator_cap_shrinks_capacity_but_never_grows_it() {
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    let capped = |cap_gb: u64| {
+        let config = CapacityConfig { max_capacity_bytes: Some(cap_gb * GB), headroom_buffer_bytes: 0, ..CapacityConfig::default() };
+        SlidingWindowCapacityForecaster::new(config).expect("valid").forecast(&load(1000, 500, &quiet)).expect("measured")
+    };
+    assert_eq!(capped(600).max_capacity_bytes, 600 * GB);
+    assert_eq!(capped(600).target_reclaim_bytes, 20 * GB, "500 − 0.8·600");
+    assert_eq!(capped(5000).max_capacity_bytes, 1000 * GB);
+}
+
+#[test]
+fn a_volume_with_no_capacity_is_not_forecast() {
+    assert_eq!(forecaster(0).forecast(&load(0, 0, &[])), None);
+}
+
+#[rstest]
+#[case::defaults(CapacityConfig::default(), true)]
+#[case::target_at_emergency(CapacityConfig { target_utilization: 0.95, ..CapacityConfig::default() }, false)]
+#[case::emergency_above_one(CapacityConfig { emergency_utilization: 1.01, ..CapacityConfig::default() }, false)]
+#[case::nan_target(CapacityConfig { target_utilization: f64::NAN, ..CapacityConfig::default() }, false)]
+#[case::zero_window(CapacityConfig { sliding_window_days: 0, ..CapacityConfig::default() }, false)]
+#[case::zero_alpha(CapacityConfig { ewma_alpha: 0.0, ..CapacityConfig::default() }, false)]
+#[case::zero_cap(CapacityConfig { max_capacity_bytes: Some(0), ..CapacityConfig::default() }, false)]
+fn config_bounds(#[case] config: CapacityConfig, #[case] valid: bool) {
+    assert_eq!(config.validate().is_ok(), valid);
+}
+
+#[test]
+fn daily_series_buckets_by_24_hour_windows_ending_now() {
+    let now = 100 * DAY;
+    let series = daily_series([(now - 10, 1), (now - DAY - 1, 2), (now - 3 * DAY, 4), (now + 5, 8), (0, 16)], now, 3);
+    assert_eq!(series, [0, 2, 1], "oldest first; future and out-of-window events dropped");
+}
+
+proptest! {
+    #[test]
+    fn more_usage_or_more_ingest_never_needs_less(
+        used_a in 0u64..=1000, used_b in 0u64..=1000, ingest_a in 0u64..=50, ingest_b in 0u64..=50,
+    ) {
+        let at = |used: u64, ingest: u64| {
+            let history = [ingest * GB; INGEST_HISTORY_DAYS];
+            forecaster(50).forecast(&load(1000, used, &history)).expect("measured").target_reclaim_bytes
+        };
+        prop_assert!(at(used_a.max(used_b), ingest_a.max(ingest_b)) >= at(used_a.min(used_b), ingest_a.min(ingest_b)));
+    }
+
+    #[test]
+    fn every_item_under_a_root_lands_on_a_governed_volume(
+        depth in 1usize..4,
+        names in prop::collection::vec("[a-z]{1,8}", 4),
+    ) {
+        let root = format!("/media/{}", names[..depth].join("/"));
+        let item = format!("{root}/{}", names[3]);
+        let library = LibraryVolumes::build(&[disks(
+            App::Sonarr,
+            vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/config", 10, 1)],
+            &[root.as_str()],
+        )]);
+        let key = library.volume_of(App::Sonarr, &item);
+        prop_assert_eq!(key, Some("/media"));
+        prop_assert!(library.volumes.iter().any(|v| Some(v.path.as_str()) == key));
+    }
 }
 
 #[test]
@@ -133,130 +253,62 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Andor"), None, "never governed against `/`");
 }
 
-#[test]
-fn no_library_volume_is_unmeasured() {
-    assert_eq!(CapacitySnapshot::of(&[], marks()), None);
-}
-
-#[test]
-fn measures_are_per_volume_so_a_quiet_neighbour_cannot_mask_a_full_disk() {
-    let snap = measured(&[vol("/movies", 1000, 900), vol("/tv", 1000, 100)]);
-    assert!(snap.over_ceiling);
-    assert_eq!(snap.utilization, 0.5, "pooled, the store looks half empty");
-    assert_eq!(snap.deficit_bytes, 100 * GB);
-    assert_eq!(snap.release_gap_bytes, 150 * GB);
-}
-
-#[rstest]
-#[case::idle_far_under(50, false, false)]
-#[case::releases_once_under_the_mark(70, true, false)]
-#[case::releases_exactly_at_the_mark(75, true, false)]
-#[case::idle_inside_the_band(78, false, false)]
-#[case::keeps_evicting_inside_the_band(78, true, true)]
-#[case::exactly_at_the_ceiling_is_not_over(80, false, false)]
-#[case::latches_over_the_ceiling(85, false, true)]
-#[case::stays_latched_over_the_ceiling(85, true, true)]
-fn eviction_latches_at_the_ceiling_and_releases_at_the_mark(#[case] used_gb: u64, #[case] was_latched: bool, #[case] evicting: bool) {
-    let snap = measured(&[vol("/media", 100, used_gb)]);
-    let before = if was_latched { latch(&["/media"]) } else { Latch::default() };
-    let mut policy = ArchivePolicy::default();
-    let decision = decide_capacity(&mut policy, Some(&snap), &before, false, &BTreeMap::new());
-    assert_eq!(decision.latch.latched.contains("/media"), evicting);
-    match decision.action {
-        CapacityAction::Evict { goal_bytes, .. } => {
-            assert!(evicting);
-            assert_eq!(goal_bytes, (used_gb - 75) * GB, "free down to the release mark");
-        }
-        CapacityAction::Idle => assert!(!evicting),
-        CapacityAction::Unmeasured => panic!("a measured snapshot is never unmeasured"),
+fn plan_on(volume: &str, target: u64, planned: u64, eligible: u64) -> EvictionPlan {
+    EvictionPlan {
+        method: None,
+        solver_error: None,
+        items: Vec::new(),
+        volumes: vec![VolumeOutcome { volume: volume.to_string(), target_bytes: target, planned_bytes: planned, eligible_bytes: eligible }],
+        target_bytes: target,
+        total_reclaimed_bytes: planned,
+        total_regret: 0.0,
+        candidates_count: 0,
+        eligible_bytes: eligible,
+        kept: Default::default(),
     }
 }
 
-#[test]
-fn goals_are_per_volume() {
-    let snap = measured(&[vol("/movies", 100, 90), vol("/tv", 100, 50)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
-    assert_eq!(decision.goals, BTreeMap::from([("/movies".to_string(), 15 * GB)]));
-}
-
-#[test]
-fn unmeasured_evicts_nothing_and_keeps_the_latch() {
-    let before = latch(&["/media"]);
-    let mut policy = ArchivePolicy::default();
-    let decision = decide_capacity(&mut policy, None, &before, true, &BTreeMap::new());
-    assert_eq!(decision.action, CapacityAction::Unmeasured);
-    assert_eq!(decision.latch, before, "no measurement, no release");
-    assert!(decision.goals.is_empty());
-    assert!(!policy.unwatched_reclaim.enabled, "no pressure without a measurement");
-}
-
-#[test]
-fn a_latched_volume_that_vanished_is_released() {
-    let snap = measured(&[vol("/tv", 100, 50)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &latch(&["/movies"]), false, &BTreeMap::new());
-    assert_eq!(decision.action, CapacityAction::Idle);
-    assert!(decision.latch.latched.is_empty());
+fn status_of(
+    volumes: &[Volume],
+    forecasts: &[VolumeForecast],
+    plan: &EvictionPlan,
+    on_disk: &OnDisk,
+    handed: &BTreeMap<String, u64>,
+) -> CapacityStatus {
+    CapacityStatus::new(CycleCapacity {
+        config: &CapacityConfig::default(),
+        volumes,
+        forecasts,
+        plan,
+        unmatched_roots: &[(App::Sonarr, "/anime".to_string())],
+        on_disk,
+        handed,
+    })
 }
 
 #[rstest]
-#[case::armed(true)]
-#[case::operator_said_no(false)]
-fn eviction_arms_never_played_only_when_permitted_and_never_lowers_its_floor(#[case] arm: bool) {
-    let snap = measured(&[vol("/media", 100, 90)]);
-    let mut policy = ArchivePolicy::default();
-    let decision = decide_capacity(&mut policy, Some(&snap), &Latch::default(), arm, &BTreeMap::new());
-    assert_eq!(policy.unwatched_reclaim.enabled, arm);
-    assert_eq!(policy.unwatched_reclaim.floor, UnwatchedReclaim::default().floor);
-    assert!(matches!(decision.action, CapacityAction::Evict { armed_never_played, .. } if armed_never_played == arm));
-}
-
-#[test]
-fn an_idle_run_never_touches_the_operators_always_on_rule() {
-    let snap = measured(&[vol("/media", 100, 50)]);
-    let mut policy =
-        ArchivePolicy { unwatched_reclaim: UnwatchedReclaim { enabled: true, ..UnwatchedReclaim::default() }, ..ArchivePolicy::default() };
-    decide_capacity(&mut policy, Some(&snap), &Latch::default(), false, &BTreeMap::new());
-    assert!(policy.unwatched_reclaim.enabled);
-}
-
-fn outcome(volume: &str, goal_gb: u64, reclaimed_gb: u64, eligible_gb: u64) -> VolumeOutcome {
-    VolumeOutcome {
-        volume: volume.to_string(),
-        goal_bytes: goal_gb * GB,
-        reclaimed_bytes: reclaimed_gb * GB,
-        eligible_bytes: eligible_gb * GB,
-    }
-}
-
-#[rstest]
-#[case::idle(60, 0, 0, None, None)]
-#[case::handed_over(90, 15, 15, Some(true), Some(true))]
-#[case::covered_but_paced_by_the_caps(90, 15, 5, Some(true), Some(false))]
-#[case::short(90, 5, 5, Some(false), Some(false))]
-fn a_goal_is_claimed_only_while_evicting_and_met_only_once_handed_over(
-    #[case] used_gb: u64,
-    #[case] reclaimed_gb: u64,
+#[case::healthy(0, 0, 0, None, None)]
+#[case::handed_over(15, 15, 15, Some(true), Some(true))]
+#[case::covered_but_paced_by_the_caps(15, 15, 5, Some(true), Some(false))]
+#[case::short(15, 5, 5, Some(false), Some(false))]
+fn a_target_is_covered_by_the_plan_and_met_only_once_handed_over(
+    #[case] target_gb: u64,
+    #[case] planned_gb: u64,
     #[case] handed_gb: u64,
     #[case] covered: Option<bool>,
     #[case] met: Option<bool>,
 ) {
-    let snap = measured(&[vol("/media", 100, used_gb)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
-    let outcomes = [outcome("/media", used_gb.saturating_sub(75), reclaimed_gb, 40)];
+    let volumes = [vol("/media", 100, 70)];
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    let mut forecast = forecaster(0).forecast(&load(100, 70, &quiet)).expect("measured");
+    forecast.target_reclaim_bytes = target_gb * GB;
+    let forecasts = [VolumeForecast { volume: "/media".to_string(), forecast }];
     let handed = BTreeMap::from([("/media".to_string(), handed_gb * GB)]);
-    let status = CapacityStatus::new(&snap, &decision, &outcomes, &[], &OnDisk::default(), &handed);
+    let status = status_of(&volumes, &forecasts, &plan_on("/media", target_gb * GB, planned_gb * GB, 40 * GB), &OnDisk::default(), &handed);
     assert_eq!((status.covered, status.goal_met), (covered, met));
     assert_eq!((status.volumes[0].covered, status.volumes[0].goal_met), (covered, met));
-    assert_eq!(status.latched, met.is_some());
+    assert_eq!(status.healthy, met.is_none());
     assert_eq!(status.volumes[0].eligible_bytes, 40 * GB);
-    assert_eq!(status.ceiling, 0.80);
-}
-
-#[test]
-fn status_names_every_ungoverned_root() {
-    let snap = measured(&[vol("/media", 100, 50)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
-    let status = CapacityStatus::new(&snap, &decision, &[], &[(App::Sonarr, "/anime".to_string())], &OnDisk::default(), &BTreeMap::new());
     assert_eq!(status.unmatched_roots, ["sonarr:/anime"]);
 }
 
@@ -271,117 +323,18 @@ fn untracked_is_what_the_disk_holds_beyond_library_media_and_credited_evictions(
     #[case] held_gb: u64,
     #[case] untracked_gb: u64,
 ) {
-    let snap = measured(&[vol("/media", 100, used_gb)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
+    let volumes = [vol("/media", 100, used_gb)];
+    let quiet = [0u64; INGEST_HISTORY_DAYS];
+    let forecast = forecaster(0).forecast(&load(100, used_gb, &quiet)).expect("measured");
+    let forecasts = [VolumeForecast { volume: "/media".to_string(), forecast }];
     let on_disk = OnDisk {
         library: BTreeMap::from([("/media".to_string(), library_gb * GB)]),
         credit: BTreeMap::from([("/media".to_string(), Credit { pending: pending_gb * GB, held: held_gb * GB })]),
         held: BTreeMap::new(),
     };
-    let status = CapacityStatus::new(&snap, &decision, &[], &[], &on_disk, &BTreeMap::new());
+    let status = status_of(&volumes, &forecasts, &plan_on("/media", 0, 0, 0), &on_disk, &BTreeMap::new());
     assert_eq!((status.untracked_bytes, status.volumes[0].untracked_bytes), (untracked_gb * GB, untracked_gb * GB));
     assert_eq!((status.pending_bytes, status.held_bytes), (pending_gb * GB, held_gb * GB));
-}
-
-#[test]
-fn the_latch_round_trips_and_a_corrupt_file_reads_unlatched() {
-    let path = std::env::temp_dir().join(format!("flinch-latch-{}.json", std::process::id()));
-    let before = latch(&["/movies", "/tv"]);
-    write_latch(&path, &before).expect("write latch");
-    assert_eq!(read_latch(&path), before);
-    std::fs::write(&path, b"{not json").expect("corrupt it");
-    assert_eq!(read_latch(&path), Latch::default(), "corruption must delete less, not more");
-    std::fs::remove_file(&path).ok();
-}
-
-proptest! {
-    #[test]
-    fn freeing_the_goal_lands_at_or_under_the_release_mark_without_overshoot(
-        total_gb in 1u64..=100_000,
-        used_permille in 0u64..=1000,
-        a_pct in 1u32..=100,
-        b_pct in 1u32..=100,
-    ) {
-        let (ceiling_pct, release_pct) = (a_pct.max(b_pct), a_pct.min(b_pct));
-        let marks = Watermarks::new(ceiling_pct as f32 / 100.0, release_pct as f32 / 100.0).expect("valid");
-        let total = total_gb * GB;
-        let used = total / 1000 * used_permille;
-        let volume = Volume { path: "/m".to_string(), total_bytes: total, free_bytes: total - used };
-        let snap = CapacitySnapshot::of(&[volume], marks).expect("measured");
-        let m = &snap.volumes[0];
-        let release_line = total as f64 * f64::from(release_pct) / 100.0;
-
-        prop_assert!((used - m.release_gap_bytes) as f64 <= release_line + 1.0);
-        if m.release_gap_bytes > 0 {
-            prop_assert!((used - m.release_gap_bytes) as f64 >= release_line - 1.0, "no byte evicted beyond the mark");
-        }
-        prop_assert!(m.deficit_bytes <= m.release_gap_bytes, "the ceiling sits above the release mark");
-        prop_assert_eq!(m.over_ceiling, m.deficit_bytes > 0);
-        prop_assert!((0.0..=1.0).contains(&m.utilization));
-    }
-
-    #[test]
-    fn a_fuller_disk_never_needs_less_eviction(total_gb in 1u64..=100_000, a in 0u64..=1000, b in 0u64..=1000) {
-        let total = total_gb * GB;
-        let at = |permille: u64| {
-            let used = total / 1000 * permille;
-            measured(&[Volume { path: "/m".to_string(), total_bytes: total, free_bytes: total - used }])
-        };
-        let (low, high) = (at(a.min(b)), at(a.max(b)));
-        prop_assert!(high.release_gap_bytes >= low.release_gap_bytes);
-        prop_assert!(high.deficit_bytes >= low.deficit_bytes);
-    }
-
-    #[test]
-    fn the_latch_holds_exactly_from_crossing_until_release(
-        total_gb in 1u64..=100_000,
-        used_permille in 0u64..=1000,
-        was_latched in any::<bool>(),
-    ) {
-        let total = total_gb * GB;
-        let used = total / 1000 * used_permille;
-        let snap = measured(&[Volume { path: "/m".to_string(), total_bytes: total, free_bytes: total - used }]);
-        let before = if was_latched { latch(&["/m"]) } else { Latch::default() };
-        let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &before, false, &BTreeMap::new());
-        let m = &snap.volumes[0];
-        let latched = m.over_ceiling || (was_latched && m.release_gap_bytes > 0);
-        prop_assert_eq!(decision.latch.latched.contains("/m"), latched);
-        prop_assert_eq!(decision.goals.get("/m").copied(), latched.then_some(m.release_gap_bytes));
-    }
-
-    #[test]
-    fn every_item_under_a_root_lands_on_a_governed_volume(
-        depth in 1usize..4,
-        names in prop::collection::vec("[a-z]{1,8}", 4),
-    ) {
-        let root = format!("/media/{}", names[..depth].join("/"));
-        let item = format!("{root}/{}", names[3]);
-        let library = LibraryVolumes::build(&[disks(
-            App::Sonarr,
-            vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/config", 10, 1)],
-            &[root.as_str()],
-        )]);
-        let key = library.volume_of(App::Sonarr, &item);
-        prop_assert_eq!(key, Some("/media"));
-        prop_assert!(library.volumes.iter().any(|v| Some(v.path.as_str()) == key));
-    }
-}
-
-#[test]
-fn evicted_bytes_in_a_recycle_bin_are_credited_not_evicted_twice() {
-    let snap = measured(&[vol("/media", 100, 90)]);
-    let pending = BTreeMap::from([("/media".to_string(), 10 * GB)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &pending);
-    assert_eq!(decision.goals.get("/media"), Some(&(5 * GB)), "15 GB gap, 10 GB already on its way out");
-}
-
-#[test]
-fn a_volume_waiting_on_its_recycle_bin_stays_latched_with_nothing_more_to_evict() {
-    let snap = measured(&[vol("/media", 100, 90)]);
-    let pending = BTreeMap::from([("/media".to_string(), 40 * GB)]);
-    let decision = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &pending);
-    assert_eq!(decision.goals.get("/media"), Some(&0));
-    assert!(decision.latch.latched.contains("/media"), "latched on the measurement, never on the credit");
 }
 
 #[rstest]
@@ -404,22 +357,4 @@ fn an_app_that_never_answered_holds_space_for_the_default_week() {
     let library = LibraryVolumes::build(&[]);
     assert_eq!(library.recycle_bin(App::Radarr), RecycleBin::Unknown);
     assert_eq!(library.recycle_secs(App::Radarr), 7 * 86_400);
-}
-
-proptest! {
-    #[test]
-    fn credit_lowers_a_goal_by_exactly_the_pending_bytes_and_never_moves_the_latch(
-        total_gb in 1u64..=10_000,
-        used_permille in 801u64..=1000,
-        pending_gb in 0u64..=10_000,
-    ) {
-        let total = total_gb * GB;
-        let used = total / 1000 * used_permille;
-        let snap = measured(&[Volume { path: "/m".to_string(), total_bytes: total, free_bytes: total - used }]);
-        let pending = BTreeMap::from([("/m".to_string(), pending_gb * GB)]);
-        let without = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &BTreeMap::new());
-        let with = decide_capacity(&mut ArchivePolicy::default(), Some(&snap), &Latch::default(), false, &pending);
-        prop_assert_eq!(with.goals["/m"], without.goals["/m"].saturating_sub(pending_gb * GB));
-        prop_assert_eq!(with.latch, without.latch);
-    }
 }

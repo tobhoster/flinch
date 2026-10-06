@@ -87,9 +87,8 @@ fn rows_written_before_presence_history_keep_todays_arrival_rule() {
     let state = StateDir::with("presence", &[("items.json", items), ("tautulli.json", streams)]);
     let household = load_household(&state.0).expect("household loads");
     assert_eq!(household.unreadable_rows, 0, "a row without on_disk is still a library item");
-    let spec = PanelSpec { now: NOW, cuts_days: &[150.0], horizon_days: 30.0, tautulli_coverage_start: None };
-    let asked: Vec<(String, f32)> =
-        build_dataset(&household.items, &spec).into_iter().map(|row| (row.item_id, row.card.added_days_ago)).collect();
+    let spec = PanelSpec { now: NOW, cuts_days: &[150.0], horizon_days: 30.0 };
+    let asked: Vec<String> = build_dataset(&household.items, &spec).into_iter().map(|row| row.item_id).collect();
     // The old row is dated by its first play; the new one was not on disk then.
-    assert_eq!(asked, [("radarr-1".to_string(), 40.0)]);
+    assert_eq!(asked, ["radarr-1"]);
 }

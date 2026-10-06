@@ -27,7 +27,7 @@ fn radarr_movie_maps_to_a_card_with_file_only() {
 }
 
 #[test]
-fn sonarr_series_flattens_to_one_card_per_season_and_marks_newest() {
+fn sonarr_series_flattens_to_one_card_per_season_with_files() {
     let series = ArrSeries {
         id: 11,
         title: "Witcher".to_string(),
@@ -62,8 +62,6 @@ fn sonarr_series_flattens_to_one_card_per_season_and_marks_newest() {
     assert_eq!(cards.len(), 2, "empty season 3 is skipped");
     let s1 = &cards[0];
     assert_eq!(s1.id, "sonarr-11-s1");
-    assert_eq!(s1.is_newest_season, Some(false));
-    assert_eq!(cards[1].is_newest_season, Some(true), "S2 is the newest with files");
     assert!(s1.season_index == Some(1));
 }
 
@@ -83,16 +81,7 @@ fn a_future_dated_added_string_maps_to_a_huge_age_not_a_panic() {
         ..Default::default()
     };
     let card = movie.to_card().expect("card");
-    assert!(card.added_days_ago.is_finite(), "chrono_lite must not panic on wild dates");
-}
-
-#[test]
-fn the_null_date_sentinel_reads_as_absent_not_as_an_underflow() {
-    // Sonarr/Radarr write 0001-01-01 for "no date"; `year - 1970` on a u64
-    // used to panic inside the daemon loop.
-    assert_eq!(chrono_lite("0001-01-01T00:00:00Z"), None);
-    assert_eq!(chrono_lite("1969-12-31T00:00:00Z"), None);
-    assert!(chrono_lite("2023-12-01T08:00:00Z").is_some());
+    assert!(card.added_days_ago.is_finite(), "a wild date must not panic");
 }
 
 #[test]
@@ -119,7 +108,7 @@ fn a_movie_ages_from_when_its_file_arrived_not_when_it_was_requested() {
         ..Default::default()
     };
     let card = movie.to_card().expect("file present");
-    let requested_days = (now_epoch() - chrono_lite("2020-01-01").expect("date")) as f32 / 86_400.0;
+    let requested_days = (now_epoch() - crate::presence::parse_utc("2020-01-01").expect("date")) as f32 / 86_400.0;
     assert!(card.added_days_ago < requested_days - 1000.0, "dwell starts at the file, got {}", card.added_days_ago);
 }
 

@@ -97,6 +97,7 @@ fn world(cards: &[Card], leaving_soon: bool) -> World {
         announced: Default::default(),
         collections: CollectionTitles { leaving: leaving_title.to_string(), ..titles() },
         gone: BTreeSet::new(),
+        unresolved: BTreeSet::new(),
         seerr_configured: false,
     };
     let (mut all, mut operator_rows) = (Vec::new(), BTreeSet::new());
@@ -133,6 +134,9 @@ fn world(cards: &[Card], leaving_soon: bool) -> World {
             continue;
         }
         let card = item(&id, kind, spec.resolved.then_some(plex), spec.gib * GIB);
+        if !spec.resolved {
+            desired.unresolved.insert(id.clone());
+        }
         if spec.announced {
             desired.announced.insert(id);
         }

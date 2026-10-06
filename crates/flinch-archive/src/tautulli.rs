@@ -18,6 +18,9 @@ use crate::watch::{EvidenceHealth, WatchEntry, WatchSource};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// Share of the runtime at which a stream counts as a finished watch.
+pub const FINISHED_FRACTION: f32 = 0.85;
+
 /// One stream from Tautulli's history.
 ///
 /// Tautulli answers with strings for everything, including numbers, so the parse
@@ -94,7 +97,7 @@ impl TautulliRow {
     /// not complete an episode or a movie. A missing or unreadable percent
     /// proves no finish, so it reads as a stream that stopped early.
     pub fn is_watch(&self) -> bool {
-        self.percent().is_some_and(|percent| percent >= 85.0)
+        self.fraction() >= FINISHED_FRACTION
     }
 
     /// Share of the runtime streamed, 0.0-1.0; a missing or unreadable percent
@@ -311,13 +314,7 @@ pub fn absence_by_target(
         if keys.iter().any(|key| join.matches(key)) {
             continue;
         }
-        let entry = WatchEntry {
-            id: target.id.clone(),
-            last_watched_epoch: None,
-            progress: 0.0,
-            rewatch_score: None,
-            source: WatchSource::TautulliAbsence,
-        };
+        let entry = WatchEntry { id: target.id.clone(), last_watched_epoch: None, progress: 0.0, source: WatchSource::TautulliAbsence };
         out.insert(target.id.clone(), entry);
     }
     out
@@ -353,7 +350,6 @@ pub fn plays_by_target(targets: &[WatchTarget], resolution: &Resolution, rows: &
             id: target.id.clone(),
             last_watched_epoch: streams.iter().filter_map(|row| row.epoch()).max(),
             progress,
-            rewatch_score: None,
             source: WatchSource::Tautulli,
         };
         out.insert(target.id.clone(), entry);

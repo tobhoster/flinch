@@ -1,8 +1,7 @@
 import React from 'react';
-import { SectionTitle } from './ui.jsx';
+import { SectionTitle, day } from './ui.jsx';
 
 const LIMIT = 10;
-const day = (unix) => new Date(unix * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
 /** Monitored with nothing on disk: the *arr will download it again. */
 const returning = (d) => d.monitored === true && !d.on_disk;
@@ -37,8 +36,7 @@ export default function OutsideDeletions({ items }) {
       <SectionTitle hint="last 30 days" term="outside_deletions">Deleted outside FLINCH</SectionTitle>
       {coming.length > 0 && (
         <p className="mb-1 text-state-warn">
-          <span className="num">{coming.length}</span> {coming.length === 1 ? 'is' : 'are'} still monitored with nothing on disk:
-          {' '}Radarr or Sonarr will download {coming.length === 1 ? 'it' : 'them'} again.
+          <span className="num">{coming.length}</span> still monitored with nothing on disk: will download again.
         </p>
       )}
       <ul className="space-y-1 text-fg-muted">

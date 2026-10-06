@@ -3,150 +3,121 @@
  * and the "How FLINCH decides" card both read from here, so they cannot drift.
  */
 export const GLOSSARY = {
-  p_safe: {
-    term: 'P(safe)',
-    body: 'The chance that nobody in the household plays the item within the next 30 days, forecast from this household’s own Plex and Tautulli history. Rules are separate: favorites, keep tags and collections, and the newest aired season are kept whatever this number says, and the Movies and Series tables, which show it, mark them with a lock. The Overview’s Candidates and “Closest by P(safe)” lists show the P(safe) the floors and the eviction order read instead: it carries the rules, and once a fitted model is adopted it is capped at the hand-set priors’, so it can be lower than the tables’ forecast. Calibrated means that of the forecasts at 90%, about 9 in 10 really go unplayed; the Forecast model card shows how well that has held up so far.',
+  p_watch: {
+    term: 'P(watch)',
+    body: 'The chance someone in the household plays the item within 90 days, from this household’s Plex and Tautulli history, Seerr requests and watchlists.',
+  },
+  regret: {
+    term: 'Regret',
+    body: 'What losing an item is expected to cost: P(watch) × the cost of getting it back × how much the household wants it (Seerr user weights). Low regret goes first.',
+  },
+  reacquisition: {
+    term: 'Reacquisition',
+    body: 'How hard the item is to download again. 1 is an ordinary re-download; above 3 is hard (few seeders, usenet out of retention, very large).',
+  },
+  eviction_safety: {
+    term: 'Eviction safety',
+    body: 'How safe deleting it is: never above 1 − P(watch), and lower when it is hard to get back.',
+  },
+  advice: {
+    term: 'Recommendation',
+    body: 'Keep the release, downgrade to a compact one, or let it go when space is needed. Follows from P(watch) and regret per GiB. Advice only: nothing in Radarr or Sonarr changes.',
   },
   model: {
-    term: 'Forecast model',
-    body: 'Once a day FLINCH asks your history questions it already knows the answers to: at past dates, was this title played within the next 30 days? Every answer is checked on titles the fit did not see (out of fold). Two fits compete. Recalibrating the priors keeps their order and fits only how sure to be; it needs 40 questions and 2 played titles. The full fit relearns every weight and needs 120 questions and 12 of each outcome. The better one replaces the hand-set priors only when it beats them there, and then sets the forecast; what the floors pass stays capped at what the priors allow. Until then the priors run, and the card says what is still missing.',
+    term: 'Watch model',
+    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays and season cycle. Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
   },
-  taste: {
-    term: 'Genre taste',
-    body: 'For a title nobody has played yet, how often this household plays titles of its genres within 30 days, counted from your own history: comedies that got played, horror that sat untouched. A genre seen only a few times leans toward your overall rate until more history comes in. It is learned here, with no outside service, and it starts with no weight: it moves P(safe) only once the full fit adopts it after beating the priors on titles it did not see.',
+  projection: {
+    term: 'Storage projection',
+    body: 'Per disk: used space + average daily downloads × window + queued downloads − evictions already under way. If that would pass the target, the excess plus headroom must be freed. Below the target nothing is planned.',
   },
-  score_floor: {
-    term: 'Score floor',
-    body: 'The minimum P(safe) for an item to be eligible at all. The policy must also allow it: favorites, keep-collections, recently watched items and the newest aired season are never eligible, whatever the score. Once a fitted model is adopted, the floors read the lower of its P(safe) and the hand-set priors’, so an item can show above the floor and still be held: adopting a model never makes more eligible. To free more, lower this floor, and for items nobody finished the never-played floor as well.',
-  },
-  temperature: {
-    term: 'Temperature',
-    body: 'Softens overconfident scores before any threshold applies. Above 1 makes them less extreme. Once a fitted model is adopted, this temperature sets only the hand-set priors’ cap on P(safe); the model uses its own fitted temperature.',
+  plan: {
+    term: 'Plan',
+    body: 'FLINCH picks the set of items that frees the needed space with the least total regret (a MILP solve). Earlier seasons of a show go before later ones. Above the emergency mark, or if the solver fails, it falls back to a greedy pick by regret per GiB.',
   },
   eligible: {
-    term: 'Eligible and reserve',
-    body: 'Items that pass the policy and the floors are eligible. The reserve is their total size: how much space FLINCH could free if it needed to.',
+    term: 'Eligible',
+    body: 'Items the plan may pick: not pinned, past the grace period, matched in Plex and on a governed disk. Their total is the most FLINCH could free.',
   },
-  watermarks: {
-    term: 'Watermarks',
-    body: 'Below the ceiling (default 80%) nothing is deleted. Crossing it starts eviction on that disk, which continues until use drops to the release mark (default 75%); the gap stops FLINCH deleting one item after every download.',
+  pinned: {
+    term: 'Pinned',
+    body: 'Favorites, keep collections, the keep tag, your own Maintainerr exclusions. Never evicted.',
   },
-  eviction_order: {
-    term: 'Eviction order',
-    body: 'FLINCH frees space with the least expected regret per GiB first: (1 − P(safe)) ÷ size. So a large item that is almost certainly unwanted goes before many small ones.',
+  grace_period: {
+    term: 'Grace period',
+    body: 'Items newer than this many days are never picked.',
   },
   grace_runs: {
     term: 'Grace runs',
-    body: 'An item must stay selected for this many consecutive runs before it is handed to Maintainerr, so one odd reading never deletes anything. Dry runs count, so the first enforced run does what the last dry run printed; a run that could not reach Maintainerr does not.',
+    body: 'An item must stay picked this many runs in a row before it is handed to Maintainerr. Dry runs count.',
   },
   never_played: {
     term: 'Never-played reclaim',
-    body: 'Lets items nobody finished become eligible (a movie nobody finished, even if it was started; a season nobody played at all) once they have been on disk long enough and pass their own floor. Its switch is off by default, and “While evicting” arms it only while eviction is latched on a disk (from the ceiling down to the release mark). Neither runs it while the watch evidence is incomplete or the Leaving Soon title is blank.',
+    body: 'Off by default: items nobody finished (a season nobody played) are kept. It stays off while watch evidence is incomplete or the Leaving Soon title is blank.',
   },
   dry_run: {
-    term: 'Dry run and Enforced',
-    body: 'Dry run scores and plans but sends nothing to Maintainerr. Enforced hands candidates that outlast the grace runs to the Maintainerr collections, and Maintainerr deletes them on its own schedule.',
+    term: 'Dry run',
+    body: 'FLINCH plans but sends nothing to Maintainerr. When off, picked items past the grace runs go to the Maintainerr collections, and Maintainerr deletes them on its own schedule.',
+  },
+  user_weights: {
+    term: 'User weights',
+    body: 'How much each Seerr user’s requests and watchlist count toward regret. Default 1; 0 ignores the user.',
   },
   evidence: {
     term: 'Watch evidence',
-    body: 'Where the “was it watched” evidence came from: Plex play state, Plex show-level state, Tautulli, Plex watch history, or an imported export. With no evidence FLINCH holds the item (fail-closed).',
-  },
-  held_newest: {
-    term: 'Newest aired season',
-    body: 'Kept while it is the show’s newest aired season.',
-  },
-  held_yours: {
-    term: 'Kept by you',
-    body: 'You marked it to keep: the keep tag on it in Radarr or Sonarr, a Plex label or collection with that name, or your own exclusion in Maintainerr. FLINCH never evicts it.',
-  },
-  held_no_date: {
-    term: 'Watched, no date',
-    body: 'Watched, but with no last-played date there is nothing to age it by.',
-  },
-  held_floor: {
-    term: 'Below the floor',
-    body: 'P(safe) is under the floor, or the policy does not allow it.',
-  },
-  held_empty: {
-    term: 'Nothing on disk',
-    body: 'Monitored, but there is no file, so there is nothing to free.',
-  },
-  held_excluded: {
-    term: 'Excluded',
-    body: 'A Maintainerr exclusion is already recorded for it.',
-  },
-  held_no_evidence: {
-    term: 'No watch evidence',
-    body: 'Neither Plex nor Tautulli has a usable record of it this run: not matched by catalogue id, a source could not be read, or the only record is one account’s “no plays” on a shared Plex server, which does not speak for the others. FLINCH holds it rather than guess that nobody watched it.',
-  },
-  held_evidence: {
-    term: 'Waiting for complete evidence',
-    body: 'Nobody finished it (a season: nobody played it) and never-played reclaim is on or armed, but it is held because a watch source was not read completely this run (or Tautulli does not keep every user’s and library’s history), so “nobody finished” cannot be trusted yet. Once that hold lifts, the item still needs the rule’s own floor and time on disk.',
-  },
-  held_untitled: {
-    term: 'Waiting for a Leaving Soon title',
-    body: 'Nobody finished it (a season: nobody played it) and never-played reclaim is on or armed, but it is held because the Leaving Soon title in Settings is blank, so it could not be announced before it goes. Name the Leaving Soon collection in Settings → Maintainerr collections. Once that hold lifts, the item still needs the rule’s own floor and time on disk.',
-  },
-  held_reserve: {
-    term: 'Eligible reserve',
-    body: 'Passes the policy and the floors but is not needed yet. It stays until its disk crosses the ceiling, then goes in regret-per-GiB order until the release mark is reached.',
-  },
-  not_governed: {
-    term: 'Not governed',
-    body: 'The item’s root folder is on no disk the *arr apps report, so FLINCH cannot measure what removing it would free and never evicts it. Put the folder on a mount Radarr or Sonarr reports disk space for to govern it.',
-  },
-  pending: {
-    term: 'Waiting for the recycle bin',
-    body: 'Evicted files the *arr recycle bin still holds. They count toward the goal, so FLINCH does not evict more to cover space that is already on its way out. When the window passes, FLINCH checks the disk really dropped by the item’s size; if it has not, the space becomes held.',
-  },
-  untracked: {
-    term: 'Not library media',
-    body: 'Used space that is neither library media nor an eviction FLINCH still counts as on its way out: downloads, recycle bins of other deletions, files no app tracks. FLINCH cannot free it by evicting, so look there first when a disk fills up.',
-  },
-  held: {
-    term: 'Held space',
-    body: 'After an eviction’s recycle-bin window FLINCH checks the disk dropped by the item’s size, and keeps counting it during a 2-day grace. If no drop shows by then, the space is held: something else still holds the bytes, typically a torrent seeding the same hardlinked file or a filesystem snapshot. FLINCH keeps counting held space toward the goal, so it evicts nothing more for it, for up to 14 days after it was marked held or until the drop shows.',
+    body: 'Where “was it watched” came from: Plex, Plex show-level state, Tautulli, Plex history or an imported export. Without it the item is kept.',
   },
   evidence_complete: {
     term: 'Complete watch evidence',
-    body: 'Never-played reclaim only runs when every configured watch source was read completely this run, and Tautulli keeps history for every active user and for every library FLINCH manages. If one is missing, incomplete or not kept, “nobody finished” cannot be trusted, so those items are held.',
+    body: 'Never-played reclaim runs only when every watch source was read fully and Tautulli keeps history for every user and library.',
+  },
+  pending: {
+    term: 'Recycle bin',
+    body: 'Evicted files the *arr recycle bin still holds. They count as freed, so FLINCH does not evict more for them.',
+  },
+  held: {
+    term: 'Held space',
+    body: 'An eviction whose space never came back after the recycle bin window, usually a torrent seeding the same file or a snapshot. FLINCH still counts it as freed for up to 14 days.',
+  },
+  untracked: {
+    term: 'Not library media',
+    body: 'Downloads, recycle bins and files no app tracks. Evicting cannot free it; look there first when a disk fills up.',
+  },
+  not_governed: {
+    term: 'Not governed',
+    body: 'The root folder is on no disk Radarr or Sonarr reports, so FLINCH cannot measure it and never evicts from it.',
+  },
+  unresolved: {
+    term: 'Not matched in Plex',
+    body: 'FLINCH matches Plex by catalogue id (TMDB, TVDB, IMDb), never by title. Without a match an item is neither protected nor evicted.',
   },
   maintainerr: {
-    term: 'Maintainerr sync',
-    body: 'FLINCH protects keepers with Maintainerr exclusions and hands eviction candidates to its collections; Maintainerr does the deleting. Each write is checked afterwards, and a failed one is planned again next run.',
+    term: 'Maintainerr',
+    body: 'FLINCH excludes pinned and partly watched items and hands picked items to Maintainerr collections; Maintainerr deletes. Failed writes are retried next run.',
   },
   leaving_soon: {
     term: 'Leaving Soon',
-    body: 'Items nobody finished go here first: a Maintainerr collection Plex shows on the home screen, which deletes an item only after its window (14 days is a good start). Play one during the window and FLINCH takes it back. Watched items and duplicates skip it and go straight to the delete collections. While the collection is missing, hidden from Plex or has no window, new unwatched items are held, never deleted without a warning; items already waiting in it stay, and Maintainerr still acts on its schedule. While its title is blank, never-played reclaim is held off: unwatched items stay and do not count toward the capacity goal, so watched items free the space.',
-  },
-  unresolved: {
-    term: 'Not matched by id',
-    body: 'FLINCH finds an item in Plex by its catalogue id (TMDB, TVDB or IMDb), never by title, so a look-alike can never be touched by mistake. An item with no id match is neither protected nor scheduled.',
+    body: 'A Maintainerr collection shown on the Plex home screen. Items nobody finished wait there for its window before deletion; playing one takes it back.',
   },
   operator_keeps: {
     term: 'Your own exclusions',
-    body: 'Items you excluded in Maintainerr yourself are kept like favorites. FLINCH never schedules them and never removes an exclusion it did not create.',
+    body: 'Items you excluded in Maintainerr yourself. FLINCH never schedules them or removes those exclusions.',
   },
   released_gone: {
     term: 'Released for gone items',
-    body: 'FLINCH releases the exclusions it created for an item only when it is proven gone: Radarr or Sonarr has no file for it this run and a complete Plex listing no longer has it. An exclusion on an item Plex no longer has can never stop a deletion; anything short of that proof keeps it. Your own exclusions are never touched.',
+    body: 'FLINCH removes its own exclusion once the item is gone from both the *arr and a complete Plex listing.',
   },
   outside_deletions: {
     term: 'Deleted outside FLINCH',
-    body: 'Movies and seasons Radarr or Sonarr removed in the last 30 days that FLINCH did not hand to Maintainerr, from their history (read once a day). A removal is FLINCH’s when it handed the item over no later than that; hand-overs are remembered for 120 days. Monitored means the *arr still wants it, so with nothing on disk it will be downloaded again.',
-  },
-  quality_tier: {
-    term: 'Quality tier (advice)',
-    body: 'Recyclarr defines a premium and a compact profile; FLINCH advises which one an item deserves from the same P(safe) the floors read (at least 85% → compact, below 40% → premium, guards and keeps always premium). It never changes profiles on its own.',
+    body: 'Movies and seasons Radarr or Sonarr removed in the last 30 days that FLINCH did not hand over. Monitored ones will download again.',
   },
 };
 
 /** Card layout: heading, then the glossary keys in reading order. */
 export const GLOSSARY_SECTIONS = [
-  ['Scoring', ['p_safe', 'model', 'taste', 'score_floor', 'temperature']],
-  ['Freeing space', ['eligible', 'watermarks', 'eviction_order', 'pending', 'held', 'untracked', 'grace_runs', 'never_played', 'dry_run']],
+  ['Prediction', ['p_watch', 'regret', 'reacquisition', 'eviction_safety', 'advice', 'model', 'user_weights']],
+  ['Freeing space', ['projection', 'plan', 'eligible', 'pinned', 'grace_period', 'grace_runs', 'never_played', 'dry_run']],
+  ['Disks', ['pending', 'held', 'untracked', 'not_governed']],
   ['Evidence', ['evidence', 'evidence_complete']],
   ['Maintainerr', ['maintainerr', 'leaving_soon', 'unresolved', 'operator_keeps', 'released_gone', 'outside_deletions']],
-  ['Quality', ['quality_tier']],
-  ['Why items are held', ['held_reserve', 'not_governed', 'held_no_evidence', 'held_evidence', 'held_untitled', 'held_yours', 'held_newest', 'held_no_date', 'held_floor', 'held_empty', 'held_excluded']],
 ];

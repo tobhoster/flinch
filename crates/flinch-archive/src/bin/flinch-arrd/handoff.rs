@@ -1,7 +1,7 @@
-//! The hand-off to Maintainerr, once per cycle: everything FLINCH keeps — the
-//! reserve included — becomes an exclusion, evictions past the grace window
-//! join a collection (least regret first, within the caps): Leaving Soon when
-//! nobody finished them, their kind's delete collection otherwise. FLINCH's
+//! The hand-off to Maintainerr, once per cycle: pinned items and items someone
+//! is partway through become exclusions, evictions past the grace window join
+//! a collection (in plan order, within the caps): Leaving Soon when nobody
+//! finished them, their kind's delete collection otherwise. FLINCH's
 //! exclusions on items gone from the library and Plex are released. An
 //! enforcing run books in the eviction ledger every membership FLINCH made
 //! that Maintainerr still holds, while its item is in the library on a
@@ -55,19 +55,16 @@ pub(super) async fn sync(
     };
     let pick =
         |ids: &[String]| -> Vec<SyncItem> { ids.iter().filter_map(|id| items.get(id.as_str()).map(|item| (*item).clone())).collect() };
-    // Protect everything FLINCH keeps — the reserve included. Below the ceiling
-    // nothing may be deleted (watermark governance), but the operator's own
-    // Maintainerr rules (e.g. "Watched … Cleanup") would still take exactly the
-    // watched, cold reserve items. The planner releases FLINCH's own exclusion
-    // before it schedules an item, so a reserve item can still be evicted the
-    // moment space is needed.
-    let protect_ids: Vec<String> = report.kept_ids.iter().chain(&report.reserve_ids).cloned().collect();
+    // Exclusions only for what must never go (pinned, or someone partway
+    // through). Everything else is left to the operator's own Maintainerr
+    // rules: FLINCH no longer shields an item merely because it kept it.
     let desired = mx::Desired {
-        protect: pick(&protect_ids),
+        protect: pick(&report.protected_ids),
         evict: pick(eligible),
         announced: report.announced_ids.clone(),
         collections: titles.clone(),
         gone: plex_listed.map(|listed| owned.vanished(|id| items.contains_key(id), listed)).unwrap_or_default(),
+        unresolved: items.values().filter(|item| item.plex.is_none()).map(|item| item.card_id.clone()).collect(),
         seerr_configured: seerr == Some(true),
     };
     let plan = mx::plan_sync(&desired, &observed, owned, &caps);

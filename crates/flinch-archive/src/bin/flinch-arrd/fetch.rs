@@ -46,21 +46,15 @@ pub(super) struct Fetched {
 /// never allowed to fail the whole library — and with it the daemon loop.
 fn parse_rows<T: serde::de::DeserializeOwned>(app: &str, value: serde_json::Value) -> Result<Vec<T>> {
     let rows: Vec<serde_json::Value> = serde_json::from_value(value).with_context(|| format!("{app} payload is not an array"))?;
-    let total = rows.len();
-    let mut parsed = Vec::with_capacity(total);
-    let mut first_error = None;
-    for row in rows {
-        match serde_json::from_value(row) {
-            Ok(item) => parsed.push(item),
-            Err(error) => {
-                first_error.get_or_insert(error);
-            }
-        }
+    let rows = flinch_archive::arr::parse_rows(rows);
+    if let Some(error) = &rows.first_error {
+        eprintln!(
+            "[flinch-arrd] {app}: {} of {} row(s) skipped as malformed (first: {error})",
+            rows.skipped,
+            rows.skipped + rows.parsed.len()
+        );
     }
-    if let Some(error) = first_error {
-        eprintln!("[flinch-arrd] {app}: {} of {total} row(s) skipped as malformed (first: {error})", total - parsed.len());
-    }
-    Ok(parsed)
+    Ok(rows.parsed)
 }
 
 /// Ids of the tags labelled with the operator's keep label (case-insensitive).

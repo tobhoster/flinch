@@ -3,7 +3,7 @@ import { Explain } from './Explain.jsx';
 
 /**
  * Detail-sheet cells for the per-item fields the daemon reports: the governed
- * disk, the Plex ids Maintainerr acts on, and the quality-tier advice. A
+ * disk, the Plex ids Maintainerr acts on, reacquisition and the advice. A
  * missing field predates the daemon reporting it and renders a dash; `null`
  * for disk or Plex is a real "not found" and is flagged.
  */
@@ -21,7 +21,7 @@ export function Disk({ volume }) {
 export function PlexIds({ plex }) {
   if (plex === undefined) return <span className="text-fg-faint">—</span>;
   if (plex === null) {
-    return <span className="text-state-warn">not matched by id (never protected or scheduled) <Explain term="unresolved" /></span>;
+    return <span className="text-state-warn">not matched <Explain term="unresolved" /></span>;
   }
   return (
     <span className="num break-all text-fg-muted">
@@ -30,14 +30,24 @@ export function PlexIds({ plex }) {
   );
 }
 
-const TIERS = { premium: 'Premium', compact: 'Compact' };
+/** Reacquisition friction as a word; 1.0 is an ordinary re-download. */
+export function Reacquisition({ friction }) {
+  if (friction == null) return <span className="text-fg-faint">—</span>;
+  const level = friction <= 1.5 ? 'Low' : friction <= 3 ? 'Medium' : 'High';
+  return <span className={friction > 3 ? 'text-state-warn' : 'text-fg-muted'} title={`friction ${friction.toFixed(1)}`}>{level}</span>;
+}
 
-/** Recyclarr profile advice; nothing in Radarr or Sonarr is changed. */
-export function QualityTier({ inflow }) {
-  if (!inflow) return <span className="text-fg-faint">—</span>;
+/** Advice action labels, shared by the table column and the detail sheet. */
+export const ADVICE = { keep_original: 'Keep', downgrade_quality: 'Downgrade', eligible_for_eviction: 'Evictable' };
+
+/** The quality advice; nothing in Radarr or Sonarr is changed. */
+export function Advice({ advice, full = false }) {
+  if (!advice?.action) return <span className="text-fg-faint">—</span>;
+  const label = ADVICE[advice.action.type] ?? advice.action.type;
+  if (!full) return <span className="text-fg-muted" title={advice.explanation}>{label}</span>;
   return (
     <span className="text-fg-muted">
-      <span className="text-fg">{TIERS[inflow.tier] ?? inflow.tier}</span>{inflow.reason ? ` — ${inflow.reason}` : ''}
+      <span className="text-fg">{label}</span>{advice.explanation ? ` — ${advice.explanation}` : ''}
     </span>
   );
 }

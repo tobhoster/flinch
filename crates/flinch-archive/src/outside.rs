@@ -80,7 +80,7 @@ fn library<'a>(movies: &'a [ArrMovie], series: &'a [ArrSeries]) -> HashMap<Strin
     let mut known = HashMap::new();
     for movie in movies {
         let entry = Known { title: &movie.title, season: None, monitored: movie.monitored, on_disk: movie.has_file };
-        known.insert(format!("radarr-{}", movie.id), entry);
+        known.insert(movie.card_id(), entry);
     }
     for show in series {
         for season in &show.seasons {
@@ -91,7 +91,7 @@ fn library<'a>(movies: &'a [ArrMovie], series: &'a [ArrSeries]) -> HashMap<Strin
                 monitored,
                 on_disk: season.statistics.episode_file_count > 0,
             };
-            known.insert(format!("sonarr-{}-s{}", show.id, season.season_number), entry);
+            known.insert(show.season_card_id(season.season_number), entry);
         }
     }
     known
