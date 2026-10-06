@@ -158,7 +158,7 @@ fn users_and_watchlists_parse_by_display_name() {
         {"id": 0, "displayName": "Ghost"},
         {"id": 2, "plexUsername": "theo"}
     ])));
-    assert_eq!(users, vec![User { id: 1, name: "Mara".to_owned() }, User { id: 2, name: "theo".to_owned() }]);
+    assert_eq!(users, vec![User { member: 1, name: "Mara".to_owned() }, User { member: 2, name: "theo".to_owned() }]);
 
     let page: seerr::WatchlistPage = serde_json::from_value(json!({
         "page": 1, "totalPages": 1, "totalResults": 3,

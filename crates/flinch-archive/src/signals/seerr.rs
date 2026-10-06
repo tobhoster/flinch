@@ -32,8 +32,8 @@ pub fn users_path(skip: usize) -> String {
 }
 
 /// One page of a user's watchlist, from 1.
-pub fn watchlist_path(user_id: u64, page: u64) -> String {
-    format!("/api/v1/user/{user_id}/watchlist?page={page}")
+pub fn watchlist_path(member: u64, page: u64) -> String {
+    format!("/api/v1/user/{member}/watchlist?page={page}")
 }
 
 /// One page of requests or users. Rows stay raw so one malformed row is
@@ -74,7 +74,7 @@ pub struct WatchlistPage {
 /// A Seerr user, by the name FLINCH keys weights on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
-    pub id: u64,
+    pub member: u64,
     pub name: String,
 }
 
@@ -158,7 +158,7 @@ pub fn parse_requests(records: Vec<serde_json::Value>) -> Vec<Request> {
 
 /// The users with a usable id.
 pub fn parse_users(records: Vec<serde_json::Value>) -> Vec<User> {
-    rows::<UserRecord>(records).filter(|user| user.id > 0).map(|user| User { id: user.id, name: user.name() }).collect()
+    rows::<UserRecord>(records).filter(|user| user.id > 0).map(|user| User { member: user.id, name: user.name() }).collect()
 }
 
 /// The titles on one page of `user`'s watchlist.

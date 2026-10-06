@@ -149,7 +149,7 @@ async fn seerr_rows(http: &reqwest::Client, base: &str, key: &str, path: fn(usiz
 async fn watchlist(http: &reqwest::Client, base: &str, key: &str, user: &seerr::User) -> Result<Vec<Watchlisted>> {
     let mut items = Vec::new();
     for page in 1..=WATCHLIST_PAGE_CAP {
-        let url = format!("{base}{}", seerr::watchlist_path(user.id, page));
+        let url = format!("{base}{}", seerr::watchlist_path(user.member, page));
         let body: seerr::WatchlistPage = serde_json::from_value(fetch_json(http, &url, key).await?).context("watchlist page shape")?;
         items.extend(seerr::parse_watchlist(&user.name, body.results));
         if page >= body.total_pages {
