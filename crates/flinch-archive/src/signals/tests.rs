@@ -1,6 +1,6 @@
 //! Wire parsing from the apps' real shapes, and the caches' refresh rules.
 
-use super::arr::{parse_grabs, parse_queue, GrabCache, GrabRead, GRAB_REFRESH_SECS, GRAB_WINDOW_SECS};
+use super::arr::{parse_imports, parse_queue, ImportCache, ImportRead, IMPORT_REFRESH_SECS, IMPORT_WINDOW_SECS};
 use super::release::{parse_retention, ReleaseCache, Searched, RELEASE_TTL_SECS, SEARCH_BUDGET};
 use super::seerr::{parse_requests, parse_users, parse_watchlist, User};
 use super::*;
@@ -20,62 +20,49 @@ fn array(value: Value) -> Vec<Value> {
     }
 }
 
-/// A Sonarr grabbed record as `history/since?includeEpisode=true` writes it.
-fn sonarr_grab(id: u64, episode: u32, season: u32, download_id: &str) -> Value {
+/// A Sonarr import record as `history/since?includeEpisode=true` writes it:
+/// one per episode, with that episode's own file size.
+fn sonarr_import(id: u64, episode: u32, season: u32, size: &str) -> Value {
     json!({
         "episodeId": 1000 + episode, "seriesId": 7, "sourceTitle": "Show.S02.1080p.WEB-DL",
         "quality": {"quality": {"id": 3, "name": "WEBDL-1080p"}},
-        "date": "2026-09-30T21:14:05Z", "downloadId": download_id, "eventType": "grabbed",
-        "data": {"indexer": "NZBgeek", "size": "48318382080", "protocol": "2", "downloadClient": "SABnzbd"},
+        "date": "2026-09-30T21:14:05Z", "downloadId": "SABnzbd_nzo_abc", "eventType": "downloadFolderImported",
+        "data": {"droppedPath": "/downloads/x.mkv", "importedPath": "/data/media/tv/Show/x.mkv", "size": size, "downloadClient": "SABnzbd"},
         "episode": {"seriesId": 7, "seasonNumber": season, "episodeNumber": episode, "title": "Pilot"},
         "id": id
     })
 }
 
 #[test]
-fn a_season_pack_counts_once_at_its_string_size() {
-    let records = (1..=10).map(|episode| sonarr_grab(100 + u64::from(episode), episode, 2, "SABnzbd_nzo_abc")).collect();
-    let grabs = parse_grabs(App::Sonarr, records);
-    assert_eq!(
-        grabs,
-        vec![Grab {
-            app: App::Sonarr,
-            item: ItemRef::Series { series_id: 7, season: Some(2) },
-            epoch: crate::presence::parse_utc("2026-09-30T21:14:05Z").unwrap_or_default(),
-            bytes: 48_318_382_080,
-        }]
-    );
+fn a_season_pack_is_the_sum_of_its_episodes_files() {
+    // Ten episodes of one download, each record carrying its own file size:
+    // deduping by download would count one episode for the whole pack.
+    let records = (1..=10).map(|episode| sonarr_import(100 + u64::from(episode), episode, 2, "4831838208")).collect();
+    let imports = parse_imports(App::Sonarr, records);
+    assert_eq!(imports.len(), 10);
+    assert_eq!(imports.iter().map(|import| import.bytes).sum::<u64>(), 48_318_382_080);
+    assert!(imports.iter().all(|import| import.item == ItemRef::Series { series_id: 7, season: Some(2) }));
+    assert_eq!(imports[0].epoch, crate::presence::parse_utc("2026-09-30T21:14:05Z").unwrap_or_default());
 }
 
 #[test]
-fn a_multi_season_pack_names_no_season_and_records_without_a_download_stand_alone() {
-    let records = vec![sonarr_grab(1, 1, 1, "hash"), sonarr_grab(2, 1, 2, "hash"), sonarr_grab(3, 1, 3, ""), sonarr_grab(4, 2, 3, "")];
-    let items: Vec<ItemRef> = parse_grabs(App::Sonarr, records).into_iter().map(|grab| grab.item).collect();
-    assert_eq!(
-        items,
-        [None, Some(3), Some(3)].map(|season| ItemRef::Series { series_id: 7, season }),
-        "one pack across seasons 1–2, then two records with no download id"
-    );
-}
-
-#[test]
-fn radarr_grabs_skip_malformed_records_not_the_read() {
+fn radarr_imports_skip_malformed_records_not_the_read() {
     let records = array(json!([
-        {"movieId": 12, "date": "2026-09-20T08:00:00Z", "downloadId": "a", "eventType": "grabbed", "data": {"size": "8589934592"}, "id": 1},
-        {"movieId": 13, "date": "2026-09-21T08:00:00Z", "downloadId": "b", "eventType": "grabbed", "data": {"size": 1}, "id": 2},
-        {"movieId": 14, "date": "2026-09-22T08:00:00Z", "downloadId": "c", "eventType": "grabbed", "data": {}, "id": 3},
-        {"movieId": 0, "date": "2026-09-22T08:00:00Z", "downloadId": "d", "eventType": "grabbed", "data": {"size": "5"}, "id": 4},
+        {"movieId": 12, "date": "2026-09-20T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": "8589934592"}, "id": 1},
+        {"movieId": 13, "date": "2026-09-21T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": 1}, "id": 2},
+        {"movieId": 14, "date": "2026-09-22T08:00:00Z", "eventType": "downloadFolderImported", "data": {}, "id": 3},
+        {"movieId": 0, "date": "2026-09-22T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": "5"}, "id": 4},
         "not a record",
-        {"movieId": 15, "date": "2026-09-23T08:00:00Z", "downloadId": "e", "eventType": "grabbed", "data": {"size": " 42 "}, "id": 5}
+        {"movieId": 15, "date": "2026-09-23T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": " 42 "}, "id": 5}
     ]));
-    let grabs: Vec<(ItemRef, u64)> = parse_grabs(App::Radarr, records).into_iter().map(|grab| (grab.item, grab.bytes)).collect();
-    assert_eq!(grabs, vec![(ItemRef::Movie(12), 8_589_934_592), (ItemRef::Movie(15), 42)]);
+    let imports: Vec<(ItemRef, u64)> = parse_imports(App::Radarr, records).into_iter().map(|import| (import.item, import.bytes)).collect();
+    assert_eq!(imports, vec![(ItemRef::Movie(12), 8_589_934_592), (ItemRef::Movie(15), 42)]);
 }
 
 #[test]
 fn the_queue_counts_each_download_once_with_its_bytes_left() {
     let page: crate::arr::history::HistoryPage = serde_json::from_value(json!({
-        "page": 1, "pageSize": 500, "sortKey": "timeleft", "sortDirection": "ascending", "totalRecords": 4,
+        "page": 1, "pageSize": 500, "sortKey": "timeleft", "sortDirection": "ascending", "totalRecords": 6,
         "records": [
             {"seriesId": 7, "episodeId": 1001, "seasonNumber": 2, "size": 48318382080.0, "sizeleft": 12079595520.5,
              "status": "downloading", "downloadId": "SABnzbd_nzo_abc", "protocol": "usenet", "id": 11},
@@ -83,43 +70,47 @@ fn the_queue_counts_each_download_once_with_its_bytes_left() {
              "status": "downloading", "downloadId": "SABnzbd_nzo_abc", "protocol": "usenet", "id": 12},
             {"seriesId": 9, "episodeId": 2001, "episode": {"seasonNumber": 1}, "size": 100, "sizeleft": -3,
              "status": "completed", "downloadId": "hash", "protocol": "torrent", "id": 13},
-            {"seriesId": 9, "size": 100, "sizeleft": "lots", "downloadId": "other", "id": 14}
+            {"seriesId": 9, "size": 100, "sizeleft": "lots", "downloadId": "other", "id": 14},
+            {"seriesId": 8, "seasonNumber": 1, "size": 10, "sizeleft": 5, "downloadId": "pack", "id": 15},
+            {"seriesId": 8, "seasonNumber": 2, "size": 10, "sizeleft": 5, "downloadId": "pack", "id": 16}
         ]
     }))
     .unwrap_or_else(|error| panic!("queue page: {error}"));
-    assert_eq!(page.total_records, 4);
+    assert_eq!(page.total_records, 6);
     assert_eq!(
         parse_queue(App::Sonarr, page.records),
         vec![
             Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 7, season: Some(2) }, bytes_left: 12_079_595_520 },
             Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 9, season: Some(1) }, bytes_left: 0 },
+            // An unreadable `sizeleft` skips its record; a pack across seasons names none.
+            Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 8, season: None }, bytes_left: 5 },
         ]
     );
 }
 
-fn grab(epoch: u64) -> Grab {
-    Grab { app: App::Radarr, item: ItemRef::Movie(1), epoch, bytes: 1 }
+fn import(epoch: u64) -> Import {
+    Import { app: App::Radarr, item: ItemRef::Movie(1), epoch, bytes: 1 }
 }
 
 #[rstest]
 #[case::just_read(NOW, true)]
-#[case::almost_stale(NOW - GRAB_REFRESH_SECS + 1, true)]
-#[case::stale(NOW - GRAB_REFRESH_SECS, false)]
+#[case::almost_stale(NOW - IMPORT_REFRESH_SECS + 1, true)]
+#[case::stale(NOW - IMPORT_REFRESH_SECS, false)]
 #[case::from_the_future(NOW + 60, false)]
-fn a_grab_read_serves_six_hours(#[case] read_at: u64, #[case] fresh: bool) {
-    let cache = GrabCache { radarr: Some(GrabRead { read_at, grabs: Vec::new() }), sonarr: None };
+fn an_import_read_serves_six_hours(#[case] read_at: u64, #[case] fresh: bool) {
+    let cache = ImportCache { radarr: Some(ImportRead { read_at, imports: Vec::new() }), sonarr: None };
     assert_eq!(cache.is_fresh(App::Radarr, NOW), fresh);
     assert!(!cache.is_fresh(App::Sonarr, NOW), "never read is never fresh");
 }
 
 #[test]
-fn cached_grabs_leave_the_window_as_it_moves() {
-    let since = NOW - GRAB_WINDOW_SECS;
-    let cache = GrabCache {
-        radarr: Some(GrabRead { read_at: NOW - 3_600, grabs: vec![grab(since - 1), grab(since), grab(NOW - DAY)] }),
+fn cached_imports_leave_the_window_as_it_moves() {
+    let since = NOW - IMPORT_WINDOW_SECS;
+    let cache = ImportCache {
+        radarr: Some(ImportRead { read_at: NOW - 3_600, imports: vec![import(since - 1), import(since), import(NOW - DAY)] }),
         sonarr: None,
     };
-    assert_eq!(cache.grabs(NOW), vec![grab(since), grab(NOW - DAY)]);
+    assert_eq!(cache.imports(NOW), vec![import(since), import(NOW - DAY)]);
 }
 
 #[test]

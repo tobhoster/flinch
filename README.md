@@ -62,7 +62,7 @@ does the deleting, on its own schedule.
 
 ```mermaid
 flowchart LR
-    ARR["Radarr + Sonarr<br/>files · disks · grabs · queue"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
+    ARR["Radarr + Sonarr<br/>files · disks · imports · queue"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
     PX["Plex + Tautulli<br/>who played what, when"] --> ID
     ID --> R["regret per item"]
     EXT["Seerr · Prowlarr · SABnzbd"] --> R

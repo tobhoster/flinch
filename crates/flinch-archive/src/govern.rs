@@ -42,7 +42,7 @@ pub fn show_volume<'a>(library: &'a LibraryVolumes, show: &ArrSeries) -> Option<
     show.path.as_deref().and_then(|path| library.volume_of(App::Sonarr, path))
 }
 
-/// What is arriving on each volume: bytes grabbed per day (oldest first, see
+/// What is arriving on each volume: bytes imported per day (oldest first, see
 /// [`crate::capacity::daily_series`]) and bytes still downloading.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Ingest {
@@ -51,7 +51,7 @@ pub struct Ingest {
 }
 
 impl Ingest {
-    /// Attribute grabs (the last [`INGEST_HISTORY_DAYS`]) and queued downloads
+    /// Attribute imports (the last [`INGEST_HISTORY_DAYS`]) and queued downloads
     /// to volumes through the *arr item each names. An item on no governed
     /// disk counts nowhere.
     pub fn attribute(library: &LibraryVolumes, movies: &[ArrMovie], series: &[ArrSeries], signals: &Signals, now: u64) -> Self {
@@ -65,10 +65,10 @@ impl Ingest {
                 }
             }
         };
-        let mut grabs: BTreeMap<&str, Vec<(u64, u64)>> = BTreeMap::new();
-        for grab in &signals.grabs {
-            if let Some(volume) = volume_of(&grab.item) {
-                grabs.entry(volume).or_default().push((grab.epoch, grab.bytes));
+        let mut imports: BTreeMap<&str, Vec<(u64, u64)>> = BTreeMap::new();
+        for import in &signals.imports {
+            if let Some(volume) = volume_of(&import.item) {
+                imports.entry(volume).or_default().push((import.epoch, import.bytes));
             }
         }
         let mut queue: BTreeMap<String, u64> = BTreeMap::new();
@@ -79,7 +79,7 @@ impl Ingest {
             }
         }
         let daily =
-            grabs.into_iter().map(|(volume, events)| (volume.to_string(), daily_series(events, now, INGEST_HISTORY_DAYS))).collect();
+            imports.into_iter().map(|(volume, events)| (volume.to_string(), daily_series(events, now, INGEST_HISTORY_DAYS))).collect();
         Self { daily, queue }
     }
 }

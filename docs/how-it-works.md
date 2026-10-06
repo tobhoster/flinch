@@ -10,15 +10,15 @@ The daemon measures every disk that holds a library and forecasts each one a
 window ahead. Every cycle forecasts afresh from the measurement and the logs.
 
 ```text
-v        = EWMA_α(bytes grabbed per day, last 30 days)
+v        = EWMA_α(bytes imported per day, last 30 days)
 U_proj   = U + v·W + queued bytes left − evictions not yet freed
 B_target = max(0, U_proj − θ_target·C_max + headroom)
 ```
 
 - **U** is the disk's used bytes; **C_max** its size, or
   `capacity.max_capacity_bytes` when that is smaller.
-- **v** is the daily download rate from Radarr's and Sonarr's grab history
-  (read at most every 6 hours, cached in `arr-grabs.json`), smoothed with
+- **v** is the daily arrival rate from Radarr's and Sonarr's import history
+  (read at most every 6 hours, cached in `arr-imports.json`), smoothed with
   α = 0.2.
 - **Queued bytes left** come from their download queues; **evictions not yet
   freed** are the recycle-bin and held credit below.
@@ -73,7 +73,7 @@ wrong thing:
   tracks land there. It is shown before anything is evicted, because those
   leftovers are otherwise paid for with library titles.
 - **More aggressive only on measured evidence.** An unmeasured disk or an
-  unreadable app evicts *nothing*. An unreadable grab history or queue counts
+  unreadable app evicts *nothing*. An unreadable import history or queue counts
   as zero and is reported.
 - **"Covered" and "met" are different claims.** The status says whether the
   eligible set *covers* a disk's target and how much is *handed* to Maintainerr
@@ -122,7 +122,7 @@ R = P(watch within 90 days) × C_reacq × A_household
   default 1). The leading 1 keeps an item nobody claimed at P × C, not 0.
 
 Each external source is best effort. One that is not configured or cannot be
-read adds one line to the status problems and counts as no grabs, no queue, no
+read adds one line to the status problems and counts as no imports, no queue, no
 claims, or no seeders and retention terms (see
 [Integrations](#integrations-by-identity--never-by-title) for what each is
 asked, and [deploy/README.md](../deploy/README.md#configure) to connect them).
@@ -290,7 +290,7 @@ nothing). Every join goes through catalogue ids:
 
 | System | FLINCH reads | FLINCH writes |
 | --- | --- | --- |
-| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, each season's monitored flag, tags, root folders with their free space, disks, recycle-bin settings; import and removal history, once a day; grabs of the last 30 days, every 6 hours; the download queue | nothing today (see Recyclarr) |
+| **Radarr / Sonarr** | inventory with tmdb/tvdb/imdb ids, per-season file dates, each season's monitored flag, tags, root folders with their free space, disks, recycle-bin settings; import and removal history, once a day; imports of the last 30 days, every 6 hours; the download queue | nothing today (see Recyclarr) |
 | **Plex** | every library, paged, with `includeGuids`; each show's seasons with their episode counts (`/children`, because the section's own season listing leaves the counts out); full history; accounts; labels and collections named like the keep tag; episode GUIDs of a show whose season counts disagree | nothing |
 | **Tautulli** | full history, paged, per user; each user's and library's `keep_history` switch | nothing |
 | **Maintainerr** | version, whether Seerr is configured, collections with their *arr action, windows, Plex visibility and "Force delete Seerr request", memberships, exclusions | exclusions for pinned items and items someone is partway through, collection adds for evictions (Leaving Soon or delete), release of its own exclusions for items proven gone — by Plex ratingKey |
@@ -426,7 +426,7 @@ daemon itself is alive: "Last run" moves within seconds.
 ```mermaid
 flowchart LR
     subgraph IN["read"]
-        ARR["Radarr / Sonarr<br/>ids · files · disks · grabs · queue"]
+        ARR["Radarr / Sonarr<br/>ids · files · disks · imports · queue"]
         PX["Plex + Tautulli<br/>GUIDs · history"]
         EXT["Seerr · Prowlarr · SABnzbd<br/>claims · availability"]
     end

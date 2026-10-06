@@ -26,7 +26,7 @@ struct Args {
     /// Disk size in GiB.
     #[arg(long)]
     total_gb: u64,
-    /// Bytes grabbed per day, in GiB, held steady over the history window.
+    /// Bytes imported per day, in GiB, held steady over the history window.
     #[arg(long, default_value_t = 0)]
     ingest_gb_per_day: u64,
     /// Downloads still in flight, in GiB.

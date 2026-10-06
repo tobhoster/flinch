@@ -1,5 +1,5 @@
 //! The cycle's external signals ([`flinch_archive::signals`]): Radarr and
-//! Sonarr grabs (read at most every six hours, cached in `arr-grabs.json`)
+//! Sonarr imports (read at most every six hours, cached in `arr-imports.json`)
 //! and queues, Seerr requests and watchlists, and per-card availability from
 //! Prowlarr (a budgeted trickle of searches, cached in `releases.json`)
 //! judged against SABnzbd's retention. Every source is best-effort: one that
@@ -11,7 +11,7 @@ use super::Args;
 use anyhow::{Context, Result};
 use flinch_archive::arr::history::HistoryPage;
 use flinch_archive::capacity::App;
-use flinch_archive::signals::arr::{self, GrabCache, GrabRead};
+use flinch_archive::signals::arr::{self, ImportCache, ImportRead};
 use flinch_archive::signals::release::{self, ReleaseCache, Searched};
 use flinch_archive::signals::{seerr, Queued, Signals, Watchlisted};
 use flinch_archive::ArchiveCard;
@@ -30,7 +30,7 @@ const WATCHLIST_PAGE_CAP: u64 = 10;
 pub(super) async fn gather(http: &reqwest::Client, args: &Args, cards: &[ArchiveCard], now: u64) -> Signals {
     let mut signals = Signals::default();
     let state = super::state_dir();
-    grabs(http, args, &state.join("arr-grabs.json"), now, &mut signals).await;
+    imports(http, args, &state.join("arr-imports.json"), now, &mut signals).await;
     for app in APPS {
         match queue(http, args, app).await {
             Ok(queued) => signals.queue.extend(queued),
@@ -45,24 +45,24 @@ pub(super) async fn gather(http: &reqwest::Client, args: &Args, cards: &[Archive
     signals
 }
 
-/// Both apps' grabs of the window, each read again once its cached read is
+/// Both apps' imports of the window, each read again once its cached read is
 /// six hours old. A failed read keeps serving the last one.
-async fn grabs(http: &reqwest::Client, args: &Args, path: &Path, now: u64, signals: &mut Signals) {
-    let mut cache: GrabCache = super::read_state(path);
+async fn imports(http: &reqwest::Client, args: &Args, path: &Path, now: u64, signals: &mut Signals) {
+    let mut cache: ImportCache = super::read_state(path);
     let mut read_any = false;
     for app in APPS {
         if cache.is_fresh(app, now) {
             continue;
         }
         let (base, key) = endpoint(app, args);
-        match fetch_json(http, &format!("{base}{}", arr::grabs_path(app, now)), key).await.and_then(array) {
+        match fetch_json(http, &format!("{base}{}", arr::imports_path(app, now)), key).await.and_then(array) {
             Ok(records) => {
-                *cache.slot(app) = Some(GrabRead { read_at: now, grabs: arr::parse_grabs(app, records) });
+                *cache.slot(app) = Some(ImportRead { read_at: now, imports: arr::parse_imports(app, records) });
                 read_any = true;
             }
             Err(error) => {
-                let serving = if cache.slot(app).is_some() { "the last read serves" } else { "its grabs not counted" };
-                let sentence = format!("{} grab history unreadable ({}): {serving}", name(app), cause(&error));
+                let serving = if cache.slot(app).is_some() { "the last read serves" } else { "its imports not counted" };
+                let sentence = format!("{} import history unreadable ({}): {serving}", name(app), cause(&error));
                 problem(signals, sentence, &error, "");
             }
         }
@@ -70,7 +70,7 @@ async fn grabs(http: &reqwest::Client, args: &Args, path: &Path, now: u64, signa
     if read_any {
         super::write_state(path, &cache);
     }
-    signals.grabs = cache.grabs(now);
+    signals.imports = cache.imports(now);
 }
 
 /// One app's queue, every page up to the cap.

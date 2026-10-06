@@ -8,7 +8,7 @@
 //! each one (see [`SlidingWindowCapacityForecaster`]):
 //!
 //! ```text
-//! v̂        = EWMA_α(bytes grabbed per day, last 30 days)
+//! v̂        = EWMA_α(bytes imported per day, last 30 days)
 //! U_proj   = U + v̂·W + queued bytes − evictions not yet freed
 //! B_target = max(0, U_proj − θ_target·C_max + headroom)
 //! ```
@@ -109,7 +109,7 @@ impl CapacityConfig {
 pub struct VolumeLoad<'a> {
     pub total_bytes: u64,
     pub used_bytes: u64,
-    /// Bytes grabbed per day, oldest first, one entry per day.
+    /// Bytes imported per day, oldest first, one entry per day.
     pub daily_ingest: &'a [u64],
     /// Bytes still to download for items on this volume.
     pub queue_bytes: u64,

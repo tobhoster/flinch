@@ -1,5 +1,5 @@
 //! What the household and the download stack say beyond the *arr libraries:
-//! what was grabbed lately and what is still downloading (Radarr/Sonarr),
+//! what was imported lately and what is still downloading (Radarr/Sonarr),
 //! who asked for what and who wants it (Seerr requests and watchlists), and
 //! how hard a title would be to get back (Prowlarr search results against the
 //! SABnzbd servers' retention).
@@ -32,14 +32,16 @@ pub enum MediaRef {
     Show { tvdb: Option<u64>, tmdb: Option<u64> },
 }
 
-/// One download started, counted once however many records it wrote.
+/// One file that landed in a library: a movie, or one episode of a season.
+/// Imports measure growth; grabs do not — a download can be grabbed many
+/// times and never import (seen live: 143 grabs, 10 files).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Grab {
+pub struct Import {
     pub app: App,
     pub item: ItemRef,
-    /// When it was grabbed, unix seconds.
+    /// When it was imported, unix seconds.
     pub epoch: u64,
-    /// The release's size.
+    /// The file's size.
     pub bytes: u64,
 }
 
@@ -82,8 +84,8 @@ pub struct Release {
 /// Everything gathered for one cycle.
 #[derive(Debug, Default)]
 pub struct Signals {
-    /// Grabs of the last [`arr::GRAB_WINDOW_SECS`].
-    pub grabs: Vec<Grab>,
+    /// Imports of the last [`arr::IMPORT_WINDOW_SECS`].
+    pub imports: Vec<Import>,
     pub queue: Vec<Queued>,
     /// Every request not declined.
     pub requests: Vec<Request>,

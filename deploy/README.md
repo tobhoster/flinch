@@ -403,7 +403,7 @@ file reads as "nothing yet".
 | `settings.json` | settings from the UI | defaults; an unparseable or out-of-range file keeps the last good settings in force |
 | `status.json`, `items.json`, `history.json` | what the UI shows | rebuilt next cycle |
 | `eviction-plan.json` | the last cycle's forecast per disk and its plan: method, items, sizes, regret and reasons | nothing; written again next cycle |
-| `arr-grabs.json` | Radarr and Sonarr grabs of the last 30 days, the download rate's input (read again after 6 hours) | read again from the *arrs on the next cycle |
+| `arr-imports.json` | Radarr and Sonarr imports of the last 30 days, the arrival rate's input (read again after 6 hours) | read again from the *arrs on the next cycle |
 | `releases.json` | per item, the last Prowlarr search: seeders and the newest usenet post's age (each kept 7 days) | searched again, 20 items per cycle; until then re-download cost uses size only |
 | `evictions.json` | bytes handed to Maintainerr that a recycle bin may still hold or that are held, and each hand-over for 120 days (to tell FLINCH's deletions from others) | evictions in flight or held go uncredited, and FLINCH's own recent deletions may be listed as ones it did not make |
 | `protected.json`, `scheduled.json` | exclusions and collection members FLINCH created | FLINCH forgets it owns them and leaves them alone |
