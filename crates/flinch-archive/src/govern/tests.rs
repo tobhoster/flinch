@@ -4,6 +4,10 @@ use crate::capacity::{AppDisks, Credit, RecycleBin, RootFolder, Volume};
 
 const GB: u64 = 1_000_000_000;
 
+fn no_probe(_: &str) -> Option<Volume> {
+    None
+}
+
 fn movie(id: u32, path: Option<&str>) -> ArrMovie {
     ArrMovie {
         id,
@@ -48,10 +52,18 @@ fn show(id: u32, path: Option<&str>, seasons: &[u32]) -> ArrSeries {
 fn library(used_gb: u64) -> LibraryVolumes {
     let share = Volume { path: "/media".to_string(), total_bytes: 100 * GB, free_bytes: (100 - used_gb) * GB };
     let root = |path: &str| vec![RootFolder { path: path.to_string(), free_bytes: None }];
-    LibraryVolumes::build(&[
-        AppDisks { app: App::Radarr, diskspace: vec![share.clone()], root_folders: root("/media/movies"), recycle: RecycleBin::Disabled },
-        AppDisks { app: App::Sonarr, diskspace: vec![share], root_folders: root("/media/tv"), recycle: RecycleBin::Disabled },
-    ])
+    LibraryVolumes::build(
+        &[
+            AppDisks {
+                app: App::Radarr,
+                diskspace: vec![share.clone()],
+                root_folders: root("/media/movies"),
+                recycle: RecycleBin::Disabled,
+            },
+            AppDisks { app: App::Sonarr, diskspace: vec![share], root_folders: root("/media/tv"), recycle: RecycleBin::Disabled },
+        ],
+        no_probe,
+    )
 }
 
 fn governed(used_gb: u64, config: &CapacityConfig, ingest: &Ingest, on_disk: OnDisk) -> Governance {
@@ -82,7 +94,8 @@ fn items_are_attributed_through_their_own_app_and_path() {
 
 #[test]
 fn no_library_volume_is_unmeasured_and_reports_nothing() {
-    let governance = govern(LibraryVolumes::build(&[]), HashMap::new(), &CapacityConfig::default(), &Ingest::default(), OnDisk::default());
+    let governance =
+        govern(LibraryVolumes::build(&[], no_probe), HashMap::new(), &CapacityConfig::default(), &Ingest::default(), OnDisk::default());
     assert!(governance.forecasts.is_empty());
     assert!(governance.status(&crate::plan::generate_eviction_plan(&[], &[], &Default::default()).expect("empty plan"), []).is_none());
 }

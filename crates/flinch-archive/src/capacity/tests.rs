@@ -10,6 +10,11 @@ fn vol(path: &str, total_gb: u64, used_gb: u64) -> Volume {
     Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB }
 }
 
+/// The daemon without a library prefix: nothing is probed.
+fn no_probe(_: &str) -> Option<Volume> {
+    None
+}
+
 fn disks(app: App, diskspace: Vec<Volume>, roots: &[&str]) -> AppDisks {
     let root_folders = roots.iter().map(|path| RootFolder { path: path.to_string(), free_bytes: None }).collect();
     AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled }
@@ -155,7 +160,7 @@ proptest! {
             App::Sonarr,
             vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/config", 10, 1)],
             &[root.as_str()],
-        )]);
+        )], no_probe);
         let key = library.volume_of(App::Sonarr, &item);
         prop_assert_eq!(key, Some("/media"));
         prop_assert!(library.volumes.iter().any(|v| Some(v.path.as_str()) == key));
@@ -166,11 +171,10 @@ proptest! {
 fn only_mounts_hosting_a_root_folder_are_governed() {
     // The container overlay and the config PVC are nearly full; neither is the
     // library, and deleting media could never relieve them.
-    let library = LibraryVolumes::build(&[disks(
-        App::Radarr,
-        vec![vol("/", 100, 99), vol("/config", 10, 9), vol("/media", 1000, 500)],
-        &["/media/movies/"],
-    )]);
+    let library = LibraryVolumes::build(
+        &[disks(App::Radarr, vec![vol("/", 100, 99), vol("/config", 10, 9), vol("/media", 1000, 500)], &["/media/movies/"])],
+        no_probe,
+    );
     let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(paths, ["/media"]);
     assert!(library.unmatched_roots.is_empty());
@@ -183,24 +187,23 @@ fn only_mounts_hosting_a_root_folder_are_governed() {
 #[case::sibling_prefix_is_not_a_child("/media2/Film", None)]
 #[case::outside_every_library_mount("/downloads/Film", None)]
 fn attribution_matches_whole_path_components(#[case] item: &str, #[case] expected: Option<&str>) {
-    let library = LibraryVolumes::build(&[disks(
-        App::Radarr,
-        vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/media2", 1000, 10)],
-        &["/media/movies"],
-    )]);
+    let library = LibraryVolumes::build(
+        &[disks(App::Radarr, vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/media2", 1000, 10)], &["/media/movies"])],
+        no_probe,
+    );
     assert_eq!(library.volume_of(App::Radarr, item), expected);
 }
 
 #[test]
 fn windows_paths_attribute_by_backslash_components() {
-    let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("D:\\Media", 1000, 500)], &["D:\\Media\\Movies\\"])]);
+    let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("D:\\Media", 1000, 500)], &["D:\\Media\\Movies\\"])], no_probe);
     assert_eq!(library.volume_of(App::Radarr, "D:\\Media\\Movies\\Film"), Some("D:\\Media"));
     assert_eq!(library.volume_of(App::Radarr, "D:\\MediaX\\Film"), None);
 }
 
 #[test]
 fn attribution_is_per_app_because_mount_paths_are_container_local() {
-    let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("/data", 1000, 500)], &["/data/movies"])]);
+    let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("/data", 1000, 500)], &["/data/movies"])], no_probe);
     assert_eq!(library.volume_of(App::Sonarr, "/data/tv/Show"), None, "Sonarr's /data is another container's path");
 }
 
@@ -208,10 +211,10 @@ fn attribution_is_per_app_because_mount_paths_are_container_local() {
 fn a_share_mounted_at_different_paths_is_one_filesystem() {
     // Radarr sees the share at /movies, Sonarr at /tv, sampled seconds apart.
     let sonarr_view = Volume { path: "/tv".to_string(), total_bytes: 8000 * GB, free_bytes: 997 * GB };
-    let library = LibraryVolumes::build(&[
-        disks(App::Radarr, vec![vol("/movies", 8000, 7000)], &["/movies"]),
-        disks(App::Sonarr, vec![sonarr_view], &["/tv"]),
-    ]);
+    let library = LibraryVolumes::build(
+        &[disks(App::Radarr, vec![vol("/movies", 8000, 7000)], &["/movies"]), disks(App::Sonarr, vec![sonarr_view], &["/tv"])],
+        no_probe,
+    );
     assert_eq!(library.volumes.len(), 1, "one disk must mean one goal, never a doubled eviction");
     assert_eq!(library.volume_of(App::Sonarr, "/tv/Show"), Some("/movies"));
     assert_eq!(library.volume_of(App::Radarr, "/movies/Film"), Some("/movies"));
@@ -219,10 +222,13 @@ fn a_share_mounted_at_different_paths_is_one_filesystem() {
 
 #[test]
 fn distinct_filesystems_at_one_path_get_distinct_keys() {
-    let library = LibraryVolumes::build(&[
-        disks(App::Radarr, vec![vol("/media", 4000, 1000)], &["/media/movies"]),
-        disks(App::Sonarr, vec![vol("/media", 8000, 7000)], &["/media/tv"]),
-    ]);
+    let library = LibraryVolumes::build(
+        &[
+            disks(App::Radarr, vec![vol("/media", 4000, 1000)], &["/media/movies"]),
+            disks(App::Sonarr, vec![vol("/media", 8000, 7000)], &["/media/tv"]),
+        ],
+        no_probe,
+    );
     let keys: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(keys, ["/media", "/media (sonarr)"]);
     assert_eq!(library.volume_of(App::Sonarr, "/media/tv/Show"), Some("/media (sonarr)"));
@@ -231,7 +237,7 @@ fn distinct_filesystems_at_one_path_get_distinct_keys() {
 
 #[test]
 fn a_root_no_mount_holds_is_reported_not_guessed() {
-    let library = LibraryVolumes::build(&[disks(App::Sonarr, Vec::new(), &["/tv"])]);
+    let library = LibraryVolumes::build(&[disks(App::Sonarr, Vec::new(), &["/tv"])], no_probe);
     assert!(library.volumes.is_empty());
     assert_eq!(library.unmatched_roots, [(App::Sonarr, "/tv".to_string())]);
 }
@@ -243,14 +249,64 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     // free space shows it lives elsewhere. Radarr's root agrees with `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
     let app = |app, diskspace, root_folders| AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled };
-    let library = LibraryVolumes::build(&[
-        app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
-        app(App::Sonarr, vec![vol("/", 510, 57), vol("/config", 5, 1)], vec![root("/data/media/tv", 191), root("/data/media/anime", 374)]),
-    ]);
+    let library = LibraryVolumes::build(
+        &[
+            app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
+            app(
+                App::Sonarr,
+                vec![vol("/", 510, 57), vol("/config", 5, 1)],
+                vec![root("/data/media/tv", 191), root("/data/media/anime", 374)],
+            ),
+        ],
+        no_probe,
+    );
     let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(paths, ["/data"]);
     assert_eq!(library.unmatched_roots, [(App::Sonarr, "/data/media/tv".to_string()), (App::Sonarr, "/data/media/anime".to_string())]);
     assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Andor"), None, "never governed against `/`");
+}
+
+#[test]
+fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
+    // Live shape: Sonarr lists `/` and `/config` only; its three roots are
+    // NFS shares FLINCH has mounted read-only. tv and tv-b are their own
+    // disks; anime sits on the share Radarr already reports as `/data`.
+    let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
+    let app = |app, diskspace, root_folders| AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled };
+    let probe = |path: &str| match path {
+        "/data/media/tv" => Some(vol("/data/media/tv", 834, 780)),
+        "/data/media/tv-b" => Some(vol("/data/media/tv-b", 834, 666)),
+        "/data/media/anime" => Some(vol("/data/media/anime", 834, 528)),
+        _ => None,
+    };
+    let library = LibraryVolumes::build(
+        &[
+            app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 528)], vec![root("/data/media/movies", 306)]),
+            app(
+                App::Sonarr,
+                vec![vol("/", 510, 57), vol("/config", 5, 1)],
+                vec![root("/data/media/tv", 54), root("/data/media/anime", 306), root("/data/media/tv-b", 168)],
+            ),
+        ],
+        probe,
+    );
+    let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
+    assert_eq!(paths, ["/data", "/data/media/tv", "/data/media/tv-b"], "anime merged into the share Radarr reports");
+    assert!(library.unmatched_roots.is_empty());
+    assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Lioness/Season 1"), Some("/data/media/tv"));
+    assert_eq!(library.volume_of(App::Sonarr, "/data/media/anime/Frieren"), Some("/data"));
+    assert_eq!(library.volume_of(App::Radarr, "/data/media/movies/Heat (1995)"), Some("/data"));
+}
+
+#[test]
+fn a_probe_that_shows_a_different_filesystem_than_the_root_is_refused() {
+    // The share is mounted at the wrong path here: statvfs reads a disk whose
+    // free space disagrees with what Sonarr measured at the root.
+    let root = RootFolder { path: "/data/media/tv".to_string(), free_bytes: Some(54 * GB) };
+    let app = AppDisks { app: App::Sonarr, diskspace: vec![vol("/", 510, 57)], root_folders: vec![root], recycle: RecycleBin::Disabled };
+    let library = LibraryVolumes::build(&[app], |_| Some(vol("/data/media/tv", 834, 528)));
+    assert!(library.volumes.is_empty());
+    assert_eq!(library.unmatched_roots, [(App::Sonarr, "/data/media/tv".to_string())]);
 }
 
 fn plan_on(volume: &str, target: u64, planned: u64, eligible: u64) -> EvictionPlan {
@@ -354,7 +410,7 @@ fn recycle_bin_settings_decide_how_long_a_delete_holds_space(
 
 #[test]
 fn an_app_that_never_answered_holds_space_for_the_default_week() {
-    let library = LibraryVolumes::build(&[]);
+    let library = LibraryVolumes::build(&[], no_probe);
     assert_eq!(library.recycle_bin(App::Radarr), RecycleBin::Unknown);
     assert_eq!(library.recycle_secs(App::Radarr), 7 * 86_400);
 }

@@ -149,15 +149,22 @@ pub struct LibraryVolumes {
 impl LibraryVolumes {
     /// Keep only the mounts that host a root folder, merging mounts of one
     /// filesystem, so `/config` or the container's `/` never drives eviction.
-    pub fn build(disks: &[AppDisks]) -> Self {
+    ///
+    /// A root the app reports no mount for (Sonarr lists none of its NFS media
+    /// mounts) is measured by `probe` instead: the daemon's `statvfs` on the
+    /// same share where FLINCH has it mounted. A root neither can measure is
+    /// unmatched: its items are never evicted, and the operator is told.
+    pub fn build(disks: &[AppDisks], probe: impl Fn(&str) -> Option<Volume>) -> Self {
         let mut library = Self::default();
         for disk in disks {
             library.recycle.push((disk.app, disk.recycle));
             for root in &disk.root_folders {
-                let Some(mount) = deepest_mount(&root.path, &disk.diskspace).filter(|mount| root.is_on(mount)) else {
+                let reported = deepest_mount(&root.path, &disk.diskspace).filter(|mount| root.is_on(mount)).cloned();
+                let Some(mount) = reported.or_else(|| probe(&root.path).filter(|found| root.is_on(found))) else {
                     library.unmatched_roots.push((disk.app, root.path.clone()));
                     continue;
                 };
+                let mount = &mount;
                 if library.mounts.iter().any(|(app, path, _)| *app == disk.app && *path == mount.path) {
                     continue;
                 }

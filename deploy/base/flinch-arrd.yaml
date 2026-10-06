@@ -48,6 +48,11 @@ spec:
             - { name: MAINTAINERR_URL, value: "http://maintainerr:6246" }
             - { name: FLINCH_WATCH_STATE, value: "/cfg/watch-state.json" }
             - { name: FLINCH_STATE_DIR, value: "/state" }
+            # Where the library shares are mounted in this pod, at the *arrs'
+            # own paths under it, for mounts the *arrs do not report (Sonarr
+            # lists none of its NFS media mounts). Unset: those roots are
+            # never governed. See the overlay example in deploy/README.md.
+            - { name: FLINCH_LIBRARY_PREFIX, value: "" }
             # Dry run is a setting (Settings > Planner > Dry run), on by
             # default, so a fresh install only writes eviction-plan.json and
             # logs. FLINCH_DRY_RUN=1 forces a dry run whatever the setting says.

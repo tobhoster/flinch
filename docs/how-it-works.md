@@ -38,8 +38,13 @@ wrong thing:
 - **A root folder is checked against the disk it maps to.** Each app also
   reports the free space at the root folder itself; when that disagrees with
   the mount its path falls under, the folder lives on a disk the app does not
-  list, and it is reported as ungoverned instead of measured against the
-  container's `/`. (Seen live: Sonarr listed none of its three NFS mounts.)
+  list. (Seen live: Sonarr listed none of its three NFS mounts.) FLINCH then
+  measures the disk itself: with `FLINCH_LIBRARY_PREFIX` set, the shares are
+  mounted read-only in its own container at the app's paths under that prefix
+  (`/library/data/media/tv`), and `statvfs` there gives the size and free
+  space. A reading that disagrees with the app's free space is refused: the
+  wrong share is mounted. A root neither can measure is reported as ungoverned,
+  never measured against the container's `/`.
 - **Per disk, never pooled.** Freeing the TV disk does not relieve a full movie
   disk; each item is attributed to its disk through its own app and path, and a
   share mounted at `/movies` in Radarr and `/tv` in Sonarr is recognised as one
@@ -473,10 +478,10 @@ lose than they are. The status problems name each missing source.
 
 The rest fail closed: the affected items are kept, never deleted.
 
-- A root folder on a disk its app does not report is never evicted until the
-  app reports it. On the homelab FLINCH was built on, Sonarr's disk report left
-  out all three of its NFS mounts (Radarr listed its own), so TV there is not
-  governed.
+- A root folder on a disk its app does not report, and that is not mounted
+  under `FLINCH_LIBRARY_PREFIX` either, is never evicted. Sonarr's disk report
+  leaves out NFS mounts, so TV disks need the mount (see
+  [deploy](../deploy/README.md)).
 - A file whose import the *arr history never recorded counts only from its
   current file date, and time on disk that the history proves but cannot date
   is left out.

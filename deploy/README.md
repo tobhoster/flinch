@@ -330,6 +330,33 @@ Deleted Movies** in Radarr and **Unmonitor Deleted Episodes** in Sonarr
 (Settings > Media Management). FLINCH lists such deletions on the Overview,
 with whether each one will download again.
 
+### Disks the *arrs do not report
+
+The Overview's Storage card lists any root folder as **Not governed** when its
+app reports no mount for it. Sonarr leaves NFS mounts out of its disk report,
+so TV libraries on their own shares show up here, and nothing on them is
+evicted. Give FLINCH the same shares, read-only, at the app's own paths under
+a prefix, and set `FLINCH_LIBRARY_PREFIX` to it; FLINCH then measures them
+itself. In your overlay's `flinch-arrd` patch:
+
+```yaml
+          containers:
+            - name: flinch-arrd
+              env:
+                - { name: FLINCH_LIBRARY_PREFIX, value: "/library" }
+              volumeMounts:
+                # Sonarr has media-tv-a at /data/media/tv: the same path, under /library.
+                - { name: lib-tv-a, mountPath: /library/data/media/tv, readOnly: true }
+          volumes:
+            - name: lib-tv-a
+              persistentVolumeClaim: { claimName: media-tv-a, readOnly: true }
+```
+
+A share mounted at the wrong path is refused: FLINCH compares its reading with
+the free space the app measured at the root, and keeps the root ungoverned
+when they disagree. A share two roots live on (movies and anime on one disk)
+counts once.
+
 ## Turn off dry run
 
 Before you do:

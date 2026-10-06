@@ -3,7 +3,7 @@
 
 use super::state_dir;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
-use flinch_archive::capacity::{App, AppDisks, CapacityConfig, EvictionLedger, LibraryVolumes, Occupancy, OnDisk, RecycleBin};
+use flinch_archive::capacity::{App, AppDisks, CapacityConfig, EvictionLedger, LibraryVolumes, Occupancy, OnDisk, RecycleBin, Volume};
 use flinch_archive::govern::{self, Governance, Ingest};
 use flinch_archive::signals::Signals;
 use flinch_archive::ArchiveCard;
@@ -12,6 +12,34 @@ use std::collections::{BTreeMap, HashSet};
 /// Where the eviction ledger lives; the caller writes it after the hand-off.
 pub(super) fn ledger_path() -> std::path::PathBuf {
     state_dir().join("evictions.json")
+}
+
+/// Where the *arrs' library shares are mounted in this container, at the
+/// arrs' own paths under it (`FLINCH_LIBRARY_PREFIX`, e.g. `/library` holds
+/// `/library/data/media/tv`). Unset: no probing.
+fn library_prefix() -> Option<std::path::PathBuf> {
+    std::env::var_os("FLINCH_LIBRARY_PREFIX").filter(|prefix| !prefix.is_empty()).map(std::path::PathBuf::from)
+}
+
+/// The filesystem under `root` as mounted here, measured with `statvfs`, for a
+/// root the app reports no mount for. `None` when it is not mounted here either.
+// The statvfs fields are u64 on this target and u32 on 32-bit ones: the cast
+// is a no-op here and a lossless widening there.
+#[allow(clippy::unnecessary_cast)]
+fn probe(prefix: &std::path::Path, root: &str) -> Option<Volume> {
+    let local = prefix.join(root.trim_start_matches('/'));
+    let path = std::ffi::CString::new(local.as_os_str().as_encoded_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is a valid NUL-terminated string and `stat` is a properly
+    // sized, writable buffer that statvfs fills on success.
+    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        eprintln!("[flinch-arrd] capacity: {} not mounted here: {}", local.display(), std::io::Error::last_os_error());
+        return None;
+    }
+    // SAFETY: statvfs returned 0, so the buffer is initialised.
+    let stat = unsafe { stat.assume_init() };
+    let block = stat.f_frsize as u64;
+    Some(Volume { path: root.to_string(), total_bytes: stat.f_blocks as u64 * block, free_bytes: stat.f_bavail as u64 * block })
 }
 
 /// Forecast this cycle's volumes, crediting what recycle bins still hold and
@@ -25,9 +53,13 @@ pub(super) fn govern(
     config: &CapacityConfig,
     now: u64,
 ) -> (Governance, EvictionLedger) {
-    let library = LibraryVolumes::build(disks);
+    let prefix = library_prefix();
+    let library = LibraryVolumes::build(disks, |root| prefix.as_deref().and_then(|prefix| probe(prefix, root)));
     for (app, root) in &library.unmatched_roots {
-        eprintln!("[flinch-arrd] capacity: {}:{root} is on no reported mount; its items are never evicted", app.label());
+        eprintln!(
+            "[flinch-arrd] capacity: {}:{root} is on no reported mount and not mounted here; its items are never evicted",
+            app.label()
+        );
     }
     let located = govern::volume_map(&library, movies, series);
     // Library bytes per governed volume: what the disk holds that FLINCH can name.
