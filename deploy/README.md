@@ -33,7 +33,7 @@ With the published image:
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
   -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo \
-  ghcr.io/tobhoster/flinch:0.2.0 sh -c 'flinch-demo && flinch-web'
+  ghcr.io/tobhoster/flinch:0.3.0 sh -c 'flinch-demo && flinch-web'
 ```
 
 Log in as `demo` with the password `demo`.
@@ -74,7 +74,7 @@ built UI; the two Deployments differ only in `command:`. It is about 50 MB
 
 | Tag | What it is |
 | --- | --- |
-| `0.2.0` | a release; `deploy/kustomization.yaml` pins one |
+| `0.3.0` | a release; `deploy/kustomization.yaml` pins one |
 | `0.1`, `latest` | the newest release of that line, or overall |
 | `edge` | the main branch |
 | `sha-<commit>` | one build of main |
@@ -84,8 +84,8 @@ built UI; the two Deployments differ only in `command:`. It is about 50 MB
 From the repository root:
 
 ```bash
-docker build -t registry.example.com/flinch:0.2.0 -f deploy/Dockerfile .
-docker push registry.example.com/flinch:0.2.0
+docker build -t registry.example.com/flinch:0.3.0 -f deploy/Dockerfile .
+docker push registry.example.com/flinch:0.3.0
 ```
 
 Then point `images:` in `deploy/kustomization.yaml` at it. The manifests use
@@ -230,7 +230,7 @@ stringData:
 
 Keep the single quotes, so YAML takes each value as written; a `'` inside one
 is written `''`. Then update your checkout to the new release
-(`git fetch --tags && git checkout v0.2.0`) and apply its manifests:
+(`git fetch --tags && git checkout v0.3.0`) and apply its manifests:
 `kubectl apply -k deploy/`, or your overlay with its `newTag` moved. They pass
 the two new keys to `flinch-web` and restart it. Moving `newTag` in an overlay
 of an older checkout is not enough: its `../base` is still the old one, which
@@ -520,7 +520,7 @@ namespace: media
 resources: ["../base"]
 components: ["../ingress"]   # only if you publish the UI through an Ingress
 images:
-  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.2.0" }
+  - { name: flinch, newName: ghcr.io/tobhoster/flinch, newTag: "0.3.0" }
 patches:
   - target: { kind: Ingress, name: flinch-web }
     patch: |

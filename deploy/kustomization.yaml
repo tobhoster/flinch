@@ -24,7 +24,7 @@ resources:
 images:
   - name: flinch
     newName: ghcr.io/tobhoster/flinch
-    newTag: "0.2.0"
+    newTag: "0.3.0"
 
 # The daemon reaches http://radarr:7878, http://sonarr:8989 and
 # http://maintainerr:6246 (services in the same namespace), and the ingress

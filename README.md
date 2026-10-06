@@ -101,7 +101,7 @@ renamed and every size, date and id randomized:
 ```bash
 docker run --rm -p 127.0.0.1:7911:7911 -e FLINCH_STATE_DIR=/tmp/demo \
   -e FLINCH_WEB_USERNAME=demo -e FLINCH_WEB_PASSWORD=demo \
-  ghcr.io/tobhoster/flinch:0.2.0 sh -c 'flinch-demo && flinch-web'
+  ghcr.io/tobhoster/flinch:0.3.0 sh -c 'flinch-demo && flinch-web'
 ```
 
 Then open <http://localhost:7911> and log in as `demo` with the password `demo`.
@@ -121,7 +121,7 @@ moves to 0.2.0 when it is published, and any restart pulls it):
    ([how, without a password in your shell history](deploy/README.md#upgrading-from-the-access-token)).
 2. **Apply the 0.2.0 manifests**, which pass the two new keys to `flinch-web`:
    update your checkout to the release (`git fetch --tags && git checkout
-   v0.2.0`), set `newTag: "0.2.0"` in your overlay if you have one, and run
+   v0.3.0`), set `newTag: "0.3.0"` in your overlay if you have one, and run
    `kubectl apply -k`. An overlay reads `../base` from the checkout it sits in,
    so moving `newTag` alone runs 0.2.0 on 0.1.1's manifests, which never pass
    the login to the pod.
@@ -149,7 +149,7 @@ may notice on the first cycle:
 - Adopting a fitted model can no longer make an item eligible that the
   hand-set priors hold.
 
-The full list is in the [0.2.0 release notes](https://github.com/tobhoster/flinch/releases/tag/v0.2.0).
+The full list is in the [0.2.0 release notes](https://github.com/tobhoster/flinch/releases/tag/v0.3.0).
 
 ## 📦 Install
 
