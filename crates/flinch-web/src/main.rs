@@ -6,6 +6,7 @@
 //! *arr keys, no database.
 
 mod auth;
+mod search;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -27,6 +28,8 @@ struct AppState {
     web: Arc<PathBuf>,
     /// Who may use the API: the login, the API key and the live sessions.
     auth: Arc<auth::Auth>,
+    /// Semantic search: the query encoder once opened, and the vectors.
+    search: Arc<search::Search>,
 }
 
 fn read_json(path: &Path) -> String {
@@ -206,6 +209,7 @@ fn app(state: AppState) -> Router {
         .route("/api/status", get(api_status))
         .route("/api/items", get(api_items))
         .route("/api/history", get(api_history))
+        .route("/api/search", get(search::api_search))
         .route("/api/run", post(api_run))
         .route("/api/settings", get(api_settings_get).put(api_settings_put))
         .route("/api/{*rest}", any(api_unknown))
@@ -232,7 +236,7 @@ async fn main() -> Result<()> {
     let web = std::env::var("FLINCH_WEB_DIR").unwrap_or_else(|_| "web".to_string());
     let auth = Arc::new(auth::Auth::from_env());
     let dir = PathBuf::from(dir);
-    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth });
+    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth, search: Arc::new(search::Search::new()) });
     let addr = format!("0.0.0.0:{port}");
     println!("flinch-web on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.context("bind")?;

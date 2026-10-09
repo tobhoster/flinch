@@ -21,6 +21,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 # source by highs-sys; needs cmake and a C++ compiler at build time).
 good_lp = { version = "1.15", default-features = false, features = ["highs"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# EmbeddingGemma 2 runs in-process: candle for the tensor math (pure Rust on
+# CPU), tokenizers for its SentencePiece-BPE vocabulary. fancy-regex keeps the
+# tokenizer pure Rust too (no Oniguruma or esaxx C/C++ builds).
+candle-core = "0.11"
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+# Poster decoding for the optional image half of EmbeddingGemma 2: pure-Rust
+# codecs for what TMDB and TheTVDB serve, nothing else.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # Test-only: table-driven cases (rstest) and invariants over generated inputs
 # (proptest). Dev-dependencies only; never in a shipped binary.
 rstest = "0.27"

@@ -12,6 +12,9 @@ const PERCENT = { scale: 100, ok: (v) => v > 0 && v <= 100 };
 const BYTES = { scale: 1 / GIB, digits: 2 };
 const inRange = (lo, hi) => ({ ok: (v) => v >= lo && v <= hi });
 
+/** The Matryoshka sizes EmbeddingGemma 2 keeps meaningful. */
+const DIMENSIONS = [128, 256, 512, 768];
+
 /**
  * Every numeric field as `[group, key, label, spec]`; `group` null is top
  * level. The form shows `daemon value × scale`; `ok` checks the form value;
@@ -30,13 +33,15 @@ const NUMERIC = [
   ['capacity', 'max_capacity_bytes', 'Max capacity', { ...BYTES, ok: (v) => v > 0, optional: true }],
   ['planner', 'quantum_mb', 'Quantum (1–10240 MiB)', inRange(1, 10240)],
   ['planner', 'grace_period_days', 'Grace period (0–3650 days)', inRange(0, 3650)],
+  ['embedding', 'dimensions', 'Embedding dimensions', { ok: (v) => DIMENSIONS.includes(v) }],
+  ['embedding', 'daily_budget', 'Embedding budget (1–20000 titles)', inRange(1, 20000)],
 ];
 
 const groupOf = (obj, group) => (group ? obj[group] : obj);
 
 /** Settings as the form shows them: scaled numbers, user weights as editable rows. */
 function toForm(settings) {
-  const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner } };
+  const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner }, embedding: { ...settings.embedding } };
   for (const [group, key, , { scale = 1, digits = 2 }] of NUMERIC) {
     const target = groupOf(form, group);
     const value = target[key];
@@ -57,7 +62,7 @@ const parse = (raw) => (typeof raw === 'string' && raw.trim() === '' ? NaN : Num
  * it back); blank keeps the saved token while the URL is unchanged.
  */
 function toPayload(form) {
-  const payload = { ...form, capacity: { ...form.capacity }, planner: { ...form.planner } };
+  const payload = { ...form, capacity: { ...form.capacity }, planner: { ...form.planner }, embedding: { ...form.embedding } };
   delete payload.plex_token_set;
   const invalid = [];
   for (const [group, key, label, { scale = 1, ok = (v) => v >= 0, optional }] of NUMERIC) {
@@ -235,6 +240,30 @@ export default function Settings({ status }) {
           <Row label="Token" htmlFor="plex_token" help="Never sent back to the browser. Blank keeps the saved one; a new URL needs it again.">
             <TextField id="plex_token" type="password" autoComplete="off" placeholder={form.plex_token_set ? 'Saved' : ''}
               value={form.plex_token} onChange={set('plex_token')} />
+          </Row>
+        </Section>
+
+        <Section title="Taste embeddings">
+          <Row label="Embed titles" htmlFor="embedding.enabled"
+            help="EmbeddingGemma 2 runs inside the daemon on its CPU. The first run downloads its text weights (about 580 MB) to the state volume. Off keeps the vectors already made.">
+            <Toggle id="embedding.enabled" checked={!!form.embedding.enabled} onChange={setIn('embedding', 'enabled')}>
+              Embed new and changed titles
+            </Toggle>
+          </Row>
+          <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept from the model's 768. Smaller is lighter, coarser; changing it embeds every title again.">
+            <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              {DIMENSIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Row>
+          <Row label="Daily budget" htmlFor="embedding.daily_budget" help="Most titles embedded per day (UTC), at most two minutes of CPU per run; a large library fills in over several days.">
+            <NumberField {...numIn('embedding', 'daily_budget', { min: 1, max: 20000, step: 50 })} unit="titles" />
+          </Row>
+          <Row label="Posters" htmlFor="embedding.posters"
+            help="Describe each title by its poster too, through the model's vision tower: about 335 MB more weights, and several seconds of CPU per title. Posters come from the TMDB/TheTVDB address Radarr and Sonarr list, fetched without any credential. Switching it on or off embeds every title again.">
+            <Toggle id="embedding.posters" checked={!!form.embedding.posters} onChange={setIn('embedding', 'posters')}>
+              Include the poster in each title's vector
+            </Toggle>
           </Row>
         </Section>
 

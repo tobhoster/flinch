@@ -162,6 +162,88 @@ The daemon also takes the optional three as `--seerr-url`, `--seerr-key`,
 `--prowlarr-url`, `--prowlarr-key`, `--sabnzbd-url` and `--sabnzbd-key`. What
 a missing one changes: see [Regret](../docs/how-it-works.md#regret).
 
+### Taste embeddings (EmbeddingGemma 2)
+
+Optional. For titles nobody has played yet, P(watch) can lean on how readily
+the household plays similar titles. "Similar" comes from an embedding of each
+movie's and show's catalogue description, made by
+[EmbeddingGemma 2](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
+inside `flinch-arrd` itself: a pure-Rust port of its text encoder on
+[candle](https://github.com/huggingface/candle), on the CPU, with no model
+server to run. Off, FLINCH runs as before.
+
+The description is built from content metadata only: title, year, genres,
+certification, runtime, original language, studio or network, series type,
+Radarr collection, overview, and from Plex (when configured) tagline,
+countries, directors, writers and the cast Plex lists. Nothing about your
+household's viewing, ratings, requests, dates or tags goes in.
+
+Switch it on in Settings > Taste embeddings:
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| Embed titles | off | embed new and changed titles each cycle |
+| Dimensions | 256 | 128, 256, 512 or 768: how much of the 768-d vector is kept (Matryoshka truncation); changing it embeds every title again |
+| Daily budget | 500 | at most this many titles (1–20000) embedded per UTC day, on-disk titles first |
+| Posters | off | describe each title by its poster too (see below); switching it on or off embeds every title again |
+
+- **Weights.** The first cycle with embedding on downloads the pinned
+  revision of `google/embeddinggemma-2` (Apache 2.0, no token needed) from
+  Hugging Face: its tokenizer and only the text tensors of the checkpoint
+  (one 542 MB byte range of the 1.5 GB file), into
+  `/state/models/embeddinggemma-2-<revision>/`. The daemon needs HTTPS to
+  `huggingface.co` and its file CDN that once, and follows their redirects for
+  this download only. Offline? Copy `tokenizer.json` and `text.safetensors`
+  there yourself.
+- **CPU and memory.** Float32 math on bfloat16 weights that stay
+  memory-mapped, one layer at a time (float16 is never used: the model card
+  says it breaks EmbeddingGemma). A cycle embeds for at most two minutes and
+  the plan waits for it; on a 20-thread test machine five descriptions took
+  about 3 seconds. The first cycle (download plus embedding) peaked at about
+  650 MB resident, mostly the mapped weights, which is why the manifests give
+  `flinch-arrd` a 1 Gi limit.
+- **Posters (optional).** With Posters on, each title's description also
+  holds its poster, as the model's interleaved image input: a port of
+  EmbeddingGemma 2's vision tower (Gemma 4's) on candle turns the poster into
+  up to 280 soft tokens that the text encoder reads where the description
+  says `Poster: <|image|>`, right after the title. The poster is the one
+  Radarr or Sonarr lists upstream (`images` → `poster` → `remoteUrl`, a TMDB
+  or TheTVDB CDN address), fetched with no credential or cookie, at most
+  8 MB, JPEG, PNG or WebP; the *arr's own copy is never used, since reaching
+  it takes an API key. The first cycle with posters on downloads the vision
+  tensors as well: two more byte ranges of the checkpoint (335 MB) into
+  `vision.safetensors`, plus `processor_config.json`. A poster the CDN
+  refuses or that does not decode leaves the title described by text alone
+  until its poster URL changes; a network error or CDN fault leaves it for a
+  later cycle. The vectors match the reference ONNX export (Pillow
+  preprocessing) to a cosine of 1.000000 for a PNG poster and 0.99985 to
+  0.99996 for JPEGs, where the two JPEG decoders round a few pixels
+  differently. Cost, measured on the test machine with a 2:3 poster (260
+  soft tokens): the vision tower took 12.2 s on 2 CPUs, 7.4 s on 4 and 4.9 s
+  on 8, and the text pass with the poster another 0.6–1.3 s, so a cycle's two
+  minutes embed roughly 9 to 22 titles; the daily budget still applies. Peak
+  resident memory was about 830 MB: some 580 MB of it the mapped weights,
+  which the kernel can drop and read again, and about 250 MB working memory.
+  That fits under the manifests' 1 Gi limit only because the mapped part can
+  be dropped; it was not run under that limit, so give `flinch-arrd` 1.5 Gi
+  with posters on.
+- **Off again.** Switching it off stops embedding; the vectors already made
+  stay in use. The header lists **Embeddings** while it is on; hover it for
+  coverage and the budget left today, or the last error.
+- **Inflow advice.** The Overview's *Coming in, likely unwatched* card lists
+  monitored shows that read cold or were abandoned, and cold Seerr requests,
+  with the suggested action (e.g. unmonitor future seasons in Sonarr). FLINCH
+  only reads Sonarr, Radarr and Seerr for it; acting on it is up to you. The
+  abandoned rule needs no vectors; the cold rules list nothing until titles
+  are embedded.
+- **Search by meaning.** With titles embedded, the Series and Movies search
+  box's *Meaning* mode finds titles by what they are about. `flinch-web` runs
+  the same encoder on the weights the daemon downloaded (it never fetches
+  them itself): about 0.3 s of one core per query, and about 550 MB resident
+  from the first search on (700 MB at peak), so the manifests give
+  `flinch-web` a 1 Gi memory and one-core CPU limit. Until the weights and
+  vectors exist the search says so and the *Title* mode works as before.
+
 ## Install
 
 ```bash
@@ -414,6 +496,9 @@ file reads as "nothing yet".
 | `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate | the priors run until a fit is adopted again |
 | `episode-guids.json` | episode `plex://` GUIDs of resolved shows, for plays recorded before a library migration (refreshed at most daily, only while such plays exist) | re-read from Plex on the next cycle that needs it |
 | `arr-history.json` | when each title was on disk, and the files removed in the last 30 days, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
+| `embeddings.json` | the taste vectors: model, dimensions and text recipe they were made with, per movie and show the hash of its description and its vector, and how many titles were embedded today (UTC) | every title is embedded again, within the daily budget |
+| `themes.json` | each movie's and show's theme (clusters of the taste vectors) and the theme names, with when they were computed and a fingerprint of the vectors (recomputed daily or when a vector changes) | recomputed on the next cycle |
+| `models/embeddinggemma-2-<revision>/` | EmbeddingGemma 2's tokenizer and text weights (about 580 MB), downloaded the first time embedding runs; with Posters on also `vision.safetensors` (335 MB) and `processor_config.json` | downloaded again the next time embedding runs |
 
 `protected.json` and `scheduled.json` record only the exclusions and
 collection members FLINCH created and verified by reading them back, so runs

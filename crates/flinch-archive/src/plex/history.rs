@@ -7,10 +7,11 @@
 
 use super::join::RowKey;
 use super::resolve::Resolution;
+use super::season::EpisodePlays;
 use super::{PlexMetadata, WatchTarget};
 use crate::card::LibraryKind;
 use crate::watch::{WatchEntry, WatchSource};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Watch entries from server-wide playback history.
 ///
@@ -31,13 +32,15 @@ pub fn history_entries(targets: &[WatchTarget], resolution: &Resolution, rows: &
         let progress = match target.kind {
             LibraryKind::Movie => 1.0,
             LibraryKind::Season => {
-                // Distinct episodes, not rows: a rewatch is not a second episode.
-                let distinct = plays.iter().map(|row| (row.parent_index, row.index)).collect::<HashSet<_>>().len() as f32;
-                match target.episode_files.or(target.episodes_total).filter(|total| *total > 0) {
-                    Some(total) => (distinct / total as f32).clamp(0.0, 1.0),
-                    // No episode count to divide by: claim "started", never "complete".
-                    None => 0.5,
+                // Distinct episodes, not rows: a rewatch is not a second
+                // episode. A history row is a counted view, so every one is a
+                // finished episode — but only one still on disk completes the
+                // season (see `season`).
+                let mut episodes = EpisodePlays::default();
+                for row in &plays {
+                    episodes.record(row.index, true);
                 }
+                episodes.progress(target)
             }
         };
         out.insert(target.id.clone(), WatchEntry { id: target.id.clone(), last_watched_epoch, progress, source: WatchSource::PlexHistory });

@@ -28,6 +28,9 @@ pub enum LoadError {
         #[source]
         source: serde_json::Error,
     },
+    /// `embeddings.json` exists but cannot be used. Absent is fine: no taste.
+    #[error(transparent)]
+    Vectors(#[from] crate::embedding::StoreError),
 }
 
 /// The household as the fitter sees it.
@@ -39,6 +42,8 @@ pub struct Household {
     pub unreadable_rows: usize,
     pub plex_rows: usize,
     pub tautulli_rows: usize,
+    /// Every title's EmbeddingGemma vector the daemon has cached.
+    pub vectors: crate::embedding::VectorStore,
 }
 
 /// What the fitter reads out of an `items.json` row; only the fields it needs.
@@ -54,6 +59,9 @@ struct SnapshotRow {
     age_days: Option<f32>,
     #[serde(default)]
     episodes: Option<u32>,
+    /// Episode numbers with a file, when the daemon read them.
+    #[serde(default)]
+    episodes_on_disk: Option<Vec<u32>>,
     #[serde(default)]
     season_label: Option<String>,
     /// The movie's (or show's) year: the only thing the title fallback may lean on.
@@ -98,7 +106,8 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
             fit_item(snapshot, unique, &log)
         })
         .collect();
-    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len() })
+    let vectors = crate::embedding::VectorStore::read(state_dir)?;
+    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors })
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.
@@ -131,6 +140,7 @@ fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitIt
         size_bytes: row.size_bytes,
         age_days,
         episodes_total: row.episodes,
+        episodes_on_disk: row.episodes_on_disk,
         season_index,
         show_title,
     })

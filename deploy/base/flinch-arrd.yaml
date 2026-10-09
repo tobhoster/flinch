@@ -101,7 +101,9 @@ spec:
             capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits: { memory: 512Mi }
+            # Taste embeddings map EmbeddingGemma 2's 542 MB of text weights
+            # while they run (about 650 MB resident at peak).
+            limits: { memory: 1Gi }
           volumeMounts:
             - { name: watch, mountPath: /cfg, readOnly: true }
             - { name: state, mountPath: /state }

@@ -21,11 +21,11 @@ export const GLOSSARY = {
   },
   advice: {
     term: 'Recommendation',
-    body: 'Keep the release, downgrade to a compact one, or let it go when space is needed. Follows from P(watch) and regret per GiB. Advice only: nothing in Radarr or Sonarr changes.',
+    body: 'Keep the release, downgrade to a compact one, or let it go when space is needed. Follows from P(watch) and regret per GiB; a large or 2160p file in a seldom-played theme is advised a downgrade unless pinned or partly watched. Advice only: nothing in Radarr or Sonarr changes.',
   },
   model: {
     term: 'Watch model',
-    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays and season cycle. Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
+    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays, season cycle, whether everyone who played it finished it, and — for a title nobody played — how readily the household plays similar titles (taste, from EmbeddingGemma 2 vectors of each title’s description, and of its poster when Settings → Taste embeddings → Posters is on). Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
   },
   projection: {
     term: 'Storage projection',
@@ -111,12 +111,24 @@ export const GLOSSARY = {
     term: 'Deleted outside FLINCH',
     body: 'Movies and seasons Radarr or Sonarr removed in the last 30 days that FLINCH did not hand over. Monitored ones will download again.',
   },
+  inflow: {
+    term: 'Coming in, likely unwatched',
+    body: 'Monitored shows nobody started whose taste reads cold, shows abandoned partway over 180 days ago, and open Seerr requests that read cold. Advice only: FLINCH never unmonitors anything; GiB/season is the mean of the seasons on disk.',
+  },
+  themes: {
+    term: 'Themes',
+    body: 'The library grouped by what titles are about: EmbeddingGemma 2 vectors clustered once a day, each group named by its most common genres. Played = titles anyone played in the last 365 days. A theme of 5+ titles under 10% played is seldom played. Display and quality advice only: themes never change what the plan evicts.',
+  },
+  meaning_search: {
+    term: 'Search by meaning',
+    body: 'Finds titles by what they are about, not their name: your words and each title’s description (genres, cast, overview) are compared as EmbeddingGemma 2 vectors, closest first. Titles not embedded yet are left out. Search only: it never changes the plan.',
+  },
 };
 
 /** Card layout: heading, then the glossary keys in reading order. */
 export const GLOSSARY_SECTIONS = [
-  ['Prediction', ['p_watch', 'regret', 'reacquisition', 'eviction_safety', 'advice', 'model', 'user_weights']],
-  ['Freeing space', ['projection', 'plan', 'eligible', 'pinned', 'grace_period', 'grace_runs', 'never_played', 'dry_run']],
+  ['Prediction', ['p_watch', 'regret', 'reacquisition', 'eviction_safety', 'advice', 'model', 'themes', 'meaning_search', 'user_weights']],
+  ['Freeing space', ['projection', 'plan', 'eligible', 'pinned', 'grace_period', 'grace_runs', 'never_played', 'dry_run', 'inflow']],
   ['Disks', ['pending', 'held', 'untracked', 'not_governed']],
   ['Evidence', ['evidence', 'evidence_complete']],
   ['Maintainerr', ['maintainerr', 'leaving_soon', 'unresolved', 'operator_keeps', 'released_gone', 'outside_deletions']],

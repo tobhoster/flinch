@@ -14,6 +14,9 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+candle-core = { workspace = true }
+tokenizers = { workspace = true }
+image = { workspace = true }
 good_lp = { workspace = true }
 # statvfs on the library shares, for mounts the *arrs do not report.
 libc = "0.2"

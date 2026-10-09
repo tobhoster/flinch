@@ -40,13 +40,23 @@ struct World {
     in_plex: HashSet<String>,
     signals: Signals,
     never_played: Option<Exclusion>,
+    taste: HashMap<String, Reading>,
 }
 
 impl World {
     fn new(cards: Vec<ArchiveCard>) -> Self {
         let watch = cards.iter().map(|card| entry(&card.id, if card.last_watched_days.is_some() { 1.0 } else { 0.0 })).collect();
         let in_plex = cards.iter().map(|card| card.id.clone()).collect();
-        Self { cards, movies: Vec::new(), series: Vec::new(), watch, in_plex, signals: Signals::default(), never_played: None }
+        Self {
+            cards,
+            movies: Vec::new(),
+            series: Vec::new(),
+            watch,
+            in_plex,
+            signals: Signals::default(),
+            never_played: None,
+            taste: HashMap::new(),
+        }
     }
 
     fn build(&self, config: &PlannerConfig) -> HashMap<String, MediaCandidate> {
@@ -61,6 +71,8 @@ impl World {
             in_plex: &self.in_plex,
             handed: &HashSet::new(),
             signals: &self.signals,
+            taste: &self.taste,
+            cold_themes: &HashMap::new(),
             never_played: self.never_played,
             now: NOW,
         };
@@ -113,4 +125,20 @@ fn a_user_who_requested_and_watchlisted_a_season_claims_it_once_with_both() {
     // Seerr names users case-insensitively too: "Ann" and "ann" are one user.
     assert_eq!(built["sonarr-7-s1"].regret.household, 1.0 + 2.0 * 3.5, "requested season: watchlist + request");
     assert_eq!(built["sonarr-7-s2"].regret.household, 1.0 + 2.0 * 2.0, "the request named season 1 only");
+}
+
+#[test]
+fn a_never_played_title_with_a_taste_names_the_titles_it_resembles() {
+    let unplayed = ArchiveCard { last_watched_days: None, ..movie_card(4) };
+    let paddington = ArchiveCard { title: "Paddington".to_string(), ..movie_card(8) };
+    let mut world = World::new(vec![unplayed, paddington, movie_card(5)]);
+    world.movies = vec![ArrMovie { id: 7, title: "Hot Fuzz".to_string(), ..Default::default() }];
+    let like =
+        crate::taste::Likeness { subjects: ["radarr-99", "radarr-7", "radarr-8", "radarr-5"].map(String::from).to_vec(), played: true };
+    let reading = Reading { taste: 0.8, like: Some(like) };
+    world.taste = HashMap::from([("radarr-4".to_string(), reading.clone()), ("radarr-5".to_string(), reading)]);
+    let built = world.build(&PlannerConfig::default());
+
+    assert!(built["radarr-4"].reason.ends_with(" · like Hot Fuzz, Paddington (played here)"), "{}", built["radarr-4"].reason);
+    assert!(!built["radarr-5"].reason.contains("like"), "played: taste does not speak for it: {}", built["radarr-5"].reason);
 }

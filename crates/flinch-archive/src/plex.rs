@@ -21,6 +21,7 @@ pub mod join;
 pub mod library;
 pub mod migration;
 pub mod resolve;
+pub mod season;
 
 pub use episodes::{EpisodeIds, PlexEpisodes, SonarrEpisodes};
 pub use join::{PlayJoin, RowKey};
@@ -128,6 +129,14 @@ pub struct PlexGuid {
     pub id: String,
 }
 
+/// A tag element (`Genre`, `Director`, `Writer`, `Role`, `Country`):
+/// `{"tag": "Keanu Reeves"}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlexTag {
+    #[serde(default)]
+    pub tag: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlexMetadata {
@@ -181,6 +190,27 @@ pub struct PlexMetadata {
     /// Local account that played a history row (`accountID`): the viewer.
     #[serde(rename = "accountID", default, deserialize_with = "lenient")]
     pub account_id: Option<u64>,
+    /// Content metadata of a movie or show row, for the taste text
+    /// ([`crate::embedding::text`]). Tolerant: an odd value reads as absent.
+    /// Left out when empty, so the persisted history stays as it was.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Option::is_none")]
+    pub tagline: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Option::is_none")]
+    pub studio: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Option::is_none")]
+    pub content_rating: Option<String>,
+    #[serde(rename = "Genre", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<PlexTag>,
+    #[serde(rename = "Director", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
+    pub directors: Vec<PlexTag>,
+    #[serde(rename = "Writer", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
+    pub writers: Vec<PlexTag>,
+    #[serde(rename = "Role", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<PlexTag>,
+    #[serde(rename = "Country", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
+    pub countries: Vec<PlexTag>,
 }
 
 /// A number Plex may render as a string: history rows carry
@@ -259,6 +289,12 @@ pub struct WatchTarget {
     /// differently (TVDB vs TMDB ordering), and a disagreement means the
     /// evidence would land on the wrong season.
     pub episode_files: Option<u32>,
+    /// Episode numbers of this season with a file on disk, ascending, when
+    /// Sonarr was asked (only for seasons whose plays could read complete).
+    /// Play logs count against these, not against the file count: plays of
+    /// episodes deleted since must not complete the episodes left (see
+    /// [`season`]).
+    pub episodes_on_disk: Option<Vec<u32>>,
     /// The *arr's catalogue ids (a season carries its show's).
     pub external: ExternalIds,
     /// When the item arrived, as an epoch. Used to decide whether "no stream"
@@ -283,6 +319,7 @@ impl From<&crate::card::ArchiveCard> for WatchTarget {
             season_index: card.season_index,
             episodes_total: card.episodes_total,
             episode_files: None,
+            episodes_on_disk: card.episodes_on_disk.clone(),
             external: ExternalIds::default(),
             added_epoch: None,
             on_disk: true,

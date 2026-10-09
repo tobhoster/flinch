@@ -4,6 +4,7 @@
 use super::state_dir;
 use anyhow::Result;
 use flinch_archive::daemon::{self, HistoryPoint, NeverPlayedHold, QualityCounts};
+use flinch_archive::embedding::EmbeddingStatus;
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::SyncSummary;
 use flinch_archive::outside::OutsideDeletion;
@@ -31,6 +32,12 @@ pub(super) struct Run<'a> {
     pub(super) never_played_requested: bool,
     /// Files something other than FLINCH removed lately.
     pub(super) outside: Vec<OutsideDeletion>,
+    /// The taste vectors after this cycle's refresh.
+    pub(super) embedding: EmbeddingStatus,
+    /// Incoming storage likely wasted, for the operator.
+    pub(super) inflow: Vec<flinch_archive::inflow::Suggestion>,
+    /// Storage by theme; `None` before themes exist.
+    pub(super) themes: Option<flinch_archive::themes::ThemesStatus>,
 }
 
 pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
@@ -47,6 +54,9 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         never_played_hold,
         never_played_requested,
         outside,
+        embedding,
+        inflow,
+        themes,
     } = run;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let dir = state_dir();
@@ -80,6 +90,9 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         sync,
         fit: flinch_archive::fit::adopt::read_status(&dir),
         outside_deletions: outside,
+        embedding: Some(embedding),
+        inflow,
+        themes,
     };
     daemon::write_snapshots(&dir.join("status.json"), &dir.join("items.json"), &status, items)?;
     daemon::append_history(

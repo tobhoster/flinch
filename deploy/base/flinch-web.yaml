@@ -53,7 +53,12 @@ spec:
           ports: [{ containerPort: 7911 }]
           volumeMounts: [{ name: state, mountPath: /state }]
           readinessProbe: { httpGet: { path: /healthz, port: 7911 }, initialDelaySeconds: 3, periodSeconds: 10 }
-          resources: { requests: { cpu: 50m, memory: 24Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            # Search by meaning maps EmbeddingGemma 2's 542 MB of text weights
+            # on the first search and keeps them (about 550 MB resident after,
+            # 700 MB at peak); a query takes about 0.3 s of one core.
+            limits: { cpu: "1", memory: 1Gi }
       volumes: [{ name: state, persistentVolumeClaim: { claimName: flinch-state-rwx } }]
 ---
 apiVersion: v1

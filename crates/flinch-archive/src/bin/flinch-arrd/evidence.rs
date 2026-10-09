@@ -2,13 +2,17 @@
 //! history, Tautulli history — joined to the library by catalogue identity,
 //! with a health record of what could not be read.
 
+mod on_disk;
+
 use super::fetch::{fetch_series_episodes, maintainerr_tautulli_credentials};
 use super::media::{episode_guids, fetch_plex, fetch_show_episodes, fetch_tautulli_history};
 use super::{state_dir, Args};
 use anyhow::{Context, Result};
 use flinch_archive::arr::{ArrMovie, ArrSeries};
 use flinch_archive::ids::PlexIds;
-use flinch_archive::plex::{migration, EpisodeIds, PlayJoin, PlayKeys, PlexMetadata, Resolution, RowKey, Unconfirmed, WatchTarget};
+use flinch_archive::plex::{
+    migration, EpisodeIds, PlayJoin, PlayKeys, PlexMetadata, Resolution, RowKey, SonarrEpisodes, Unconfirmed, WatchTarget,
+};
 use flinch_archive::tautulli::TautulliRow;
 use flinch_archive::watch::{EvidenceHealth, WatchEntry, WatchSource};
 use flinch_archive::ArchiveCard;
@@ -32,6 +36,9 @@ pub(super) struct Evidence {
     /// Every ratingKey Plex listed this cycle; `None` unless Plex was read and
     /// listed completely — the only proof an item is gone from Plex.
     pub(super) plex_listed: Option<HashSet<String>>,
+    /// Plex movie and show rows by ratingKey, for the taste text; empty when
+    /// Plex was not read.
+    pub(super) plex_content: HashMap<String, PlexMetadata>,
 }
 
 pub(super) async fn gather(
@@ -40,7 +47,7 @@ pub(super) async fn gather(
     settings: &flinch_archive::daemon::RuntimeSettings,
     movies: &[ArrMovie],
     series: &[ArrSeries],
-    cards: &[ArchiveCard],
+    cards: &mut [ArchiveCard],
     cycle_now: u64,
 ) -> Result<Evidence> {
     let watch_path = args.watch_state.as_ref().ok_or_else(|| anyhow::anyhow!("--watch-state or FLINCH_WATCH_STATE is required"))?;
@@ -91,6 +98,7 @@ pub(super) async fn gather(
             season_index: None,
             episodes_total: None,
             episode_files: None,
+            episodes_on_disk: None,
             external: Default::default(),
             added_epoch: None,
             on_disk: false,
@@ -108,6 +116,7 @@ pub(super) async fn gather(
                 season_index: Some(season.season_number),
                 episodes_total: Some(season.statistics.total_episode_count),
                 episode_files: None,
+                episodes_on_disk: None,
                 external: Default::default(),
                 added_epoch: None,
                 on_disk: false,
@@ -173,8 +182,10 @@ pub(super) async fn gather(
     // PX-04: a season whose Plex episode count differs from Sonarr's file count
     // resolves only when TVDB episode ids show it is the same season.
     let unconfirmed = resolution.unconfirmed_seasons().len();
+    // Sonarr's episodes by series id, each series read at most once a cycle.
+    let mut sonarr_episodes: HashMap<u32, SonarrEpisodes> = HashMap::new();
     if unconfirmed > 0 {
-        let ids = episode_ids(http, args, (&plex_url, &plex_token), resolution.unconfirmed_seasons(), series).await;
+        let ids = episode_ids(http, args, (&plex_url, &plex_token), resolution.unconfirmed_seasons(), series, &mut sonarr_episodes).await;
         let confirmed = resolution.confirm_seasons(&watch_targets, library, &ids);
         println!("[flinch-arrd] seasons whose episode counts differ: {confirmed} of {unconfirmed} confirmed by TVDB episode ids");
     }
@@ -225,6 +236,7 @@ pub(super) async fn gather(
         plex_settings_unpaired: settings_url_unpaired,
     };
     let plex_listed = plex.as_mut().filter(|fetched| fetched.items_complete).map(|fetched| std::mem::take(&mut fetched.listed));
+    let plex_content = plex.as_mut().map(|fetched| std::mem::take(&mut fetched.content)).unwrap_or_default();
     let plex_history_rows: Vec<flinch_archive::plex::PlexMetadata> = plex.map(|fetched| fetched.history).unwrap_or_default();
     let tautulli_rows: Vec<flinch_archive::tautulli::TautulliRow> = tautulli.map(|fetched| fetched.rows).unwrap_or_default();
     println!(
@@ -243,6 +255,11 @@ pub(super) async fn gather(
             eprintln!("[flinch-arrd] playback.json write failed: {error}");
         }
     }
+    // Plays of episodes deleted since must not complete a season: those that
+    // would read complete are counted against the episodes on disk.
+    let logs = (&resolution, plex_history_rows.as_slice(), tautulli_rows.as_slice());
+    on_disk::attach(http, args, series, &mut watch_targets, logs, &mut sonarr_episodes).await;
+    on_disk::onto_cards(cards, &watch_targets);
     let mut entries = resolution.item_entries(&health);
     let from_history = flinch_archive::plex::history::history_entries(&watch_targets, &resolution, &plex_history_rows);
     flinch_archive::plex::history::merge_history(&mut entries, from_history);
@@ -317,6 +334,7 @@ pub(super) async fn gather(
         play_keys,
         plex_keeps,
         plex_listed,
+        plex_content,
     })
 }
 
@@ -368,6 +386,7 @@ async fn episode_ids(
     (plex_url, plex_token): (&str, &str),
     unconfirmed: &[Unconfirmed],
     series: &[ArrSeries],
+    read: &mut HashMap<u32, SonarrEpisodes>,
 ) -> EpisodeIds {
     let mut ids = EpisodeIds::default();
     let shows: BTreeSet<&str> = unconfirmed.iter().flat_map(|season| season.show_rating_keys.iter().map(String::as_str)).collect();
@@ -390,9 +409,16 @@ async fn episode_ids(
         if targets.is_empty() {
             continue;
         }
-        match fetch_series_episodes(http, args, series_item.id).await {
-            Ok(episodes) => ids.sonarr.extend(targets.into_iter().map(|id| (id, episodes.clone()))),
-            Err(error) => eprintln!("[flinch-arrd] sonarr episodes of {} unreadable: {error:#}", series_item.title),
+        if let std::collections::hash_map::Entry::Vacant(slot) = read.entry(series_item.id) {
+            match fetch_series_episodes(http, args, series_item.id).await {
+                Ok(episodes) => {
+                    slot.insert(episodes);
+                }
+                Err(error) => eprintln!("[flinch-arrd] sonarr episodes of {} unreadable: {error:#}", series_item.title),
+            }
+        }
+        if let Some(episodes) = read.get(&series_item.id) {
+            ids.sonarr.extend(targets.into_iter().map(|id| (id, episodes.clone())));
         }
     }
     ids

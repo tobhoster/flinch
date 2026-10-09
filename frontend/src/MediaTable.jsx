@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Copy, ExternalLink, PanelRightOpen, Search } from '
 import { Card, DropdownMenu, EmptyState, GiB, Sheet, day, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
 import { Advice, Disk, PlexIds, Reacquisition } from './DetailCells.jsx';
+import { MeaningStatus, useMeaningSearch } from './MeaningSearch.jsx';
 
 const isNum = (v) => v !== null && v !== undefined;
 
@@ -100,12 +101,22 @@ const SORTABLE = [
   ...COLUMNS.filter((c) => c.key).map(({ key, label }) => ({ key, label })),
 ];
 
+/** The search box: plain title text, or meaning (EmbeddingGemma 2 on the server). */
+const SEARCH_MODES = [
+  { key: 'title', label: 'Title', placeholder: 'Search titles' },
+  { key: 'meaning', label: 'Meaning', placeholder: 'Describe it, press Enter' },
+];
+
 export default function MediaTable({ items, kind }) {
   const [q, setQ] = useState('');
+  const [mode, setMode] = useState('title');
   const [filter, setFilter] = useState('on_disk');
+  const [theme, setTheme] = useState('');
   const [sort, setSort] = useState({ key: 'size_bytes', dir: -1 });
   const [sel, setSel] = useState(null);
   const inputRef = useRef(null);
+  const meaning = useMeaningSearch(kind);
+  const byRelevance = sort.key === 'relevance';
 
   useEffect(() => {
     const onKey = (e) => {
@@ -117,10 +128,24 @@ export default function MediaTable({ items, kind }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Themes present among this kind's rows; the selector shows only when there are any.
+  const themes = useMemo(
+    () => [...new Set(items.filter((i) => i.kind === kind && i.theme).map((i) => i.theme))].sort((a, b) => a.localeCompare(b)),
+    [items, kind],
+  );
+
+  // A theme that vanished at a recluster selects nothing rather than emptying the table.
+  const activeTheme = themes.includes(theme) ? theme : '';
+
+  // By meaning, the table holds the last search's matches (every row before
+  // the first); by title, the rows whose title holds the text.
   const searched = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return items.filter((i) => i.kind === kind && (!needle || i.title.toLowerCase().includes(needle)));
-  }, [items, kind, q]);
+    const matches = mode === 'meaning'
+      ? (i) => !meaning.hits || meaning.hits.has(i.id)
+      : (i) => !needle || i.title.toLowerCase().includes(needle);
+    return items.filter((i) => i.kind === kind && (!activeTheme || i.theme === activeTheme) && matches(i));
+  }, [items, kind, q, activeTheme, mode, meaning.hits]);
 
   const counts = useMemo(
     () => Object.fromEntries(FILTERS.map((f) => [f.key, searched.filter(f.test).length])),
@@ -130,13 +155,32 @@ export default function MediaTable({ items, kind }) {
   const rows = useMemo(() => {
     const test = FILTERS.find((f) => f.key === filter).test;
     const missing = sort.dir === -1 ? -Infinity : Infinity;
+    const value = byRelevance ? (i) => meaning.hits?.get(i.id) : (i) => i[sort.key];
     return searched.filter(test).sort((a, b) => {
-      const av = a[sort.key] ?? missing;
-      const bv = b[sort.key] ?? missing;
+      const av = value(a) ?? missing;
+      const bv = value(b) ?? missing;
       if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * sort.dir;
       return av > bv ? sort.dir : av < bv ? -sort.dir : 0;
     });
-  }, [searched, filter, sort]);
+  }, [searched, filter, sort, byRelevance, meaning.hits]);
+
+  const unsortRelevance = () => setSort((s) => (s.key === 'relevance' ? { key: 'size_bytes', dir: -1 } : s));
+  const switchMode = (next) => {
+    setMode(next);
+    meaning.clear();
+    unsortRelevance();
+    inputRef.current?.focus();
+  };
+  const editQuery = (text) => {
+    setQ(text);
+    if (mode === 'meaning' && !text.trim()) { meaning.clear(); unsortRelevance(); }
+  };
+  const submit = async (e) => {
+    if (e.key !== 'Enter' || mode !== 'meaning' || !q.trim()) return;
+    if (await meaning.run(q.trim())) setSort({ key: 'relevance', dir: -1 });
+  };
+  const sortable = meaning.hits ? [{ key: 'relevance', label: 'Relevance' }, ...SORTABLE] : SORTABLE;
+  const placeholder = SEARCH_MODES.find((m) => m.key === mode).placeholder;
 
   const toggle = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : (key === 'title' ? 1 : -1) }));
   const noun = kind === 'movie' ? 'movies' : 'seasons';
@@ -162,24 +206,45 @@ export default function MediaTable({ items, kind }) {
             className={`${selectCls} flex-1 sm:hidden`}>
             {FILTERS.map((f) => <option key={f.key} value={f.key}>{f.label} ({counts[f.key]})</option>)}
           </select>
+          {themes.length > 0 && (
+            <select aria-label="Theme" value={activeTheme} onChange={(e) => setTheme(e.target.value)}
+              className={`${selectCls} w-full sm:w-auto sm:max-w-[14rem]`}>
+              <option value="">All themes</option>
+              {themes.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
 
           <span className="hidden text-xs text-fg-muted sm:ml-auto sm:inline">
             <span className="num">{rows.length}</span> {noun} · <span className="num">{GiB(totalBytes)}</span> GiB
           </span>
-          <div className="relative w-full sm:w-56">
+          <div role="radiogroup" aria-label="Search by" className="inline-flex items-center rounded-md border border-line bg-ink-900 p-0.5">
+            {SEARCH_MODES.map((m) => (
+              <button key={m.key} role="radio" aria-checked={mode === m.key} onClick={() => switchMode(m.key)}
+                className={`rounded px-2.5 py-1 text-xs transition-colors ${mode === m.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
             <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint" />
-            <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles"
+            <input ref={inputRef} value={q} onChange={(e) => editQuery(e.target.value)} onKeyDown={submit} placeholder={placeholder}
+              aria-label={mode === 'meaning' ? 'Search by meaning' : 'Search titles'} enterKeyHint="search" maxLength={200}
               className="min-h-[40px] w-full rounded-md border border-line bg-ink-900 py-1.5 pl-8 pr-8 text-[13px] placeholder:text-fg-faint focus:border-fg-faint focus:outline-none sm:min-h-0" />
             <kbd className="absolute right-2 hidden sm:block top-1/2 -translate-y-1/2 rounded border border-line px-1 text-[10px] text-fg-faint">/</kbd>
           </div>
         </div>
+
+        {mode === 'meaning' && (
+          <MeaningStatus search={meaning} noun={noun} byRelevance={byRelevance}
+            onSortByRelevance={() => setSort({ key: 'relevance', dir: -1 })} />
+        )}
 
         {/* Phones: sort lives here; from md up the table header drives the same state. */}
         <div className="flex items-center gap-2 md:hidden">
           <select aria-label="Sort by" value={sort.key}
             onChange={(e) => setSort({ key: e.target.value, dir: e.target.value === 'title' ? 1 : -1 })}
             className={`${selectCls} flex-1`}>
-            {SORTABLE.map((c) => <option key={c.key} value={c.key}>Sort: {c.label}</option>)}
+            {sortable.map((c) => <option key={c.key} value={c.key}>Sort: {c.label}</option>)}
           </select>
           <button className="btn min-h-[40px] min-w-[40px] justify-center px-2"
             onClick={() => setSort((s) => ({ ...s, dir: -s.dir }))}
@@ -393,6 +458,7 @@ function ItemDetail({ item, actions }) {
     ['Reacquisition', <Reacquisition friction={item.friction} />],
     ['Eviction safety', <Num value={item.eviction_safety} format={pct} />],
     ['Recommendation', <Advice advice={item.advice} full />],
+    ['Theme', <span className="text-fg-muted">{item.theme ?? '—'}</span>],
     ['Watched', <Watched item={item} />],
     ['Size', <Size bytes={item.size_bytes} />],
     ['On disk', <Days value={item.age_days} />],
@@ -453,5 +519,6 @@ const TERMS = {
   Reacquisition: 'reacquisition',
   'Eviction safety': 'eviction_safety',
   Recommendation: 'advice',
+  Theme: 'themes',
   Watched: 'evidence',
 };

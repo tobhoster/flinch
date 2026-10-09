@@ -17,6 +17,8 @@ const PARAMS = [
   ['Viewings', 'beta_scrobbles', (v) => signed(v, 2)],
   ['Show plays', 'beta_velocity', (v) => signed(v, 2)],
   ['Cycle', 'beta_cyclical', (v) => signed(v, 2)],
+  ['Finished', 'beta_finished', (v) => signed(v, 2)],
+  ['Taste', 'beta_taste', (v) => signed(v, 2)],
 ];
 
 /** A score with its 95% bootstrap interval, when the fit reported one. */

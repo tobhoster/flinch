@@ -69,7 +69,13 @@ fn main() -> anyhow::Result<()> {
 
 fn print_params(label: &str, model: &HazardModel) {
     println!(
-        "  {label:<7} λ₀ {:.4}/d · β recency {:+.2} · viewings {:+.2} · show plays {:+.2} · cycle {:+.2}",
-        model.lambda0_per_day, model.beta_recency, model.beta_scrobbles, model.beta_velocity, model.beta_cyclical
+        "  {label:<7} λ₀ {:.4}/d · β recency {:+.2} · viewings {:+.2} · show plays {:+.2} · cycle {:+.2} · finished {:+.2} · taste {:+.2}",
+        model.lambda0_per_day,
+        model.beta_recency,
+        model.beta_scrobbles,
+        model.beta_velocity,
+        model.beta_cyclical,
+        model.beta_finished,
+        model.beta_taste
     );
 }

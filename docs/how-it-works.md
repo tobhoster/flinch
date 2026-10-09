@@ -105,14 +105,32 @@ R = P(watch within 90 days) × C_reacq × A_household
 - **P(watch)** comes from an exponential hazard, λ = λ₀·exp(β·x) and
   P = 1 − exp(−90·λ). The features are ln(1 + days since the last play)
   (never played: days on disk), ln(1 + finished viewings), ln(1 + plays of
-  the show in the last 14 days), and cos(2π·days since the last play / 365.25)
-  for the film played every December. The hand-set priors are λ₀ = 0.004/day
-  and β = −0.5 (recency), 0 (viewings), +0.7 (show plays), +0.3 (annual
-  cycle), set from this household's record: finished titles are almost never
-  replayed, so finishing earns nothing, and watching the show now is the strong
-  signal; the [daily fit](#accuracy-you-can-check) replaces them only when it
-  beats them. When a viewer with a play in the last 30 days is 10–90% through
-  the item, P is at least 0.95. It is the only probability FLINCH computes.
+  the show in the last 14 days), cos(2π·days since the last play / 365.25)
+  for the film played every December, **finished** (1 when everyone who
+  played it got to the end and nobody's latest play stopped short; see
+  below), and **taste** (for a title nobody played: how readily the household
+  plays titles like it, see [Taste](#taste-embeddinggemma-2)). The hand-set
+  priors are λ₀ = 0.004/day and β = −0.5 (recency), 0 (viewings), +0.7 (show
+  plays), +0.3 (annual cycle), −2.5 (finished), 0 (taste), set from this
+  household's record: finished titles are almost never replayed, so a
+  finished title is cold however recently it ended, and watching the show now
+  is the strong signal. Under the priors a movie finished two days ago reads
+  about 4%, below a download nobody opened in six weeks (about 5%); before
+  the finished feature it read about 37%, because its own fresh play counted
+  as demand. The [daily fit](#accuracy-you-can-check) replaces the priors only
+  when it beats them. When a viewer with a play in the last 30 days is
+  10–90% through the item, P is at least 0.95. It is the only probability
+  FLINCH computes.
+- **Finished** reads the plays per viewer. A movie is finished when every
+  viewer's latest play reached 85% (Plex counted a view, or Tautulli streamed
+  that much). A season is finished when every viewer who played it finished
+  every episode that is still on disk, and their latest play was finished. A
+  viewer who stopped halfway, however long ago, may come back, so one such
+  viewer keeps the item unfinished. An item the media server marks as watched
+  (a manual "mark as watched" writes no play) counts as finished unless a
+  play says otherwise. Finishing only lowers P(watch): the route out (straight
+  to deletion, or Leaving Soon first) is still decided by the watch state, as
+  described under [Leaving Soon](#leaving-soon-nothing-unwatched-goes-without-a-warning-one-exception-see-known-limits).
 - **C_reacq**, the cost to download it again, is
   max(0.1, 1 + 0.3·log₁₀(size / 1 GB) + 2 / max(seeders, 1) + 5·[no usenet copy
   within retention]). The seeders and retention terms count only when Prowlarr
@@ -126,6 +144,71 @@ read adds one line to the status problems and counts as no imports, no queue, no
 claims, or no seeders and retention terms (see
 [Integrations](#integrations-by-identity--never-by-title) for what each is
 asked, and [deploy/README.md](../deploy/README.md#configure) to connect them).
+
+### Taste (EmbeddingGemma 2)
+
+Without it, every download nobody has opened looks the same to the hazard:
+"never played, N days on disk". Taste says how readily this household plays
+titles like it.
+
+1. **One vector per title.** The daemon builds a text from content metadata
+   only — Radarr/Sonarr and Plex: title, year, genres, overview, people,
+   studio or network, rating, language, runtime, franchise — and embeds it
+   with EmbeddingGemma 2's text encoder, run in-process on the CPU (a Rust
+   port on candle whose vectors match the reference ONNX export to a cosine
+   of 1.000000; a show's seasons share the show's vector). The text never
+   holds anything about the household's viewing, so the vector cannot leak an
+   outcome. Vectors are cached in `state/embeddings.json` and re-embedded only
+   when the text, model revision or dimension changes, within a daily budget
+   and two minutes per cycle. With Settings → Taste embeddings → Posters on,
+   the text also holds the title's upstream poster (`Poster: <|image|>` after
+   the title line): a candle port of the model's vision tower turns it into
+   up to 280 soft tokens the text encoder reads in that place, so one vector
+   describes words and artwork (reference parity: cosine 1.000000 on a PNG,
+   0.99985 or better on JPEGs). Poster vectors are a space of their own
+   (model id `…+posters`, recipe 2), so switching posters re-embeds every
+   title; a poster that cannot be used leaves the text alone, never a gap.
+   Setting it up:
+   [deploy/README.md](../deploy/README.md#taste-embeddings-embeddinggemma-2).
+2. **A nearest-neighbour classifier over the household's own outcomes.** The
+   panel (see [Accuracy](#accuracy-you-can-check)) records, for each title and
+   cut date, whether anything played it in the 90 days after, and who. For a
+   title nobody played, taste takes the 20 most similar titles (cosine
+   similarity) from other shows or films, weights each one's played share by
+   its similarity, adds 2 pseudo-neighbours at the overall played rate, and
+   reports the result as log-odds minus the overall log-odds: 0 means no
+   evidence, negative means "titles like this sit unplayed here".
+3. **Per viewer, warmest wins.** A household-wide share blurs its people: the
+   one person who watches comedies can play every one while the comedies sit
+   among a lot of horror nobody else touches. So taste is read for each
+   active viewer (a Plex account or Tautulli user with a play in the year
+   before the date asked about) from their own outcomes — a title counts as
+   played by them if they played it in the 90 days, over the cut dates they
+   were active at — against their own overall rate, and the household's taste
+   is the warmest viewer's: someone here would watch it. A viewer counts only
+   after playing at least 5 titles; when no active viewer has, the
+   household-wide outcomes speak as above. Viewers are not merged across
+   Plex and Tautulli: the same person seen by both is two viewers, which can
+   only repeat their taste, never outvote anyone's.
+4. **Leak-free.** A panel row at a cut date hears only outcomes whose 90 days
+   had closed by that date, never its own show's, from the viewers active
+   before that date. The daemon asks with the outcomes the adopted fit
+   learned from, household-wide and per viewer, stored with it in
+   `state/hazard.json`; a `hazard.json` from before per-viewer taste does not
+   load, and the daemon refits on its next cycle.
+5. **Gated like everything else.** Its prior weight is 0, so under the priors
+   it moves nothing. It enters P(watch) only through the full fit, and only
+   when that fit beats the priors out of fold. It speaks only for titles
+   nobody played; once a title has plays, they say more.
+6. **It says why.** Under an adopted fit, the plan reason of a never-played
+   title with a nonzero taste names its two nearest neighbours that went the
+   way the taste leans, titled from Radarr/Sonarr: `· like Hot Fuzz,
+   Paddington (played here)` for a warm one (played by the viewer who
+   speaks), `· like Hereditary, The Conjuring (unplayed here)` for a cold one
+   (played by nobody).
+
+Embedding switched off, a missing vector or an unread outcome record leaves
+taste at 0, the household's average: absence is never read as dislike.
 
 ### Who competes
 
@@ -250,6 +333,33 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
   of adding it to (see *A warning or nothing* and *Out of a delete collection
   at once* above).
 
+## Inflow: what is coming in that nobody is likely to watch
+
+The cheapest byte is the one never downloaded. Each cycle FLINCH lists, as
+advice in `status.inflow` and on the Overview card *Coming in, likely
+unwatched* (`crates/flinch-archive/src/inflow.rs`):
+
+- **Cold and unstarted**: a monitored, continuing Sonarr series of which no
+  season was ever started by anyone, whose taste reads cold (log-odds below
+  −0.5 against the household's played rate).
+- **Abandoned**: a monitored series somebody started, last played over 180
+  days ago, with a season not watched through or more still to air.
+- **Cold request**: a not-declined Seerr request for a title Radarr or Sonarr
+  already knows but has not downloaded (a movie without a file, a monitored
+  show nobody started) whose taste reads cold. The requester is named.
+
+Taste here is the classifier of *Taste (EmbeddingGemma 2)* asked with the
+adopted fit's outcomes, or, under the priors, with the household-wide record
+of the current library (a title is played if any part of it ever was). It
+is advice only and never feeds P(watch) from this path. Each suggestion
+carries the mean on-disk size of the show's seasons as GiB per future season
+and an action, e.g. "unmonitor future seasons in Sonarr". Fail-closed: a
+title without a vector, or with no closed outcome to compare, is never called
+cold; FLINCH never calls a write endpoint for any of this.
+
+Limits: a request's taste is the household's, not the requester's own;
+requests for titles the *arrs do not know yet are skipped (no vector).
+
 ## Deletions FLINCH did not make
 
 Files also leave through other doors: someone deletes a title in Radarr or
@@ -355,6 +465,9 @@ C_reacq the planner uses, first match wins:
   or regret ≥ 1.0.
 - **Downgrade** when P(watch) ≥ 0.15 and the file is at least 15 GiB: a
   compact release is assumed to free about 80% of it.
+- **Downgrade** a file over 25 GiB, or any 2160p movie, in a seldom-played
+  theme (below), unless it is pinned, or P(watch) < 0.15 and C_reacq ≤ 3 so
+  the last rule already makes it eligible for eviction.
 - **Keep** when C_reacq > 3: it would be hard to get back.
 - **Eligible for eviction** otherwise.
 
@@ -363,6 +476,30 @@ The advice is published only (`items.json` `advice`, and the counts in
 never writes a profile or moves an item between them. The companion config,
 [`deploy/recyclarr/recyclarr.flinch.yml`](../deploy/recyclarr/recyclarr.flinch.yml),
 defines a compact profile to downgrade into.
+
+### Themes: where the disk goes, and what nobody visits
+
+Once a day, and whenever a taste vector changes, the daemon clusters the
+vectors of every movie and show ([Taste](#taste-embeddinggemma-2)) with
+spherical k-means: cosine similarity, k ≈ √(n/2) clamped to 4–24, k-means++
+seeding from a fixed seed, ties to the lower index and at most 30 rounds, so
+the same vectors always give the same themes. Fewer than 16 titles with a
+vector make no themes. Each theme is named after the Radarr/Sonarr genres
+its members carry most often (the second genre only when a third of the
+members carry it); no language model is involved. Assignments are kept in
+`state/themes.json`; each item row carries its theme (`items.json` `theme`).
+
+Per theme, `status.json` `themes` publishes the bytes on disk, the titles
+(a show counts once), the share of those anyone played in the last 365 days
+(from the play log the cycle reads, a season counting its show's plays), and
+the bytes this cycle's plan evicts. A theme of at least 5 titles under 10%
+played is **seldom played**, and its large files get the downgrade advice
+above, with the theme named in the reason.
+
+Themes are advice and display only. They never touch regret, P(watch) or
+the plan. A title without a vector has no theme and is never in a seldom-played
+one, and when nothing in the library was played in the last year no theme is
+called seldom played: missing evidence is not read as disinterest.
 
 ## Accuracy you can check
 
@@ -380,18 +517,21 @@ scoring:
 - **Recalibrated priors.** ln λ = a + b·ln λ_prior: it keeps the priors'
   ranking and fits only how sure to be. It needs 40 rows and 2 of each
   outcome.
-- **Full fit.** It relearns all 5 parameters, pulled toward the hand-set
+- **Full fit.** It relearns all 7 parameters, pulled toward the hand-set
   priors as if by 25 pseudo-observations. It needs 120 rows and 12 of each
-  outcome.
+  outcome. Only the full fit can give taste a weight.
 
 Either also needs played outcomes from at least 2 titles, an out-of-fold AUC
 (the C-index of the binary outcome) of at least 0.60 and no more than 0.02
 behind the priors', and a Brier at least 0.005 better than the priors'. Of the
 candidates that clear that gate, the one with the lower log-loss is adopted
-and written to `state/hazard.json`; when a later fit falls short, the file is
-removed and the priors run again. `state/fit.json` holds the last fit's
-report: the candidate, its out-of-fold AUC, Brier and ECE beside the priors',
-and its parameters. The UI's **Watch model** card shows it.
+and written to `state/hazard.json`, together with the closed outcomes its
+taste was learned from; when a later fit falls short, the file is removed and
+the priors run again. `state/fit.json` holds the last fit's report: the
+candidate, its out-of-fold AUC, Brier and ECE beside the priors', and its
+parameters. The UI's **Watch model** card shows it. A `hazard.json` or
+`fit.json` written for another set of features does not load: the priors run
+and the daemon refits on its next cycle.
 
 ```bash
 flinch-fit --state-dir /state            # the same report, printed
@@ -414,6 +554,38 @@ P(watch), eviction safety, quality advice and decision in plain words, the
 watch model's standing, the Maintainerr sync with its warnings, deletions
 FLINCH did not make, evidence health, and a glossary for every term.
 
+**Storage by theme.** The Overview's theme card lists each
+[theme](#themes-where-the-disk-goes-and-what-nobody-visits) largest first:
+GiB on disk, titles, the share played in the last year and the GiB the plan
+would evict, with seldom-played themes marked. The Series and Movies tables
+filter by theme, and an item's details name its theme.
+
+**Search by meaning.** The Series and Movies search box has two modes.
+*Title* filters by name as you type. *Meaning* sends the words, on Enter, to
+`GET /api/search?q=…&kind=movie|season&limit=50` (behind the login like
+every API route), and the table shows the 50 titles whose description is
+closest, best first; a column header re-sorts them and *Sort by relevance*
+brings the ranking back. flinch-web embeds the query with the same
+EmbeddingGemma 2 encoder on the weights the daemon downloaded
+(`state/models/…`; flinch-web never downloads them), cuts it to the cached
+vectors' dimensions and scores each item by cosine against
+`state/embeddings.json`; a season scores as its show, and titles without a
+vector yet are counted but not listed. Text-and-poster vectors are searched
+like text-only ones: they sit in the same model's shared text and image
+space (the probe below measured text-only ones). The encoder is opened on
+the first search and kept, queries run one at a time off the async runtime,
+and a query is at most 200 characters. With no weights, no vectors, or
+vectors of another model revision the API answers 409 with what to switch
+on. The query carries the model's retrieval prompt
+`task: search result | query:` although the cached descriptions carry the
+classification prompt: on 16
+hand-labelled queries ("monster on a spaceship", "cooking competition",
+"dinosaurs", …) over 15 classification-prompt descriptions, the retrieval
+prompt ranked the intended title first 16 of 16 times at both 256 and 768
+dimensions, the classification prompt 15 and 14 (it put a nature
+documentary above Jurassic Park for "dinosaurs"), with narrower margins.
+Search reads; it never changes the plan.
+
 **Is it working?** The header says so on every tab: a green dot before
 "Last run …" when the last cycle succeeded on schedule, red "Overdue" when no
 cycle ran for twice the interval, red "Last run failed" with the error. Each
@@ -429,6 +601,7 @@ flowchart LR
         ARR["Radarr / Sonarr<br/>ids · files · disks · imports · queue"]
         PX["Plex + Tautulli<br/>GUIDs · history"]
         EXT["Seerr · Prowlarr · SABnzbd<br/>claims · availability"]
+        EMB["EmbeddingGemma 2<br/>in-process (candle)"]
     end
     subgraph DECIDE["decide"]
         ID["identity join<br/>(GUID)"] --> REG["regret<br/>P(watch) × C_reacq × A"]
@@ -437,6 +610,7 @@ flowchart LR
         EXC -->|pinned| KEEP["keep"]
         CAP["per-disk forecast<br/>B_target, recycle credit"] --> PLAN
         FIT["daily fit<br/>(out-of-fold gate)"] --> REG
+        TASTE["taste<br/>nearest titles' outcomes"] --> FIT
         REG --> QA["quality advice<br/>keep · downgrade · evict"]
     end
     subgraph OUT["act"]
@@ -448,6 +622,9 @@ flowchart LR
     PX --> ID
     PX --> FIT
     EXT --> REG
+    ARR --> EMB
+    PX --> EMB
+    EMB --> TASTE
     ARR --> CAP
     PLAN --> EP
     PLAN -->|dry run off| MX
@@ -460,17 +637,28 @@ decides what goes.
 
 ## Known limits
 
-One of these can delete without a warning:
+These can delete without a warning, in narrow cases:
 
-- A season whose watched episodes were deleted outside FLINCH (by hand, or
-  by Plex's "Delete episodes after playing") while its unwatched ones stay on
-  disk can read as completed. Plex's and Tautulli's play histories still
-  count the finished plays of the episodes that are gone, against the files
-  that are left, so every file looks watched. The season can then leave
-  through its delete collection with no Leaving Soon warning, unwatched
-  episodes included. Until a fix counts only the episodes on disk, keep
-  watched episodes on disk, or keep such a season with the keep tag on its
-  show or with a keep collection.
+- Plex's own item state (watched episodes over held episodes) can read a
+  season as completed when Plex still holds a watched episode that was deleted
+  from disk (its trash not emptied) and Sonarr has a new episode Plex has not
+  scanned yet: the two cancel out. Plex's and Tautulli's play histories no
+  longer have this flaw (see *Seasons count only episodes on disk* below).
+- Episodes are matched by number: Plex's and Tautulli's episode number
+  against Sonarr's. A season confirmed through TVDB episode ids whose
+  numbering differs between Plex and Sonarr could match the wrong episodes.
+
+**Seasons count only episodes on disk.** When a season on disk reads as
+completed from Plex's or Tautulli's play history, the daemon asks Sonarr which
+episode numbers have a file (`/api/v3/episode`, at most one read per series
+per cycle, only for such series). The season reads completed only when every
+episode on disk has a finished play: plays of episodes deleted outside FLINCH
+(by hand, or by Plex's "Delete episodes after playing") no longer count, and a
+play without an episode number never completes a season. When Sonarr cannot be
+read, or its answer is incomplete (an unreadable row, a file without an
+episode number, fewer numbers than files), the season reads 99% watched, not
+completed: it goes through Leaving Soon and is never deleted unannounced. The
+same numbers decide whether a season counts as finished for P(watch).
 
 One makes eviction less careful: a Seerr, Prowlarr or SABnzbd that is missing
 counts as no claim and no extra re-download cost, so items can look cheaper to

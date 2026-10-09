@@ -36,6 +36,9 @@ pub struct RuntimeSettings {
     pub keep_tag: String,
     pub capacity: crate::capacity::CapacityConfig,
     pub planner: crate::plan::PlannerConfig,
+    /// The in-process EmbeddingGemma 2 encoder behind the taste feature;
+    /// off until the operator switches it on.
+    pub embedding: crate::embedding::EmbeddingConfig,
 }
 
 impl Default for RuntimeSettings {
@@ -54,6 +57,7 @@ impl Default for RuntimeSettings {
             keep_tag: "flinch-keep".to_string(),
             capacity: crate::capacity::CapacityConfig::default(),
             planner: crate::plan::PlannerConfig::default(),
+            embedding: crate::embedding::EmbeddingConfig::default(),
         }
     }
 }
@@ -83,7 +87,8 @@ impl RuntimeSettings {
             return Err(SettingsError::Invalid("grace runs (grace_runs) must be between 1 and 20"));
         }
         self.capacity.validate().map_err(|error| SettingsError::Invalid(error.0))?;
-        self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))
+        self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.embedding.validate().map_err(|error| SettingsError::Invalid(error.0))
     }
 }
 
@@ -166,6 +171,7 @@ mod tests {
     #[case::target_above_emergency(|s: &mut RuntimeSettings| s.capacity.target_utilization = 0.96)]
     #[case::zero_quantum(|s: &mut RuntimeSettings| s.planner.quantum_mb = 0)]
     #[case::negative_weight(|s: &mut RuntimeSettings| { s.planner.user_weights.insert("ann".into(), -1.0); })]
+    #[case::embedding_dimensions_not_a_matryoshka_size(|s: &mut RuntimeSettings| s.embedding.dimensions = 300)]
     fn a_value_the_settings_page_would_refuse_is_invalid(#[case] break_it: fn(&mut RuntimeSettings)) {
         let mut settings = live();
         break_it(&mut settings);

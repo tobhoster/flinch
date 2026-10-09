@@ -71,6 +71,10 @@ pub struct FitItem {
     /// Days since it was added, as of now.
     pub age_days: f32,
     pub episodes_total: Option<u32>,
+    /// The season's episode numbers with a file, ascending, as the daemon last
+    /// read them; `None` when unknown. Applied at every cut: the panel has no
+    /// record of which episodes were on disk in the past.
+    pub episodes_on_disk: Option<Vec<u32>>,
     pub season_index: Option<u32>,
     pub show_title: Option<String>,
     /// Plays of this exact item, oldest first, finished or not.
@@ -124,6 +128,9 @@ pub struct FittedModel {
     pub kind: candidate::ModelKind,
     pub hazard: HazardModel,
     pub metrics: Metrics,
+    /// The closed outcomes taste was learned from: the daemon asks taste with
+    /// exactly these, so the coefficient and its input travel together.
+    pub outcomes: crate::taste::Record,
 }
 
 /// Out-of-fold scores of a candidate and of the priors on the same rows.
@@ -189,12 +196,12 @@ pub fn shortfall(kind: candidate::ModelKind, metrics: &Metrics) -> Option<String
     None
 }
 
-/// The adopted hazard, if one is on file and still clears the gate. Absence is
+/// The adopted fit, if one is on file and still clears the gate. Absence is
 /// the normal case and means the hand-set priors.
-pub fn load_model(state_dir: &std::path::Path) -> Option<HazardModel> {
+pub fn load_model(state_dir: &std::path::Path) -> Option<FittedModel> {
     let text = std::fs::read_to_string(state_dir.join(adopt::MODEL_FILE)).ok()?;
     let model: FittedModel = serde_json::from_str(&text).ok()?;
-    model.shortfall().is_none().then_some(model.hazard)
+    model.shortfall().is_none().then_some(model)
 }
 
 thread_local! {

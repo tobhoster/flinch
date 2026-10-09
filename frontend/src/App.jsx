@@ -227,6 +227,15 @@ function Connections({ status }) {
         : { state: 'down', why: 'history incomplete, not recording, or not kept for every user and library' }),
     });
   }
+  // Taste embeddings only once switched on; off, cached vectors still serve.
+  const emb = status.embedding;
+  if (emb?.configured) {
+    services.push({
+      name: 'Embeddings',
+      ...(emb.problem ? { state: 'down', why: emb.problem }
+        : { state: 'up', why: `${emb.with_vector} of ${emb.subjects} titles have a vector, ${emb.pending} to go, ${emb.budget_left} left today` }),
+    });
+  }
   return (
     <span className="inline-flex flex-wrap items-center text-xs text-fg-faint">
       {services.map((s, i) => (

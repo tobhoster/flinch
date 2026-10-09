@@ -35,6 +35,10 @@ pub struct ItemSnapshot {
     pub season_label: Option<String>,
     #[serde(default)]
     pub episodes: Option<u32>,
+    /// A season's episode numbers with a file, when the daemon read them: the
+    /// fitter counts past plays against these as the daemon does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episodes_on_disk: Option<Vec<u32>>,
     /// Days since the library added it.
     #[serde(default)]
     pub age_days: Option<f32>,
@@ -99,6 +103,10 @@ pub struct ItemSnapshot {
     /// `None` when not handed over, or when the collection acts on its next run.
     #[serde(default)]
     pub leaves_at: Option<u64>,
+    /// The theme of its movie or show ([`crate::themes`]); `None` without a
+    /// vector, before themes exist, and in an item file written before.
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 /// Everything /api/status reports.
@@ -179,6 +187,19 @@ pub struct StatusSnapshot {
     /// newest first, with whether each will download again.
     #[serde(default)]
     pub outside_deletions: Vec<crate::outside::OutsideDeletion>,
+    /// The taste vectors: how many titles have one, what this cycle embedded,
+    /// and why it embedded less. `None` in a status file written before.
+    #[serde(default)]
+    pub embedding: Option<crate::embedding::EmbeddingStatus>,
+    /// Incoming storage nobody is likely to watch, advice only
+    /// ([`crate::inflow`]). Empty in a status file written before.
+    #[serde(default)]
+    pub inflow: Vec<crate::inflow::Suggestion>,
+    /// Storage by theme: bytes, titles, played share and planned evictions
+    /// ([`crate::themes`]). `None` before themes exist, and in a status file
+    /// written before.
+    #[serde(default)]
+    pub themes: Option<crate::themes::ThemesStatus>,
 }
 
 /// Quality advice across the library, for the status page.

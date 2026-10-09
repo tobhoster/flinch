@@ -25,7 +25,7 @@ pub(crate) fn state_with(tmp: &Path, auth: auth::Auth) -> AppState {
         r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#,
     )
     .unwrap();
-    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth) }
+    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth), search: Arc::new(search::Search::new()) }
 }
 
 /// A request with these headers, as `(name, value)` pairs.

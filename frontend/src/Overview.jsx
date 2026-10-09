@@ -4,6 +4,8 @@ import RecentRuns from './Progress.jsx';
 import Capacity from './Capacity.jsx';
 import MaintainerrSync from './Maintainerr.jsx';
 import OutsideDeletions from './OutsideDeletions.jsx';
+import Inflow from './Inflow.jsx';
+import Themes from './Themes.jsx';
 import ModelCard from './ModelCard.jsx';
 import { GiB, SectionTitle, ago } from './ui.jsx';
 import { Explain, GlossaryCard } from './Explain.jsx';
@@ -145,6 +147,8 @@ export default function Overview({ status, items, history, loading }) {
           <RecentRuns history={history} target={s.capacity?.target_utilization} />
           <MaintainerrSync sync={s.sync} dryRun={s.dry_run} />
           <OutsideDeletions items={s.outside_deletions} />
+          <Inflow items={s.inflow} />
+          <Themes themes={s.themes} />
           {s.quality && (
             <p className="text-fg-muted">
               Quality advice: <span className="num text-fg">{s.quality.keep ?? 0}</span> keep

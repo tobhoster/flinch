@@ -36,6 +36,9 @@ pub(super) struct PlexFetch {
     /// Every movie, show and season ratingKey the sections listed: what Plex
     /// holds, as proof an item is gone only when `items_complete`.
     pub listed: HashSet<String>,
+    /// Every movie and show row by ratingKey, for their content metadata
+    /// (the taste text). Joined to cards through the GUID resolution only.
+    pub content: std::collections::HashMap<String, PlexMetadata>,
 }
 
 struct PlexClient<'a> {
@@ -226,15 +229,10 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
     );
     let listed: HashSet<String> =
         movies.iter().chain(&shows).chain(&seasons).map(|row| row.rating_key.clone()).filter(|key| !key.is_empty()).collect();
-    Ok(PlexFetch {
-        library: PlexLibrary::new(&movies, &shows, &seasons),
-        history,
-        items_complete,
-        history_complete,
-        multi_account,
-        keep_keys,
-        listed,
-    })
+    let library = PlexLibrary::new(&movies, &shows, &seasons);
+    let content =
+        movies.into_iter().chain(shows).filter(|row| !row.rating_key.is_empty()).map(|row| (row.rating_key.clone(), row)).collect();
+    Ok(PlexFetch { library, history, items_complete, history_complete, multi_account, keep_keys, listed, content })
 }
 
 /// A show's episodes with their TVDB ids (`allLeaves`), for confirming a season

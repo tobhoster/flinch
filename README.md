@@ -39,6 +39,27 @@
   past ("given what was known then, did anyone play this within 90 days?") and
   adopts a fitted P(watch) only when it beats the hand-set priors on titles it
   never saw.
+- **Treats finished as finished.** A title everyone who started it has
+  finished counts as cheap to lose, however recently it ended. A season counts
+  as finished only when every episode still on disk was watched, so episodes
+  deleted outside FLINCH can't make the ones left look watched.
+- **Learns what you'd watch (optional).** With
+  [EmbeddingGemma 2](deploy/README.md#taste-embeddings-embeddinggemma-2)
+  switched on (it runs inside FLINCH on the CPU, a pure-Rust candle port, no
+  model server), titles nobody opened yet are compared with what each active
+  viewer actually played, and the warmest viewer speaks for the household.
+  Reasons name the look-alikes ("like *Hereditary*, *The Conjuring*, unplayed
+  here"). The signal only counts once the daily fit shows it predicts better.
+  Posters can join the description through the model's vision tower.
+- **Shows where the disk goes by theme.** Titles are grouped into themes from
+  their embeddings, each with its size and how much of it was played this
+  year; large titles in themes nobody visits get downgrade advice.
+- **Flags what's coming in that nobody will watch.** Monitored shows nobody
+  started that read cold, abandoned shows still monitored, and cold Seerr
+  requests, with the GiB per season you'd save by unmonitoring them. Advice
+  only: FLINCH never changes Sonarr or Seerr.
+- **Search by meaning.** The Movies and Series tables find titles by
+  description ("dinosaurs", "slow-burn horror"), not just by name.
 - **Warns before anything unwatched goes** (one exception: see
   [Known limits](docs/how-it-works.md#known-limits)). A title nobody finished
   goes to a *Leaving Soon* row on the Plex home screen first. Play it and

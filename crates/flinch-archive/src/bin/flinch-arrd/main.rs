@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+mod embeddings;
 mod evidence;
 mod fetch;
 mod handoff;
@@ -26,6 +27,7 @@ mod signals;
 mod sink;
 mod snapshot;
 mod storage;
+mod themes;
 
 use fetch::{fetch_disks, fetch_inventory, Fetched};
 use sink::Sink;
@@ -237,7 +239,11 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         play_keys,
         plex_keeps,
         plex_listed,
-    } = evidence::gather(args, http, settings, &movies, &series, &cards, cycle_now).await?;
+        plex_content,
+    } = evidence::gather(args, http, settings, &movies, &series, &mut cards, cycle_now).await?;
+    // Taste vectors of every movie and show, refreshed within today's budget.
+    let library = embeddings::Library { movies: &movies, series: &series, plex_content: &plex_content, plex_ids: &plex_ids };
+    let embeddings::Refresh { vectors, status: embedding } = embeddings::refresh(&settings.embedding, library, cycle_now).await;
 
     // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
     let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
@@ -293,7 +299,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     let joins: HashMap<&str, flinch_archive::plex::PlayJoin> =
         watch_targets.iter().map(|target| (target.id.as_str(), resolution.join(target))).collect();
     // P(watch) runs on the daily fit when one beat the priors, else the priors.
-    let (hazard, model_label) = model::hazard(&state_dir(), cycle_now);
+    let running = model::hazard(&state_dir(), cycle_now);
 
     // XC-03: deleting on the strength of *absent* plays needs every watch
     // source read completely, and a Leaving Soon collection to announce in.
@@ -322,6 +328,21 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         .collect();
     let in_plex: HashSet<String> = plex_ids.keys().cloned().collect();
     let handed: HashSet<String> = owned.scheduled.keys().cloned().collect();
+    // Taste has weight only in an adopted fit, and is asked with the outcomes
+    // that fit learned from; under the priors it would move nothing.
+    let taste = running.outcomes.as_ref().map(|record| flinch_archive::taste::read_cards(&cards, &vectors, record)).unwrap_or_default();
+    // Inflow advice asks taste too: the adopted fit's outcomes, else the household's.
+    let household = flinch_archive::inflow::household_record(&cards, cycle_now);
+    let inflow = flinch_archive::inflow::suggest(&flinch_archive::inflow::Inputs {
+        cards: &cards,
+        series: &series,
+        movies: &movies,
+        requests: &signals.requests,
+        vectors: &vectors,
+        record: running.outcomes.as_ref().unwrap_or(&household),
+    });
+    // Themes of the taste vectors: storage by theme, and downgrade advice in cold ones.
+    let themed = themes::refresh(&vectors, (&movies, &series), &cards, &plays, cycle_now);
     let candidates = candidates::build(
         &candidates::Library {
             cards: &cards,
@@ -333,11 +354,13 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             in_plex: &in_plex,
             handed: &handed,
             signals: &signals,
+            taste: &taste,
+            cold_themes: &themed.cold,
             never_played,
             now: cycle_now,
         },
         &settings.planner,
-        &hazard,
+        &running.hazard,
     );
     let report = reconcile(&candidates, &governance.forecasts, &settings.planner).context("planning")?;
     let plan = &report.plan;
@@ -408,6 +431,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         report: &report,
         plex_ids: &plex_ids,
         play_keys: &play_keys,
+        themes: &themed.themes,
     });
     if let Err(error) = ledger.write(&storage::ledger_path()) {
         eprintln!("[flinch-arrd] evictions.json write failed: {error}");
@@ -422,12 +446,15 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             handed: owned.scheduled.keys().filter_map(|id| by_id.get(id.as_str()).map(|item| (id.as_str(), item.bytes))).collect(),
             dry_run,
             interval_s: (!args.once).then_some(interval_s),
-            model: model_label,
+            model: running.label,
             shadow: (shadow_count as u64, gib(shadow_bytes) as f32),
             health,
             never_played_hold,
             never_played_requested: settings.unwatched_reclaim_enabled,
             outside: history::outside(&removals, &ledger, (&movies, &series), now),
+            embedding,
+            inflow,
+            themes: themes::status(&themed, &cards, &plays, plan, cycle_now),
         },
         &items,
     )

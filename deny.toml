@@ -22,6 +22,8 @@ allow = [
     "Unicode-3.0",
     # webpki-roots: the Mozilla root certificates reqwest trusts.
     "CDLA-Permissive-2.0",
+    # foldhash: hashbrown's hasher, reached through candle's safetensors.
+    "Zlib",
 ]
 confidence-threshold = 0.93
 

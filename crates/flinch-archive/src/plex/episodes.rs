@@ -43,33 +43,67 @@ impl PlexEpisodes {
 }
 
 /// A series' episodes as Sonarr numbers them, per season: every episode, and
-/// the ones with a file.
+/// the ones with a file — by TVDB id for confirming seasons, and by episode
+/// number for counting plays against what is on disk.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SonarrEpisodes {
     numbered: Seasons,
     with_files: Seasons,
+    /// Season → episode numbers with a file.
+    numbers_on_disk: Seasons,
+    /// A row did not parse, or had a file but no episode number: the numbers
+    /// on disk may be missing one, so none of them are trusted.
+    numbers_incomplete: bool,
 }
 
 impl SonarrEpisodes {
     /// From `/api/v3/episode?seriesId=` rows. A row that does not parse, or
-    /// whose TVDB id is 0 (unknown to TVDB), is skipped.
+    /// whose TVDB id is 0 (unknown to TVDB), says nothing about TVDB ids.
     pub fn from_rows(rows: &[serde_json::Value]) -> Self {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Row {
             season_number: u32,
-            tvdb_id: u32,
+            #[serde(default)]
+            episode_number: Option<u32>,
+            #[serde(default)]
+            tvdb_id: Option<u32>,
             #[serde(default)]
             has_file: bool,
         }
         let mut episodes = Self::default();
-        for row in rows.iter().filter_map(|row| Row::deserialize(row).ok()).filter(|row| row.tvdb_id > 0) {
-            episodes.numbered.entry(row.season_number).or_default().insert(row.tvdb_id);
+        for row in rows {
+            let Ok(row) = Row::deserialize(row) else {
+                episodes.numbers_incomplete = true;
+                continue;
+            };
             if row.has_file {
-                episodes.with_files.entry(row.season_number).or_default().insert(row.tvdb_id);
+                match row.episode_number {
+                    Some(number) => {
+                        episodes.numbers_on_disk.entry(row.season_number).or_default().insert(number);
+                    }
+                    None => episodes.numbers_incomplete = true,
+                }
+            }
+            let Some(tvdb_id) = row.tvdb_id.filter(|id| *id > 0) else { continue };
+            episodes.numbered.entry(row.season_number).or_default().insert(tvdb_id);
+            if row.has_file {
+                episodes.with_files.entry(row.season_number).or_default().insert(tvdb_id);
             }
         }
         episodes
+    }
+
+    /// Episode numbers of `season` with a file, ascending; `files` is Sonarr's
+    /// file count for it. `None` unless every row read and the numbers cover at
+    /// least `files` (a file holds one episode or more): a number missing here
+    /// would let the plays of the others complete the season.
+    pub fn on_disk(&self, season: u32, files: u32) -> Option<Vec<u32>> {
+        if self.numbers_incomplete {
+            return None;
+        }
+        let numbers: Vec<u32> = self.numbers_on_disk.get(&season)?.iter().copied().collect();
+        (numbers.len() >= files as usize && files > 0).then_some(numbers)
     }
 }
 

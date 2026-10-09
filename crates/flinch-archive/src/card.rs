@@ -35,6 +35,11 @@ pub struct ArchiveCard {
     pub episodes_total: Option<u32>,
     #[serde(default)]
     pub episodes_watched: Option<u32>,
+    /// Episode numbers with a file, ascending, once Sonarr was asked; `None`
+    /// when unknown. Plays of episodes not in it count for nothing: a deleted
+    /// episode's play must not make the files that are left read as watched.
+    #[serde(default)]
+    pub episodes_on_disk: Option<Vec<u32>>,
 
     // Movie-only
     #[serde(default)]

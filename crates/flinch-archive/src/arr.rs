@@ -78,6 +78,21 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// A language as the *arrs name it (`{"id": 1, "name": "English"}`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ArrLanguage {
+    #[serde(default)]
+    pub name: String,
+}
+
+/// The franchise Radarr files a movie under. Radarr 5 names it `title`;
+/// older releases named it `name`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ArrCollection {
+    #[serde(default, alias = "name")]
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrMovie {
@@ -119,6 +134,24 @@ pub struct ArrMovie {
     /// [`crate::presence`]); empty when there is none.
     #[serde(skip)]
     pub on_disk: Vec<crate::presence::Span>,
+    /// Content metadata for the taste text ([`crate::embedding::text`]):
+    /// optional and tolerant, an odd value reads as absent and never fails
+    /// the row.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub overview: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub genres: Vec<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub certification: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub studio: Option<String>,
+    /// Minutes.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub runtime: Option<u32>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub original_language: Option<ArrLanguage>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub collection: Option<ArrCollection>,
 }
 
 /// Sonarr 4.x nests per-season statistics under `statistics` (verified against
@@ -193,6 +226,20 @@ pub struct ArrSeries {
     /// Carries the operator's keep tag (see [`ArrMovie::keep`]).
     #[serde(skip)]
     pub keep: bool,
+    /// Content metadata for the taste text (see [`ArrMovie::overview`]).
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub overview: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub genres: Vec<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub certification: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub network: Option<String>,
+    /// Minutes per episode.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub runtime: Option<u32>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub original_language: Option<ArrLanguage>,
 }
 
 /// A catalogue id the *arrs report as `0` or `""` when unknown is no id.
@@ -310,6 +357,7 @@ impl ArrMovie {
             season_index: None,
             episodes_total: None,
             episodes_watched: None,
+            episodes_on_disk: None,
             is_watched: None,
             movie_year: self.year,
             show_title: None,
@@ -355,6 +403,9 @@ impl ArrSeries {
                 // reading as completed.
                 episodes_total: Some(stats.episode_file_count),
                 episodes_watched: None,
+                // Episode numbers need a per-series read; the daemon fills
+                // them for seasons whose plays could read as complete.
+                episodes_on_disk: None,
                 is_watched: None,
                 movie_year: None,
                 show_title: Some(self.title.clone()),

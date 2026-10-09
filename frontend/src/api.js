@@ -115,6 +115,19 @@ export function loadItems() {
 export function loadHistory() {
   return getJson('/api/history').then(list).catch(() => []);
 }
+
+/**
+ * Items of `kind` ranked by meaning: `{ results: [{ id, score, … }], unranked }`,
+ * best first. Rejects with the server's reason, which says what to switch on
+ * when the model or the title vectors are missing.
+ */
+export async function searchItems(q, kind, limit, signal) {
+  const params = new URLSearchParams({ q, kind, limit: String(limit) });
+  const res = await request(`/api/search?${params}`, { headers: { Accept: 'application/json' }, signal });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
+}
+
 export async function triggerRun() {
   const res = await request('/api/run', { method: 'POST' });
   return res.ok;
