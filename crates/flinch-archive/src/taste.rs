@@ -25,7 +25,13 @@
 //! Leak-freedom: a panel row asks with the outcomes whose window had closed by
 //! its own cut (`cut + horizon <= as_of`), never with its own show's, and with
 //! the viewers active before that cut. The daemon asks with the outcomes the
-//! adopted fit was made from, which travel with it in `hazard.json`.
+//! adopted fit was made from, which travel with it in `hazard.json`. With a
+//! half-life set ([`decay`]), each outcome is weighted by its age at the
+//! record's own date, identically in both.
+
+pub mod decay;
+
+pub use decay::{Decay, TasteConfig};
 
 use crate::card::ArchiveCard;
 use crate::embedding::{subject_of, VectorStore};
@@ -54,21 +60,24 @@ pub const MIN_VIEWER_TITLES: usize = 5;
 /// Neighbours an explanation names.
 const NAMED: usize = 2;
 
-/// Closed outcomes: rows, and rows played within their horizon.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Closed outcomes: rows, and rows played within their horizon, each weighted
+/// by its [`Decay`] (1 when recency weighting is off, so these are counts).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Outcomes {
-    pub played: u32,
-    pub total: u32,
+    pub played: f64,
+    pub total: f64,
 }
 
 impl Outcomes {
-    fn add(&mut self, played: bool) {
-        self.played += u32::from(played);
-        self.total += 1;
+    fn add(&mut self, played: bool, weight: f64) {
+        if played {
+            self.played += weight;
+        }
+        self.total += weight;
     }
 
     fn rate(self) -> Option<f64> {
-        (self.total > 0).then(|| f64::from(self.played) / f64::from(self.total))
+        (self.total > 0.0).then(|| self.played / self.total)
     }
 }
 
@@ -81,20 +90,20 @@ pub struct Tally {
 }
 
 impl Tally {
-    fn add(&mut self, subject: &str, played: bool) {
-        self.overall.add(played);
+    fn add(&mut self, subject: &str, played: bool, weight: f64) {
+        self.overall.add(played, weight);
         match self.subjects.get_mut(subject) {
-            Some(outcomes) => outcomes.add(played),
+            Some(outcomes) => outcomes.add(played, weight),
             None => {
                 let mut outcomes = Outcomes::default();
-                outcomes.add(played);
+                outcomes.add(played, weight);
                 self.subjects.insert(subject.to_string(), outcomes);
             }
         }
     }
 
     fn titles_played(&self) -> usize {
-        self.subjects.values().filter(|outcomes| outcomes.played > 0).count()
+        self.subjects.values().filter(|outcomes| outcomes.played > 0.0).count()
     }
 }
 
@@ -112,19 +121,25 @@ pub struct Record {
 }
 
 impl Record {
-    /// Count every panel row whose horizon had closed by `as_of`.
-    pub fn as_of(dataset: &[Example], activity: &Activity, horizon_secs: u64, as_of: u64) -> Self {
+    /// Count every panel row whose horizon had closed by `as_of`, each
+    /// weighted by `decay` for its age at `as_of`.
+    pub fn as_of(dataset: &[Example], activity: &Activity, horizon_secs: u64, as_of: u64, decay: Decay) -> Self {
         let present = activity.present_at(as_of);
         let mut household = Tally::default();
         let mut viewers = vec![Tally::default(); present.len()];
         let mut active_by_cut: HashMap<u64, Vec<bool>> = HashMap::new();
-        for row in dataset.iter().filter(|row| row.cut_unix.saturating_add(horizon_secs) <= as_of) {
+        for row in dataset.iter() {
+            let closed = row.cut_unix.saturating_add(horizon_secs);
+            if closed > as_of {
+                continue;
+            }
+            let weight = decay.weight(closed, as_of);
             let subject = subject_of(&row.item_id);
-            household.add(subject, row.label >= 0.5);
+            household.add(subject, row.label >= 0.5, weight);
             let active =
                 active_by_cut.entry(row.cut_unix).or_insert_with(|| present.iter().map(|member| member.active_at(row.cut_unix)).collect());
             for ((member, tally), _) in present.iter().zip(viewers.iter_mut()).zip(active.iter()).filter(|(_, active)| **active) {
-                tally.add(subject, row.played_by.contains(&member.viewer));
+                tally.add(subject, row.played_by.contains(&member.viewer), weight);
             }
         }
         let viewers = present
@@ -308,7 +323,7 @@ impl Shortlist<'_> {
         let played = taste > 0.0;
         let agrees = |subject: &str| {
             let outcomes = if played { tally.subjects.get(subject) } else { record.household.subjects.get(subject) };
-            outcomes.is_some_and(|outcomes| (outcomes.played > 0) == played)
+            outcomes.is_some_and(|outcomes| (outcomes.played > 0.0) == played)
         };
         let subjects: Vec<String> =
             voters(&self.0, tally).map(|(subject, ..)| subject).filter(|subject| agrees(subject)).map(str::to_string).collect();
@@ -323,14 +338,15 @@ fn voters<'a>(nearest: &'a [(&'a str, f32)], tally: &'a Tally) -> impl Iterator<
 }
 
 /// Fill the taste of every never-played panel row, each with the outcomes
-/// closed by its own cut. A store without vectors leaves every row at 0.
-pub fn fill(dataset: &mut [Example], vectors: &VectorStore, activity: &Activity, horizon_secs: u64) {
+/// closed by its own cut, weighted by `decay` as of that cut. A store without
+/// vectors leaves every row at 0.
+pub fn fill(dataset: &mut [Example], vectors: &VectorStore, activity: &Activity, horizon_secs: u64, decay: Decay) {
     if vectors.is_empty() {
         return;
     }
     let mut records: BTreeMap<u64, Record> = BTreeMap::new();
     for row in dataset.iter().filter(|row| row.features.never_played) {
-        records.entry(row.cut_unix).or_insert_with(|| Record::as_of(dataset, activity, horizon_secs, row.cut_unix));
+        records.entry(row.cut_unix).or_insert_with(|| Record::as_of(dataset, activity, horizon_secs, row.cut_unix, decay));
     }
     let subjects: Vec<String> = dataset.iter().map(|row| subject_of(&row.item_id).to_string()).collect();
     let pool = Pool::new(vectors, subjects.iter().map(String::as_str));

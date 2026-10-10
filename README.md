@@ -50,7 +50,8 @@ it would make, and sends nothing.
 - **Treats finished as finished.** A title everyone who started it has
   finished is cheap to lose, however recently it ended. A season counts as
   finished only when every episode still on disk was watched.
-- **Learns what you'd watch.** EmbeddingGemma 2 runs inside FLINCH on the CPU
+- **Learns what you'd watch.** EmbeddingGemma 2 — or the small bge-small or
+  MiniLM encoders (MiniLM runs in ~110 MB) — runs inside FLINCH on the CPU
   (a pure-Rust candle port, no model server). Titles nobody opened yet are
   compared with what each active viewer actually played, and reasons name the
   look-alikes ("like *Hereditary*, *The Conjuring*, unplayed here").

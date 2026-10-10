@@ -174,6 +174,16 @@ titles like it.
    title; a poster that cannot be used leaves the text alone, never a gap.
    Setting it up:
    [deploy/README.md](../deploy/README.md#taste-embeddings-embeddinggemma-2).
+
+   **Smaller models.** For hosts that cannot spare EmbeddingGemma 2's ~650
+   MB, Settings → Taste embeddings → Model offers two small BERT sentence
+   encoders run by candle's BERT port: `BAAI/bge-small-en-v1.5` (CLS pooling)
+   and `sentence-transformers/all-MiniLM-L6-v2` (mean pooling), each 384-d
+   (the Dimensions setting is Gemma's alone), L2-normalised, fed the same
+   description without Gemma's `task: classification | query: ` prompt and
+   cut to 256 tokens. Posters need Gemma. The model id keys the vector cache,
+   so switching models re-embeds every title; everything downstream —
+   classifier, themes, inflow, search — is the same.
 2. **A nearest-neighbour classifier over the household's own outcomes.** The
    panel (see [Accuracy](#accuracy-you-can-check)) records, for each title and
    cut date, whether anything played it in the 90 days after, and who. For a
@@ -200,11 +210,19 @@ titles like it.
    learned from, household-wide and per viewer, stored with it in
    `state/hazard.json`; a `hazard.json` from before per-viewer taste does not
    load, and the daemon refits on its next cycle.
-5. **Gated like everything else.** Its prior weight is 0, so under the priors
+5. **Recent outcomes may weigh more.** With Settings → Taste embeddings →
+   Taste half-life set (`taste.half_life_days`, 7–3650; 0, the default, is
+   off), each closed outcome counts `exp(−age / τ)` instead of 1, τ =
+   half-life / ln 2, its age measured from when its 90 days closed to the
+   date the record is asked at. The same weights are applied to each panel
+   row's own record and to the daemon's, so the fit learns exactly what the
+   daemon will ask with; an outcome closed after a cut still never reaches
+   it. A changed half-life takes effect at the next daily refit.
+6. **Gated like everything else.** Its prior weight is 0, so under the priors
    it moves nothing. It enters P(watch) only through the full fit, and only
    when that fit beats the priors out of fold. It speaks only for titles
    nobody played; once a title has plays, they say more.
-6. **It says why.** Under an adopted fit, the plan reason of a never-played
+7. **It says why.** Under an adopted fit, the plan reason of a never-played
    title with a nonzero taste names its two nearest neighbours that went the
    way the taste leans, titled from Radarr/Sonarr: `· like Hot Fuzz,
    Paddington (played here)` for a warm one (played by the viewer who
