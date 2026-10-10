@@ -1,25 +1,37 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, LogOut, Play } from 'lucide-react';
 import { Locked, loadSession, loadStatus, loadItems, loadHistory, logOut, onLocked, triggerRun } from './api.js';
 import { Dot, Tabs, ago, every } from './ui.jsx';
 import Overview from './Overview.jsx';
 import MediaTable from './MediaTable.jsx';
 import Settings from './Settings.jsx';
+import QualityProfiles from './QualityProfiles.jsx';
 import Login from './Login.jsx';
+import { parseArrRef } from './arrRef.js';
 
-const TABS = [['overview', 'Overview'], ['series', 'Series'], ['movies', 'Movies'], ['settings', 'Settings']];
+const TABS = [['overview', 'Overview'], ['series', 'Series'], ['movies', 'Movies'], ['quality', 'Quality profiles'], ['settings', 'Settings']];
+
+// A notification's Keep link opens FLINCH at `?item=<card id>`: the item's tab
+// (movies are radarr-… or radarr@4k-…, seasons sonarr-…), with its detail open.
+const LINKED = new URLSearchParams(window.location.search).get('item');
+const LINKED_APP = parseArrRef(LINKED)?.app;
+const LINKED_TAB = LINKED_APP === 'radarr' ? 'movies' : LINKED_APP === 'sonarr' ? 'series' : 'overview';
 
 export default function App() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(LINKED_TAB);
   const [status, setStatus] = useState(null);
   const [items, setItems] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  // null while the API accepts us; `{ loginConfigured, reason, over }` once it
-  // wants a login. `over` is a session that ended mid-use: the login shows over
-  // the dashboard, which stays mounted, so an unsaved Settings form survives.
+  // null while the API accepts us; `{ loginConfigured, sso, reason, over }`
+  // once it wants a login. `over` is a session that ended mid-use: the login
+  // shows over the dashboard, which stays mounted, so an unsaved Settings form
+  // survives.
   const [locked, setLocked] = useState(null);
+  // The ways in the server offers, as /api/session last said: what the login
+  // shows after Log out.
+  const ways = useRef({ loginConfigured: true, sso: null });
   // False until the server said whether this browser has a session.
   const [checked, setChecked] = useState(false);
 
@@ -32,6 +44,7 @@ export default function App() {
   // sends three: the first 401 decides, and a Log out already under way wins.
   useEffect(() => onLocked((err) => setLocked((prev) => prev ?? {
     loginConfigured: err.loginConfigured,
+    sso: err.sso,
     reason: err.message,
     over: true,
   })), []);
@@ -41,7 +54,8 @@ export default function App() {
   useEffect(() => {
     loadSession()
       .then((session) => {
-        if (!session.authenticated) setLocked({ loginConfigured: session.login_configured, reason: '', over: false });
+        ways.current = { loginConfigured: session.login_configured, sso: session.sso || null };
+        if (!session.authenticated) setLocked({ ...ways.current, reason: '', over: false });
       })
       .catch(() => { /* No answer: the first poll's 401, if any, shows the login. */ })
       .finally(() => setChecked(true));
@@ -65,7 +79,7 @@ export default function App() {
       // flinch-web restarts. The login is shown either way.
     }
     setStatus(null); setItems([]); setHistory([]); setLoading(true);
-    setLocked({ loginConfigured: true, reason: '', over: false });
+    setLocked({ ...ways.current, reason: '', over: false });
   };
 
   const onTrigger = async () => {
@@ -84,7 +98,7 @@ export default function App() {
   };
 
   if (!checked) return <p className="px-4 py-12 text-center text-xs text-fg-muted">Loading…</p>;
-  if (locked && !locked.over) return <Login loginConfigured={locked.loginConfigured} onLogin={onLogin} />;
+  if (locked && !locked.over) return <Login loginConfigured={locked.loginConfigured} sso={locked.sso} onLogin={onLogin} />;
 
   return (
     <>
@@ -120,15 +134,16 @@ export default function App() {
 
         <main className="pt-4">
           {tab === 'overview' && <Overview status={status} items={items} history={history} loading={loading} />}
-          {tab === 'series' && <MediaTable items={items} kind="season" />}
-          {tab === 'movies' && <MediaTable items={items} kind="movie" />}
+          {tab === 'series' && <MediaTable items={items} kind="season" focus={LINKED} instances={status?.arr_instances} />}
+          {tab === 'movies' && <MediaTable items={items} kind="movie" focus={LINKED} instances={status?.arr_instances} />}
+          {tab === 'quality' && <QualityProfiles />}
           {tab === 'settings' && <Settings status={status} />}
         </main>
       </div>
       {/* Above everything the dashboard can open: a Sheet, an explainer (z-[60]). */}
       {locked && (
         <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-950/95">
-          <Login loginConfigured={locked.loginConfigured} reason={locked.reason} onLogin={onLogin} />
+          <Login loginConfigured={locked.loginConfigured} sso={locked.sso} reason={locked.reason} onLogin={onLogin} />
         </div>
       )}
     </>
@@ -176,8 +191,8 @@ function StatusLine({ status, loading }) {
       {' · '}{every(status.interval_s) ?? 'manual only'}
       {' · '}
       {status.dry_run
-        ? <span title="Nothing is sent to Maintainerr">Dry run</span>
-        : <span className="text-state-bad" title="Picked items are handed to Maintainerr for deletion">Live</span>}
+        ? <span title={status.native ? 'Every write is printed, none is sent' : 'Nothing is sent to Maintainerr'}>Dry run</span>
+        : <span className="text-state-bad" title={status.native ? 'FLINCH deletes picked items itself' : 'Picked items are handed to Maintainerr for deletion'}>Live</span>}
     </span>
   );
 }
@@ -213,7 +228,8 @@ function Connections({ status }) {
     { name: 'Sonarr', ...arrHealth(status.seasons, 'season', 'seasons') },
     {
       name: 'Maintainerr',
-      ...(!sync ? { state: 'unknown', why: NOT_REPORTED }
+      ...(status.native ? { state: 'unknown', why: 'not used: FLINCH deletes itself (native executor)' }
+        : !sync ? { state: 'unknown', why: NOT_REPORTED }
         : sync.error ? { state: 'down', why: sync.error }
           : { state: 'up', why: sync.version ? `v${sync.version.replace(/^v/, '')}` : 'read' }),
     },

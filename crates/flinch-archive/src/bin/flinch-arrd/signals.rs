@@ -1,5 +1,5 @@
-//! The cycle's external signals ([`flinch_archive::signals`]): Radarr and
-//! Sonarr imports (read at most every six hours, cached in `arr-imports.json`)
+//! The cycle's external signals ([`flinch_archive::signals`]): every Radarr
+//! and Sonarr instance's imports (read at most every six hours, cached in `arr-imports.json`)
 //! and queues, Seerr requests and watchlists, and per-card availability from
 //! Prowlarr (a budgeted trickle of searches, cached in `releases.json`)
 //! judged against SABnzbd's retention. Every source is best-effort: one that
@@ -10,16 +10,15 @@ use super::fetch::fetch_json;
 use super::Args;
 use anyhow::{Context, Result};
 use flinch_archive::arr::history::HistoryPage;
-use flinch_archive::capacity::App;
+use flinch_archive::arr::instances::Connection;
 use flinch_archive::signals::arr::{self, ImportCache, ImportRead};
 use flinch_archive::signals::release::{self, ReleaseCache, Searched};
 use flinch_archive::signals::{seerr, Queued, Signals, Watchlisted};
 use flinch_archive::ArchiveCard;
 use std::path::Path;
 
-const APPS: [App; 2] = [App::Radarr, App::Sonarr];
 const QUEUE_PAGE_SIZE: usize = 500;
-/// Queue pages read per app before the rest is left out.
+/// Queue pages read per instance before the rest is left out.
 const QUEUE_PAGE_CAP: usize = 20;
 /// Seerr request and user pages read before the rest is left out.
 const SEERR_PAGE_CAP: usize = 50;
@@ -31,11 +30,11 @@ pub(super) async fn gather(http: &reqwest::Client, args: &Args, cards: &[Archive
     let mut signals = Signals::default();
     let state = super::state_dir();
     imports(http, args, &state.join("arr-imports.json"), now, &mut signals).await;
-    for app in APPS {
-        match queue(http, args, app).await {
+    for arr in &args.arrs {
+        match queue(http, arr).await {
             Ok(queued) => signals.queue.extend(queued),
             Err(error) => {
-                let sentence = format!("{} queue unreadable ({}): its pending downloads not counted", name(app), cause(&error));
+                let sentence = format!("{} queue unreadable ({}): its pending downloads not counted", arr.label(), cause(&error));
                 problem(&mut signals, sentence, &error, "");
             }
         }
@@ -45,48 +44,50 @@ pub(super) async fn gather(http: &reqwest::Client, args: &Args, cards: &[Archive
     signals
 }
 
-/// Both apps' imports of the window, each read again once its cached read is
-/// six hours old. A failed read keeps serving the last one.
+/// Every instance's imports of the window, each read again once its cached
+/// read is six hours old. A failed read keeps serving the last one.
 async fn imports(http: &reqwest::Client, args: &Args, path: &Path, now: u64, signals: &mut Signals) {
     let mut cache: ImportCache = super::read_state(path);
     let mut read_any = false;
-    for app in APPS {
-        if cache.is_fresh(app, now) {
+    for arr in &args.arrs {
+        if cache.is_fresh(arr.app, &arr.name, now) {
             continue;
         }
-        let (base, key) = endpoint(app, args);
-        match fetch_json(http, &format!("{base}{}", arr::imports_path(app, now)), key).await.and_then(array) {
+        match fetch_json(http, &format!("{}{}", arr.base, arr::imports_path(arr.app, now)), &arr.key).await.and_then(array) {
             Ok(records) => {
-                *cache.slot(app) = Some(ImportRead { read_at: now, imports: arr::parse_imports(app, records) });
+                let read = ImportRead { read_at: now, imports: arr::parse_imports(arr.app, &arr.name, records) };
+                cache.store(arr.app, &arr.name, read);
                 read_any = true;
             }
             Err(error) => {
-                let serving = if cache.slot(app).is_some() { "the last read serves" } else { "its imports not counted" };
-                let sentence = format!("{} import history unreadable ({}): {serving}", name(app), cause(&error));
+                let serving = if cache.read(arr.app, &arr.name).is_some() { "the last read serves" } else { "its imports not counted" };
+                let sentence = format!("{} import history unreadable ({}): {serving}", arr.label(), cause(&error));
                 problem(signals, sentence, &error, "");
             }
         }
     }
-    if read_any {
+    // An instance no longer configured imports nothing into today's disks.
+    let before = cache.extra.len();
+    cache.extra.retain(|key, _| args.arrs.iter().any(|arr| arr.key() == *key));
+    if read_any || cache.extra.len() != before {
         super::write_state(path, &cache);
     }
     signals.imports = cache.imports(now);
 }
 
-/// One app's queue, every page up to the cap.
-async fn queue(http: &reqwest::Client, args: &Args, app: App) -> Result<Vec<Queued>> {
-    let (base, key) = endpoint(app, args);
+/// One instance's queue, every page up to the cap.
+async fn queue(http: &reqwest::Client, arr: &Connection) -> Result<Vec<Queued>> {
     let mut records = Vec::new();
     for page in 1..=QUEUE_PAGE_CAP {
-        let url = format!("{base}{}", arr::queue_path(app, page, QUEUE_PAGE_SIZE));
-        let body: HistoryPage = serde_json::from_value(fetch_json(http, &url, key).await?).context("queue page shape")?;
+        let url = format!("{}{}", arr.base, arr::queue_path(arr.app, page, QUEUE_PAGE_SIZE));
+        let body: HistoryPage = serde_json::from_value(fetch_json(http, &url, &arr.key).await?).context("queue page shape")?;
         let last = body.records.len() < QUEUE_PAGE_SIZE || (page * QUEUE_PAGE_SIZE) as u64 >= body.total_records;
         records.extend(body.records);
         if last {
             break;
         }
     }
-    Ok(arr::parse_queue(app, records))
+    Ok(arr::parse_queue(arr.app, &arr.name, records))
 }
 
 /// Seerr's requests, then every user's watchlist. A user whose watchlist
@@ -97,7 +98,10 @@ async fn requests_and_watchlists(http: &reqwest::Client, args: &Args, signals: &
         return;
     };
     match seerr_rows(http, base, key, seerr::requests_path).await {
-        Ok(records) => signals.requests = seerr::parse_requests(records),
+        Ok(records) => {
+            signals.requests = seerr::parse_requests(records);
+            signals.requests_read = true;
+        }
         Err(error) => {
             let sentence = format!("Seerr unreachable ({}): requests and watchlists not counted", cause(&error));
             problem(signals, sentence, &error, "");
@@ -105,7 +109,10 @@ async fn requests_and_watchlists(http: &reqwest::Client, args: &Args, signals: &
         }
     }
     let users = match seerr_rows(http, base, key, seerr::users_path).await {
-        Ok(records) => seerr::parse_users(records),
+        Ok(records) => {
+            signals.contacts = seerr::parse_contacts(records.clone());
+            seerr::parse_users(records)
+        }
         Err(error) => {
             let sentence = format!("Seerr users unreadable ({}): watchlists not counted", cause(&error));
             problem(signals, sentence, &error, "");
@@ -178,7 +185,8 @@ async fn releases(http: &reqwest::Client, args: &Args, cards: &[ArchiveCard], pa
         let Some((query, kind)) = release::search_query(card) else { continue };
         match search(http, base, key, &query, kind).await {
             Ok(results) => {
-                cache.insert(card.id.clone(), Searched::from_results(results, now));
+                let season = card.season_index.filter(|_| card.kind == flinch_archive::LibraryKind::Season);
+                cache.insert(card.id.clone(), Searched::from_results(results, now, season));
                 searched_any = true;
             }
             Err(error) => {
@@ -192,6 +200,8 @@ async fn releases(http: &reqwest::Client, args: &Args, cards: &[ArchiveCard], pa
         super::write_state(path, &cache);
     }
     signals.releases = cache.releases(retention);
+    signals.smallest_release = cache.smallest();
+    signals.largest_release = cache.largest();
 }
 
 /// Prowlarr's results for one query across every indexer.
@@ -237,20 +247,6 @@ async fn sab_retention(http: &reqwest::Client, args: &Args, signals: &mut Signal
 fn configured<'a>(url: &'a str, key: &'a str) -> Option<(&'a str, &'a str)> {
     let url = url.trim().trim_end_matches('/');
     (!url.is_empty() && !key.is_empty()).then_some((url, key))
-}
-
-fn endpoint(app: App, args: &Args) -> (&str, &str) {
-    match app {
-        App::Radarr => (args.radarr_url.trim_end_matches('/'), args.radarr_key.as_str()),
-        App::Sonarr => (args.sonarr_url.trim_end_matches('/'), args.sonarr_key.as_str()),
-    }
-}
-
-fn name(app: App) -> &'static str {
-    match app {
-        App::Radarr => "Radarr",
-        App::Sonarr => "Sonarr",
-    }
 }
 
 fn array(value: serde_json::Value) -> Result<Vec<serde_json::Value>> {

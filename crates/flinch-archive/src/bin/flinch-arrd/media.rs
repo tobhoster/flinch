@@ -30,6 +30,8 @@ pub(super) struct PlexFetch {
     pub history_complete: bool,
     /// More than one account can play on this server (or it could not be told).
     pub multi_account: bool,
+    /// Account id → name, for `ignore_viewers`; empty when `/accounts` failed.
+    pub account_names: std::collections::HashMap<u64, String>,
     /// ratingKeys the operator marked to keep: items labelled with the keep
     /// tag, and members of a collection with that title.
     pub keep_keys: HashSet<String>,
@@ -209,12 +211,23 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
     let (history, history_complete) =
         plex.get_all("/status/sessions/history/all?sort=viewedAt:desc", Some(now.saturating_sub(HISTORY_HORIZON_SECS))).await;
     let history_accounts = history.iter().filter_map(|row| row.account_id).collect::<std::collections::HashSet<_>>().len();
-    let multi_account = match plex.get("/accounts").await {
-        Ok(accounts) => accounts.account.iter().filter(|account| account.id > 0).count() > 1 || history_accounts > 1,
+    let (multi_account, account_names) = match plex.get("/accounts").await {
+        Ok(accounts) => {
+            let shared = accounts.account.iter().filter(|account| account.id > 0).count() > 1 || history_accounts > 1;
+            (
+                shared,
+                accounts
+                    .account
+                    .into_iter()
+                    .filter(|account| !account.name.trim().is_empty())
+                    .map(|account| (account.id, account.name))
+                    .collect(),
+            )
+        }
         Err(error) => {
             // Unknown is treated as shared: the admin's silence then proves nothing.
             eprintln!("[flinch-arrd] plex accounts unreadable, treating the server as shared: {error:#}");
-            true
+            (true, std::collections::HashMap::new())
         }
     };
     println!(
@@ -232,7 +245,7 @@ pub(super) async fn fetch_plex(http: &reqwest::Client, base_url: &str, token: &s
     let library = PlexLibrary::new(&movies, &shows, &seasons);
     let content =
         movies.into_iter().chain(shows).filter(|row| !row.rating_key.is_empty()).map(|row| (row.rating_key.clone(), row)).collect();
-    Ok(PlexFetch { library, history, items_complete, history_complete, multi_account, keep_keys, listed, content })
+    Ok(PlexFetch { library, history, items_complete, history_complete, multi_account, account_names, keep_keys, listed, content })
 }
 
 /// A show's episodes with their TVDB ids (`allLeaves`), for confirming a season

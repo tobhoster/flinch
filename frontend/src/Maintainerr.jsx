@@ -1,6 +1,7 @@
 import React from 'react';
 import { GiB, SectionTitle } from './ui.jsx';
 import { Explain } from './Explain.jsx';
+import NativeExecutor from './NativeExecutor.jsx';
 
 /** What this run's sync did, as `[count, words]` pairs; zero counts are dropped. */
 const tallies = (s) => [
@@ -15,10 +16,13 @@ const tallies = (s) => [
 ].filter(([n]) => n > 0);
 
 /**
- * The Maintainerr hand-off from `status.sync`. `dryRun` is `status.dry_run`:
- * writes are shown, none sent. An absent block (older snapshot) renders nothing.
+ * The executor card: the native executor's run from `status.native` when
+ * FLINCH deletes itself, else the Maintainerr hand-off from `status.sync`.
+ * `dryRun` is `status.dry_run`: writes are shown, none sent. An absent block
+ * (older snapshot) renders nothing.
  */
-export default function MaintainerrSync({ sync: s, dryRun }) {
+export default function MaintainerrSync({ sync: s, native, dryRun }) {
+  if (native) return <NativeExecutor native={native} dryRun={dryRun} />;
   if (!s) return null;
   const done = tallies(s);
   return (

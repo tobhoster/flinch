@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub type Plays<'a> = (Vec<&'a Play>, Vec<&'a Play>);
 
 /// What the builder reads, all keyed by card id.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Library<'a> {
     pub cards: &'a [ArchiveCard],
     pub movies: &'a [ArrMovie],
@@ -39,6 +39,8 @@ pub struct Library<'a> {
     pub cold_themes: &'a HashMap<String, crate::themes::ColdTheme>,
     /// Why never-played items stay this run; `None` lets them compete.
     pub never_played: Option<Exclusion>,
+    /// Card id → why its torrents keep it ([`crate::torrents::map::holds`]).
+    pub seeding: &'a HashMap<String, crate::torrents::SeedHold>,
     pub now: u64,
 }
 
@@ -46,6 +48,11 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
     let claims = claims(library, config);
     let none: Plays = (Vec::new(), Vec::new());
     let titles = if library.taste.is_empty() { HashMap::new() } else { titles(library) };
+    let streaming = if library.signals.streams.is_empty() {
+        HashMap::new()
+    } else {
+        crate::signals::streaming::card_titles(library.movies, library.series)
+    };
     let uhd: HashSet<String> = library
         .movies
         .iter()
@@ -80,10 +87,12 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                 .and_then(|reading| reading.like.as_ref())
                 .and_then(|like| like.note(|subject| titles.get(subject).copied()));
             let release = library.signals.releases.get(&card.id);
+            let stream = streaming.get(card.id.as_str()).and_then(|title| library.signals.streams.get(title));
             let friction = Reacquisition {
                 size_bytes: card.size_bytes,
                 seeders: release.and_then(|release| release.seeders),
                 usenet_out_of_retention: release.and_then(|release| release.usenet_out_of_retention).unwrap_or(false),
+                streams: stream.is_some(),
             }
             .friction();
             let household = regret::household(claims.get(card.id.as_str()).into_iter().flatten().copied());
@@ -96,23 +105,29 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
             } else {
                 None
             };
-            let exclusion = pin.map(Exclusion::Pinned).or_else(|| {
-                if !library.in_plex.contains(&card.id) {
-                    Some(Exclusion::NotInPlex)
-                } else if watch.is_none() {
-                    Some(Exclusion::NoWatchEvidence)
-                } else if !played {
-                    library.never_played
-                } else {
-                    None
-                }
-            });
+            let exclusion = pin
+                .map(Exclusion::Pinned)
+                .or_else(|| {
+                    if !library.in_plex.contains(&card.id) {
+                        Some(Exclusion::NotInPlex)
+                    } else if watch.is_none() {
+                        Some(Exclusion::NoWatchEvidence)
+                    } else if !played {
+                        library.never_played.clone()
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| library.seeding.get(&card.id).copied().map(Exclusion::Seeding));
             MediaCandidate {
                 id: card.id.clone(),
                 title: card.title.clone(),
                 size_bytes: card.size_bytes,
                 volume: library.located.get(&card.id).cloned(),
-                reason: regret::describe(&features, &regret, like.as_deref()),
+                reason: match stream {
+                    Some(stream) => format!("{} · {}", regret::describe(&features, &regret, like.as_deref()), stream.note()),
+                    None => regret::describe(&features, &regret, like.as_deref()),
+                },
                 regret,
                 age_days: card.added_days_ago,
                 exclusion,
@@ -131,6 +146,7 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                     },
                 ),
                 eviction_safety: crate::quality::eviction_safety(&regret),
+                force: None,
             }
         })
         .collect()
@@ -174,15 +190,17 @@ pub fn offline(
         taste: &HashMap::new(),
         cold_themes: &HashMap::new(),
         never_played,
+        seeding: &HashMap::new(),
         now,
     };
     build(&library, config, &HazardModel::default())
 }
 
-/// A season's place in its show: the show is the card id before `-s<n>`.
+/// A season's place in its show: the group is the show's subject (its
+/// instance and series id), so two instances' shows never share one.
 fn sequence(card: &ArchiveCard, played: bool) -> Option<Sequence> {
-    let (show, _) = card.id.rsplit_once("-s")?;
-    Some(Sequence { group: show.to_string(), index: card.season_index?, played })
+    let item = crate::ids::ArrRef::card(&card.id).filter(|item| item.season.is_some())?;
+    Some(Sequence { group: item.subject().id_text(), index: card.season_index?, played })
 }
 
 /// Subject ([`crate::embedding::subject_of`]) → title, for naming taste
@@ -194,7 +212,7 @@ fn titles<'a>(library: &Library<'a>) -> HashMap<String, &'a str> {
         .map(|card| (crate::embedding::subject_of(&card.id).to_string(), card.show_title.as_deref().unwrap_or(&card.title)))
         .collect();
     titles.extend(library.movies.iter().map(|movie| (movie.card_id(), movie.title.as_str())));
-    titles.extend(library.series.iter().map(|series| (crate::embedding::series_subject(series.id), series.title.as_str())));
+    titles.extend(library.series.iter().map(|series| (series.subject(), series.title.as_str())));
     titles
 }
 
@@ -226,7 +244,7 @@ fn claims<'a>(library: &Library<'a>, config: &PlannerConfig) -> HashMap<&'a str,
 
 /// The cards a Seerr media item names: a movie by TMDB id; a show's seasons
 /// by TVDB or TMDB id, limited to `seasons` when any are listed.
-fn cards_of<'a>(library: &Library<'a>, known: &HashSet<&'a str>, media: &MediaRef, seasons: &[u32]) -> Vec<&'a str> {
+pub(crate) fn cards_of<'a>(library: &Library<'a>, known: &HashSet<&'a str>, media: &MediaRef, seasons: &[u32]) -> Vec<&'a str> {
     let wanted = |id: String| known.get(id.as_str()).copied();
     match media {
         MediaRef::Movie { tmdb } => library

@@ -55,6 +55,10 @@ fn healthy() -> EvidenceHealth {
         tautulli_complete: true,
         multi_account: false,
         plex_settings_unpaired: false,
+        jellyfin_configured: false,
+        jellyfin_complete: false,
+        watch_sources_configured: false,
+        watch_sources_complete: false,
     }
 }
 

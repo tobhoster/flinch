@@ -9,7 +9,7 @@ pub struct ItemSnapshot {
     pub title: String,
     pub kind: String,
     pub size_bytes: u64,
-    /// "delete" | "keep"
+    /// "delete" | "archive" (moves to the archive root, [`crate::archive`]) | "keep"
     pub decision: String,
     pub reason: String,
     /// Expected regret of evicting it (see [`crate::regret`]); `None`
@@ -200,6 +200,75 @@ pub struct StatusSnapshot {
     /// written before.
     #[serde(default)]
     pub themes: Option<crate::themes::ThemesStatus>,
+    /// The native executor's run: shelf, deletes, holds and the undo list
+    /// ([`crate::executor`]). `None` while Maintainerr executes.
+    #[serde(default)]
+    pub native: Option<crate::executor::NativeStatus>,
+    /// This cycle's notifications: messages sent, events waiting for the
+    /// hourly budget, failed channels ([`crate::notify`]). `None` with no
+    /// channel, and in a status file written before.
+    #[serde(default)]
+    pub notify: Option<crate::notify::SendReport>,
+    /// Moves to the compact profile: this cycle's, the held ones and what
+    /// became of earlier ones ([`crate::quality::act`]). `None` while quality
+    /// actions are off and none was ever made.
+    #[serde(default)]
+    pub quality_actions: Option<crate::quality::act::QualityActionsStatus>,
+    /// Items grabbed again and again within 30 days ([`crate::quality::churn`]).
+    /// `None` while the guard is off, and in a status file written before.
+    #[serde(default)]
+    pub upgrade_churn: Option<crate::quality::churn::ChurnStatus>,
+    /// Upgrade searches for cutoff-unmet items ranked by P(watch)
+    /// ([`crate::quality::upgrade`]). `None` while off and none was ever asked.
+    #[serde(default)]
+    pub upgrade_search: Option<crate::quality::upgrade::UpgradeSearchStatus>,
+    /// What the operator's rules kept, forced and fought over this cycle
+    /// ([`crate::rules`]). `None` without rules, and in a status file
+    /// written before.
+    #[serde(default)]
+    pub rules: Option<crate::rules::RulesStatus>,
+    /// What acting on approved inflow advice did ([`crate::inflow::act`]).
+    /// `None` while it is off and FLINCH holds nothing it changed.
+    #[serde(default)]
+    pub inflow_actions: Option<crate::inflow::act::InflowActionsStatus>,
+    /// What the torrent clients hold and what that kept this cycle
+    /// ([`crate::torrents`]). `None` with no client configured, and in a
+    /// status file written before.
+    #[serde(default)]
+    pub torrents: Option<crate::torrents::map::TorrentStatus>,
+    /// The TRaSH quality sync's last preview and apply ([`crate::trash`]).
+    /// `None` while the sync is off, and in a status file written before.
+    #[serde(default)]
+    pub trash: Option<crate::trash::TrashSummary>,
+    /// What the streaming lookups know ([`crate::signals::streaming`]).
+    /// `None` while streaming is off, and in a status file written before.
+    #[serde(default)]
+    pub streaming: Option<crate::signals::streaming::StreamingStatus>,
+    /// What each Tracearr/Trakt source read and joined
+    /// ([`crate::watch_sources`]). `None` with no source configured, and in a
+    /// status file written before.
+    #[serde(default)]
+    pub watch_sources: Option<crate::watch_sources::WatchSourcesStatus>,
+    /// Duplicate copies, their recommendations and the operator's choices
+    /// ([`crate::dupes`]). `None` while the finder is off, and in a status
+    /// file written before.
+    #[serde(default)]
+    pub dupes: Option<crate::dupes::DupesStatus>,
+    /// Household self-service: whether links can be made, active keeps and
+    /// the removal queue ([`crate::requests`]). `None` while it is off, and
+    /// in a status file written before.
+    #[serde(default)]
+    pub household: Option<crate::requests::HouseholdStatus>,
+    /// The archive tier: destinations, planned and sent moves
+    /// ([`crate::archive`]). `None` while it is off, and in a status file
+    /// written before.
+    #[serde(default)]
+    pub archive: Option<crate::archive::ArchiveStatus>,
+    /// Every Radarr and Sonarr instance this cycle talked to, the defaults
+    /// first, without keys ([`crate::arr::instances`]): the UI's labels and
+    /// Open-in links. Empty in a status file written before.
+    #[serde(default)]
+    pub arr_instances: Vec<crate::arr::instances::InstanceView>,
 }
 
 /// Quality advice across the library, for the status page.

@@ -1,18 +1,20 @@
 //! Watch evidence for one cycle: the operator's export, Plex item state and
-//! history, Tautulli history — joined to the library by catalogue identity,
-//! with a health record of what could not be read.
+//! history, Tautulli history, Jellyfin/Emby per-user state, Tracearr and Trakt
+//! play logs — joined to the library by catalogue identity, with a health
+//! record of what could not be read.
 
+mod episodes;
+pub(super) mod jellyfin;
 mod on_disk;
+pub(super) mod watch_sources;
 
-use super::fetch::{fetch_series_episodes, maintainerr_tautulli_credentials};
-use super::media::{episode_guids, fetch_plex, fetch_show_episodes, fetch_tautulli_history};
+use super::fetch::maintainerr_tautulli_credentials;
+use super::media::{episode_guids, fetch_plex, fetch_tautulli_history};
 use super::{state_dir, Args};
 use anyhow::{Context, Result};
 use flinch_archive::arr::{ArrMovie, ArrSeries};
 use flinch_archive::ids::PlexIds;
-use flinch_archive::plex::{
-    migration, EpisodeIds, PlayJoin, PlayKeys, PlexMetadata, Resolution, RowKey, SonarrEpisodes, Unconfirmed, WatchTarget,
-};
+use flinch_archive::plex::{migration, PlayJoin, PlayKeys, PlexMetadata, Resolution, RowKey, SonarrEpisodes, WatchTarget};
 use flinch_archive::tautulli::TautulliRow;
 use flinch_archive::watch::{EvidenceHealth, WatchEntry, WatchSource};
 use flinch_archive::ArchiveCard;
@@ -27,8 +29,9 @@ pub(super) struct Evidence {
     pub(super) health: EvidenceHealth,
     pub(super) plex_history_rows: Vec<PlexMetadata>,
     pub(super) tautulli_rows: Vec<TautulliRow>,
-    /// Card id → Plex placement, GUID-resolved only.
+    /// Card id → Plex placement (GUID-resolved only); `jellyfin_ids`: → Jellyfin/Emby item (movie or season).
     pub(super) plex_ids: HashMap<String, PlexIds>,
+    pub(super) jellyfin_ids: HashMap<String, String>,
     pub(super) play_keys: HashMap<String, PlayKeys>,
     /// Items the operator marked to keep in Plex: a label or collection named
     /// like the keep tag, on the movie, the show, or the season.
@@ -39,6 +42,9 @@ pub(super) struct Evidence {
     /// Plex movie and show rows by ratingKey, for the taste text; empty when
     /// Plex was not read.
     pub(super) plex_content: HashMap<String, PlexMetadata>,
+    /// Card id → dated plays joined by catalogue id (Jellyfin/Emby, Tracearr,
+    /// Trakt); empty without them.
+    pub(super) jellyfin_plays: HashMap<String, flinch_archive::jellyfin::CardPlays>,
 }
 
 pub(super) async fn gather(
@@ -162,7 +168,7 @@ pub(super) async fn gather(
     } else {
         None
     };
-    let tautulli = if tautulli_configured {
+    let mut tautulli = if tautulli_configured {
         match fetch_tautulli_history(http, &tautulli_url, &tautulli_key, cycle_now).await {
             Ok(fetched) => Some(fetched),
             Err(error) => {
@@ -174,6 +180,14 @@ pub(super) async fn gather(
         println!("[flinch-arrd] tautulli: not configured; Plex evidence only");
         None
     };
+    // Ignored viewers' plays count as no play; every completeness flag above
+    // was read before, so the record's health stays as read.
+    let ignored = flinch_archive::viewers::IgnoredViewers::new(&settings.ignore_viewers);
+    if !ignored.is_empty() {
+        let plex_rows = plex.as_mut().map_or(0, |fetched| ignored.plex(&mut fetched.history, &fetched.account_names));
+        let tautulli_rows = tautulli.as_mut().map_or(0, |fetched| ignored.tautulli(&mut fetched.rows));
+        println!("[flinch-arrd] ignored viewers: {plex_rows} plex history row(s), {tautulli_rows} tautulli stream(s) set aside");
+    }
     // An empty library still resolves: nothing matches by GUID, and play joins
     // fall back to exact title+year for movies only.
     let empty = flinch_archive::plex::PlexLibrary::default();
@@ -182,10 +196,12 @@ pub(super) async fn gather(
     // PX-04: a season whose Plex episode count differs from Sonarr's file count
     // resolves only when TVDB episode ids show it is the same season.
     let unconfirmed = resolution.unconfirmed_seasons().len();
-    // Sonarr's episodes by series id, each series read at most once a cycle.
-    let mut sonarr_episodes: HashMap<u32, SonarrEpisodes> = HashMap::new();
+    // Sonarr's episodes by show subject (instance and id), each read once a cycle.
+    let mut sonarr_episodes: HashMap<String, SonarrEpisodes> = HashMap::new();
     if unconfirmed > 0 {
-        let ids = episode_ids(http, args, (&plex_url, &plex_token), resolution.unconfirmed_seasons(), series, &mut sonarr_episodes).await;
+        let ids =
+            episodes::episode_ids(http, args, (&plex_url, &plex_token), resolution.unconfirmed_seasons(), series, &mut sonarr_episodes)
+                .await;
         let confirmed = resolution.confirm_seasons(&watch_targets, library, &ids);
         println!("[flinch-arrd] seasons whose episode counts differ: {confirmed} of {unconfirmed} confirmed by TVDB episode ids");
     }
@@ -225,6 +241,8 @@ pub(super) async fn gather(
             keep.users_off.join(", ")
         );
     }
+    let mut jellyfin = jellyfin::gather(&settings.jellyfin, &watch_targets, &ignored).await;
+    let mut sources = watch_sources::gather(&settings.watch_sources, &watch_targets, &ignored, cycle_now).await;
     let health = flinch_archive::watch::EvidenceHealth {
         plex_configured,
         plex_items_ok: plex.as_ref().is_some_and(|fetched| fetched.items_complete),
@@ -234,6 +252,10 @@ pub(super) async fn gather(
         // Unknown (Plex down) is treated as shared: admin-only zeros prove nothing.
         multi_account: plex.as_ref().map_or(true, |fetched| fetched.multi_account),
         plex_settings_unpaired: settings_url_unpaired,
+        jellyfin_configured: jellyfin.configured,
+        jellyfin_complete: jellyfin.complete,
+        watch_sources_configured: sources.configured,
+        watch_sources_complete: sources.complete,
     };
     let plex_listed = plex.as_mut().filter(|fetched| fetched.items_complete).map(|fetched| std::mem::take(&mut fetched.listed));
     let plex_content = plex.as_mut().map(|fetched| std::mem::take(&mut fetched.content)).unwrap_or_default();
@@ -313,6 +335,19 @@ pub(super) async fn gather(
         from_tautulli.extend(absence);
         flinch_archive::plex::history::merge_history(&mut watch, from_tautulli);
     }
+    // Jellyfin's entries exist only when every user was read; newer wins.
+    flinch_archive::plex::history::merge_history(&mut watch, std::mem::take(&mut jellyfin.evidence.entries));
+    // Tracearr/Trakt plays, and Tracearr's complete-record absence, fill in
+    // after every other source: newer wins, an absence never overrides.
+    flinch_archive::plex::history::merge_history(&mut watch, std::mem::take(&mut sources.entries));
+    let (jellyfin_ids, mut jellyfin_plays) = (std::mem::take(&mut jellyfin.evidence.item_ids), jellyfin.evidence.plays);
+    for (id, plays) in sources.plays {
+        let merged = jellyfin_plays.entry(id).or_default();
+        merged.item.extend(plays.item);
+        merged.audience.extend(plays.audience);
+        merged.item.sort_by_key(|play| play.epoch);
+        merged.audience.sort_by_key(|play| play.epoch);
+    }
     let joins: Vec<PlayJoin> = watch_targets.iter().map(|target| resolution.join(target)).collect();
     let by_guid = migration::guid_joins(&joins, &play_rows);
     println!(
@@ -331,17 +366,19 @@ pub(super) async fn gather(
         plex_history_rows,
         tautulli_rows,
         plex_ids,
+        jellyfin_ids,
         play_keys,
         plex_keeps,
         plex_listed,
         plex_content,
+        jellyfin_plays,
     })
 }
 
 /// A base URL as operators type it: `plex:32400` means `http://plex:32400`.
 /// Without a scheme the HTTP client takes the host for one and refuses every
 /// request, so a Settings value typed as host:port silently cost all evidence.
-fn with_scheme(url: &str) -> String {
+pub(super) fn with_scheme(url: &str) -> String {
     let url = url.trim();
     if url.is_empty() || url.contains("://") {
         url.to_string()
@@ -377,51 +414,12 @@ fn plex_pair((settings_url, settings_token): (&str, &str), (env_url, env_token):
     }
 }
 
-/// TVDB episode ids for the seasons whose episode counts disagreed: each Plex
-/// show's episodes, and each affected series' Sonarr episodes. A read that
-/// fails leaves its seasons unconfirmed.
-async fn episode_ids(
-    http: &reqwest::Client,
-    args: &Args,
-    (plex_url, plex_token): (&str, &str),
-    unconfirmed: &[Unconfirmed],
-    series: &[ArrSeries],
-    read: &mut HashMap<u32, SonarrEpisodes>,
-) -> EpisodeIds {
-    let mut ids = EpisodeIds::default();
-    let shows: BTreeSet<&str> = unconfirmed.iter().flat_map(|season| season.show_rating_keys.iter().map(String::as_str)).collect();
-    for show in shows {
-        match fetch_show_episodes(http, plex_url, plex_token, show).await {
-            Ok(episodes) => {
-                ids.plex.insert(show.to_string(), episodes);
-            }
-            Err(error) => eprintln!("[flinch-arrd] plex episodes of show {show} unreadable: {error:#}"),
-        }
-    }
-    let waiting: HashSet<&str> = unconfirmed.iter().map(|season| season.target_id.as_str()).collect();
-    for series_item in series {
-        let targets: Vec<String> = series_item
-            .seasons
-            .iter()
-            .map(|season| series_item.season_card_id(season.season_number))
-            .filter(|id| waiting.contains(id.as_str()))
-            .collect();
-        if targets.is_empty() {
-            continue;
-        }
-        if let std::collections::hash_map::Entry::Vacant(slot) = read.entry(series_item.id) {
-            match fetch_series_episodes(http, args, series_item.id).await {
-                Ok(episodes) => {
-                    slot.insert(episodes);
-                }
-                Err(error) => eprintln!("[flinch-arrd] sonarr episodes of {} unreadable: {error:#}", series_item.title),
-            }
-        }
-        if let Some(episodes) = read.get(&series_item.id) {
-            ids.sonarr.extend(targets.into_iter().map(|id| (id, episodes.clone())));
-        }
-    }
-    ids
+/// The Plex URL and token this cycle uses, by the same pairing rule as the
+/// evidence read; `None` when Plex is not configured.
+pub(super) fn plex_connection(settings: &flinch_archive::daemon::RuntimeSettings) -> Option<(String, String)> {
+    let env = (std::env::var("FLINCH_PLEX_URL").unwrap_or_default(), std::env::var("FLINCH_PLEX_TOKEN").unwrap_or_default());
+    let PlexPair { url, token, .. } = plex_pair((&settings.plex_url, &settings.plex_token), (&env.0, &env.1));
+    (!url.is_empty() && !token.is_empty()).then_some((url, token))
 }
 
 #[cfg(test)]

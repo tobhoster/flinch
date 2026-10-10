@@ -142,6 +142,9 @@ pub fn viewer_key(viewer: &Viewer) -> String {
     match viewer {
         Viewer::PlexAccount(id) => format!("plex:{id}"),
         Viewer::TautulliUser(user) => format!("tautulli:{user}"),
+        Viewer::JellyfinUser(user) => format!("jellyfin:{user}"),
+        Viewer::TracearrUser(user) => format!("tracearr:{user}"),
+        Viewer::TraktUser(user) => format!("trakt:{user}"),
     }
 }
 

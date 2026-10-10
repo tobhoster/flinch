@@ -38,7 +38,7 @@ fn a_season_pack_is_the_sum_of_its_episodes_files() {
     // Ten episodes of one download, each record carrying its own file size:
     // deduping by download would count one episode for the whole pack.
     let records = (1..=10).map(|episode| sonarr_import(100 + u64::from(episode), episode, 2, "4831838208")).collect();
-    let imports = parse_imports(App::Sonarr, records);
+    let imports = parse_imports(App::Sonarr, "", records);
     assert_eq!(imports.len(), 10);
     assert_eq!(imports.iter().map(|import| import.bytes).sum::<u64>(), 48_318_382_080);
     assert!(imports.iter().all(|import| import.item == ItemRef::Series { series_id: 7, season: Some(2) }));
@@ -55,7 +55,8 @@ fn radarr_imports_skip_malformed_records_not_the_read() {
         "not a record",
         {"movieId": 15, "date": "2026-09-23T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": " 42 "}, "id": 5}
     ]));
-    let imports: Vec<(ItemRef, u64)> = parse_imports(App::Radarr, records).into_iter().map(|import| (import.item, import.bytes)).collect();
+    let imports: Vec<(ItemRef, u64)> =
+        parse_imports(App::Radarr, "", records).into_iter().map(|import| (import.item, import.bytes)).collect();
     assert_eq!(imports, vec![(ItemRef::Movie(12), 8_589_934_592), (ItemRef::Movie(15), 42)]);
 }
 
@@ -78,18 +79,23 @@ fn the_queue_counts_each_download_once_with_its_bytes_left() {
     .unwrap_or_else(|error| panic!("queue page: {error}"));
     assert_eq!(page.total_records, 6);
     assert_eq!(
-        parse_queue(App::Sonarr, page.records),
+        parse_queue(App::Sonarr, "anime", page.records),
         vec![
-            Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 7, season: Some(2) }, bytes_left: 12_079_595_520 },
-            Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 9, season: Some(1) }, bytes_left: 0 },
+            Queued {
+                app: App::Sonarr,
+                instance: "anime".into(),
+                item: ItemRef::Series { series_id: 7, season: Some(2) },
+                bytes_left: 12_079_595_520
+            },
+            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 9, season: Some(1) }, bytes_left: 0 },
             // An unreadable `sizeleft` skips its record; a pack across seasons names none.
-            Queued { app: App::Sonarr, item: ItemRef::Series { series_id: 8, season: None }, bytes_left: 5 },
+            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 8, season: None }, bytes_left: 5 },
         ]
     );
 }
 
 fn import(epoch: u64) -> Import {
-    Import { app: App::Radarr, item: ItemRef::Movie(1), epoch, bytes: 1 }
+    Import { app: App::Radarr, instance: String::new(), item: ItemRef::Movie(1), epoch, bytes: 1 }
 }
 
 #[rstest]
@@ -98,19 +104,31 @@ fn import(epoch: u64) -> Import {
 #[case::stale(NOW - IMPORT_REFRESH_SECS, false)]
 #[case::from_the_future(NOW + 60, false)]
 fn an_import_read_serves_six_hours(#[case] read_at: u64, #[case] fresh: bool) {
-    let cache = ImportCache { radarr: Some(ImportRead { read_at, imports: Vec::new() }), sonarr: None };
-    assert_eq!(cache.is_fresh(App::Radarr, NOW), fresh);
-    assert!(!cache.is_fresh(App::Sonarr, NOW), "never read is never fresh");
+    let cache = ImportCache { radarr: Some(ImportRead { read_at, imports: Vec::new() }), ..ImportCache::default() };
+    assert_eq!(cache.is_fresh(App::Radarr, "", NOW), fresh);
+    assert!(!cache.is_fresh(App::Sonarr, "", NOW), "never read is never fresh");
+    assert!(!cache.is_fresh(App::Radarr, "4k", NOW), "each instance is read on its own");
 }
 
 #[test]
 fn cached_imports_leave_the_window_as_it_moves() {
     let since = NOW - IMPORT_WINDOW_SECS;
-    let cache = ImportCache {
+    let mut cache = ImportCache {
         radarr: Some(ImportRead { read_at: NOW - 3_600, imports: vec![import(since - 1), import(since), import(NOW - DAY)] }),
-        sonarr: None,
+        ..ImportCache::default()
     };
     assert_eq!(cache.imports(NOW), vec![import(since), import(NOW - DAY)]);
+    let uhd = Import { instance: "4k".into(), ..import(NOW) };
+    cache.store(App::Radarr, "4k", ImportRead { read_at: NOW, imports: vec![uhd.clone()] });
+    assert_eq!(cache.imports(NOW), vec![import(since), import(NOW - DAY), uhd]);
+}
+
+#[test]
+fn an_import_cache_from_before_instances_still_reads() {
+    let older = r#"{"radarr":{"read_at":1,"imports":[{"app":"radarr","item":{"movie":7},"epoch":1,"bytes":2}]},"sonarr":null}"#;
+    let cache: ImportCache = serde_json::from_str(older).unwrap_or_else(|error| panic!("older cache: {error}"));
+    assert_eq!(cache.read(App::Radarr, "").map(|read| read.imports[0].instance.as_str()), Some(""));
+    assert!(cache.extra.is_empty());
 }
 
 #[test]
@@ -120,7 +138,8 @@ fn every_request_but_a_declined_one_counts() {
         "results": [
             {"id": 1, "status": 2, "type": "movie", "is4k": false,
              "media": {"id": 5, "mediaType": "movie", "tmdbId": 949, "tvdbId": null, "status": 5},
-             "seasons": [], "requestedBy": {"id": 3, "displayName": "Mara", "plexUsername": "mara_p", "email": "mara@example.org"}},
+             "seasons": [], "createdAt": "2026-09-01T10:00:27.000Z",
+             "requestedBy": {"id": 3, "displayName": "Mara", "plexUsername": "mara_p", "email": "mara@example.org"}},
             {"id": 2, "status": 3, "type": "movie",
              "media": {"id": 6, "mediaType": "movie", "tmdbId": 550, "status": 1},
              "seasons": [], "requestedBy": {"id": 3, "displayName": "Mara"}},
@@ -136,8 +155,18 @@ fn every_request_but_a_declined_one_counts() {
     assert_eq!(
         parse_requests(page.results),
         vec![
-            Request { media: MediaRef::Movie { tmdb: 949 }, seasons: Vec::new(), requester: "Mara".to_owned() },
-            Request { media: MediaRef::Show { tvdb: Some(81_189), tmdb: Some(1396) }, seasons: vec![2, 3], requester: "theo".to_owned() },
+            Request {
+                media: MediaRef::Movie { tmdb: 949 },
+                seasons: Vec::new(),
+                requester: "Mara".to_owned(),
+                requested_at: Some(1_788_256_827),
+            },
+            Request {
+                media: MediaRef::Show { tvdb: Some(81_189), tmdb: Some(1396) },
+                seasons: vec![2, 3],
+                requester: "theo".to_owned(),
+                requested_at: None,
+            },
         ]
     );
 }
@@ -202,12 +231,37 @@ fn result(protocol: &str, seeders: Option<u32>, age: u32) -> Value {
 
 #[test]
 fn seeders_are_the_best_torrent_and_zero_when_searched_and_none_found() {
-    let found =
-        Searched::from_results(vec![result("torrent", Some(4), 10), result("torrent", None, 3), result("torrent", Some(31), 900)], NOW);
+    let found = Searched::from_results(
+        vec![result("torrent", Some(4), 10), result("torrent", None, 3), result("torrent", Some(31), 900)],
+        NOW,
+        None,
+    );
     assert_eq!(found.release(None).seeders, Some(31));
-    let usenet_only = Searched::from_results(vec![result("usenet", None, 100), json!({"title": "no protocol"})], NOW);
+    let usenet_only = Searched::from_results(vec![result("usenet", None, 100), json!({"title": "no protocol"})], NOW, None);
     assert_eq!(usenet_only.release(None).seeders, Some(0));
-    assert_eq!(Searched::from_results(Vec::new(), NOW).release(Some(0)), Release { seeders: Some(0), usenet_out_of_retention: Some(true) });
+    assert_eq!(
+        Searched::from_results(Vec::new(), NOW, None).release(Some(0)),
+        Release { seeders: Some(0), usenet_out_of_retention: Some(true) }
+    );
+}
+
+fn sized(title: &str, bytes: u64) -> Value {
+    json!({"title": title, "size": bytes, "protocol": "torrent", "seeders": 5, "age": 3})
+}
+
+const GIB: u64 = 1 << 30;
+
+/// The smallest whole release: samples never count, and for a season only
+/// packs of that season do — one episode is not the season.
+#[rstest]
+#[case::movie_smallest(None, vec![sized("Heat.1995.2160p", 60 * GIB), sized("Heat.1995.1080p.WEB", 6 * GIB)], Some(6 * GIB))]
+#[case::sample_ignored(None, vec![sized("Heat.1995.sample", 50 << 20), sized("Heat.1995.1080p", 9 * GIB)], Some(9 * GIB))]
+#[case::any_protocol_counts(None, vec![result("usenet", None, 3)], Some(8 * GIB))]
+#[case::episodes_are_not_the_season(Some(1), vec![sized("Show.S01E01.1080p", GIB), sized("Show.S01.1080p.WEB", 12 * GIB)], Some(12 * GIB))]
+#[case::another_season(Some(2), vec![sized("Show.S01.1080p", 12 * GIB), sized("Show.S12.1080p", 12 * GIB)], None)]
+#[case::lowercase_pack(Some(3), vec![sized("show.s03.720p", 5 * GIB)], Some(5 * GIB))]
+fn smallest_whole_release(#[case] season: Option<u32>, #[case] results: Vec<Value>, #[case] smallest: Option<u64>) {
+    assert_eq!(Searched::from_results(results, NOW, season).smallest_bytes, smallest);
 }
 
 #[rstest]
@@ -218,7 +272,7 @@ fn seeders_are_the_best_torrent_and_zero_when_searched_and_none_found() {
 #[case::limited_and_past(vec![result("usenet", None, 1201)], Some(1200), Some(true))]
 #[case::limited_without_a_post(vec![], Some(1200), Some(true))]
 fn usenet_retention_verdict(#[case] results: Vec<Value>, #[case] retention: Option<u32>, #[case] out: Option<bool>) {
-    assert_eq!(Searched::from_results(results, NOW).release(retention).usenet_out_of_retention, out);
+    assert_eq!(Searched::from_results(results, NOW, None).release(retention).usenet_out_of_retention, out);
 }
 
 fn movie(id: u32) -> ArchiveCard {
@@ -226,7 +280,7 @@ fn movie(id: u32) -> ArchiveCard {
 }
 
 fn searched(searched_at: u64) -> Searched {
-    Searched { searched_at, seeders: 3, youngest_usenet_days: None }
+    Searched { searched_at, seeders: 3, youngest_usenet_days: None, smallest_bytes: None, largest_bytes: None }
 }
 
 #[test]

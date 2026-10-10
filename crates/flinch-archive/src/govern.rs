@@ -35,11 +35,11 @@ pub fn volume_map(library: &LibraryVolumes, movies: &[ArrMovie], series: &[ArrSe
 }
 
 pub fn movie_volume<'a>(library: &'a LibraryVolumes, movie: &ArrMovie) -> Option<&'a str> {
-    movie.path.as_deref().and_then(|path| library.volume_of(App::Radarr, path))
+    movie.path.as_deref().and_then(|path| library.volume_of(App::Radarr, &movie.instance, path))
 }
 
 pub fn show_volume<'a>(library: &'a LibraryVolumes, show: &ArrSeries) -> Option<&'a str> {
-    show.path.as_deref().and_then(|path| library.volume_of(App::Sonarr, path))
+    show.path.as_deref().and_then(|path| library.volume_of(App::Sonarr, &show.instance, path))
 }
 
 /// What is arriving on each volume: bytes imported per day (oldest first, see
@@ -55,25 +55,28 @@ impl Ingest {
     /// to volumes through the *arr item each names. An item on no governed
     /// disk counts nowhere.
     pub fn attribute(library: &LibraryVolumes, movies: &[ArrMovie], series: &[ArrSeries], signals: &Signals, now: u64) -> Self {
-        let movies: HashMap<u32, &ArrMovie> = movies.iter().map(|movie| (movie.id, movie)).collect();
-        let series: HashMap<u32, &ArrSeries> = series.iter().map(|show| (show.id, show)).collect();
-        let volume_of = |item: &ItemRef| -> Option<&str> {
+        // *arr ids repeat across instances: an event joins by instance and id.
+        let movies: HashMap<(&str, u32), &ArrMovie> = movies.iter().map(|movie| ((movie.instance.as_str(), movie.id), movie)).collect();
+        let series: HashMap<(&str, u32), &ArrSeries> = series.iter().map(|show| ((show.instance.as_str(), show.id), show)).collect();
+        let volume_of = |instance: &str, item: &ItemRef| -> Option<&str> {
             match item {
-                ItemRef::Movie(id) => u32::try_from(*id).ok().and_then(|id| movies.get(&id)).and_then(|movie| movie_volume(library, movie)),
+                ItemRef::Movie(id) => {
+                    u32::try_from(*id).ok().and_then(|id| movies.get(&(instance, id))).and_then(|movie| movie_volume(library, movie))
+                }
                 ItemRef::Series { series_id, .. } => {
-                    u32::try_from(*series_id).ok().and_then(|id| series.get(&id)).and_then(|show| show_volume(library, show))
+                    u32::try_from(*series_id).ok().and_then(|id| series.get(&(instance, id))).and_then(|show| show_volume(library, show))
                 }
             }
         };
         let mut imports: BTreeMap<&str, Vec<(u64, u64)>> = BTreeMap::new();
         for import in &signals.imports {
-            if let Some(volume) = volume_of(&import.item) {
+            if let Some(volume) = volume_of(&import.instance, &import.item) {
                 imports.entry(volume).or_default().push((import.epoch, import.bytes));
             }
         }
         let mut queue: BTreeMap<String, u64> = BTreeMap::new();
         for queued in &signals.queue {
-            if let Some(volume) = volume_of(&queued.item) {
+            if let Some(volume) = volume_of(&queued.instance, &queued.item) {
                 let bytes = queue.entry(volume.to_string()).or_insert(0);
                 *bytes = bytes.saturating_add(queued.bytes_left);
             }

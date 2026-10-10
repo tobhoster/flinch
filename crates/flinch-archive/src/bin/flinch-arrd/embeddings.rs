@@ -79,7 +79,7 @@ fn subjects(library: &Library<'_>, with_posters: bool) -> Vec<Subject> {
         let plex = series.seasons.iter().find_map(|season| plex_row(&series.season_card_id(season.season_number)));
         let on_disk = series.seasons.iter().any(|season| season.statistics.episode_file_count > 0);
         let text = embedding::series_text(series, plex);
-        describe(embedding::series_subject(series.id), text, posters::poster_url(&series.images), on_disk)
+        describe(series.subject(), text, posters::poster_url(&series.images), on_disk)
     });
     let mut all: Vec<Subject> = movies.chain(shows).collect();
     all.sort_by(|a, b| b.on_disk.cmp(&a.on_disk).then_with(|| a.id.cmp(&b.id)));

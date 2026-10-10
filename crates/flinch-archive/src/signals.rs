@@ -11,6 +11,7 @@
 pub mod arr;
 pub mod release;
 pub mod seerr;
+pub mod streaming;
 
 use crate::capacity::App;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,9 @@ pub enum MediaRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Import {
     pub app: App,
+    /// The instance it landed in ([`crate::ids`]); empty for the default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub item: ItemRef,
     /// When it was imported, unix seconds.
     pub epoch: u64,
@@ -45,10 +49,12 @@ pub struct Import {
     pub bytes: u64,
 }
 
-/// One download in an app's queue, counted once however many episodes it covers.
+/// One download in an instance's queue, counted once however many episodes it covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Queued {
     pub app: App,
+    /// The instance whose queue holds it; empty for the default.
+    pub instance: String,
     pub item: ItemRef,
     pub bytes_left: u64,
 }
@@ -61,6 +67,8 @@ pub struct Request {
     pub seasons: Vec<u32>,
     /// The requester's Seerr display name.
     pub requester: String,
+    /// When it was made, unix seconds; `None` when Seerr gave no readable date.
+    pub requested_at: Option<u64>,
 }
 
 /// A title on a Seerr user's (Plex) watchlist.
@@ -89,9 +97,22 @@ pub struct Signals {
     pub queue: Vec<Queued>,
     /// Every request not declined.
     pub requests: Vec<Request>,
+    /// Seerr's requests were read in full this cycle: an item without one was
+    /// truly not requested.
+    pub requests_read: bool,
     pub watchlists: Vec<Watchlisted>,
+    /// Seerr's users with their emails and other names, for addressing the
+    /// household's notifications ([`crate::notify::recipients`]).
+    pub contacts: Vec<seerr::Contact>,
     /// Card id → availability, from the release cache.
     pub releases: HashMap<String, Release>,
+    /// Card id → the smallest whole release Prowlarr found, in bytes.
+    pub smallest_release: HashMap<String, u64>,
+    /// Card id → the largest whole release Prowlarr found, in bytes.
+    pub largest_release: HashMap<String, u64>,
+    /// TMDB titles that stream on a subscribed service in the operator's
+    /// region ([`streaming`]); empty while streaming is off or unknown.
+    pub streams: HashMap<streaming::Title, streaming::Stream>,
     /// Each degraded source, one short sentence.
     pub problems: Vec<String>,
 }

@@ -50,6 +50,18 @@ pub enum WatchSource {
     /// play but never proves *absence* of one, so it can protect an item and can
     /// never justify reclaiming one.
     PlexHistory,
+    /// Jellyfin or Emby item state, read for every user on the server: the
+    /// household's own played flags, not one borrowed account's. Only emitted
+    /// when every user's whole library was read, so a zero is a whole-record
+    /// zero.
+    Jellyfin,
+    /// A play in Tracearr's session history, joined by catalogue id.
+    Tracearr,
+    /// Tracearr saw every user's whole history and no play of this item since
+    /// its record began — claimed like [`WatchSource::TautulliAbsence`].
+    TracearrAbsence,
+    /// A watch in one household member's Trakt history, joined by catalogue id.
+    Trakt,
 }
 
 impl WatchSource {
@@ -63,7 +75,10 @@ impl WatchSource {
             WatchSource::Export => 0.6,
             // Never pays the never-played bonus at all: a stream database proves
             // plays, not their absence.
-            WatchSource::PlexHistory | WatchSource::Tautulli => 0.0,
+            WatchSource::PlexHistory | WatchSource::Tautulli | WatchSource::Tracearr | WatchSource::Trakt => 0.0,
+            WatchSource::TracearrAbsence => 0.7,
+            // Every user's item state, read in full: live item-level truth.
+            WatchSource::Jellyfin => 1.0,
         }
     }
 
@@ -75,17 +90,25 @@ impl WatchSource {
             WatchSource::PlexHistory => "plex_history",
             WatchSource::Tautulli => "tautulli",
             WatchSource::TautulliAbsence => "tautulli_no_stream",
+            WatchSource::Jellyfin => "jellyfin",
+            WatchSource::Tracearr => "tracearr",
+            WatchSource::TracearrAbsence => "tracearr_no_play",
+            WatchSource::Trakt => "trakt",
         }
     }
 
     /// Every source, for code that must cover them all.
-    pub const ALL: [WatchSource; 6] = [
+    pub const ALL: [WatchSource; 10] = [
         WatchSource::Plex,
         WatchSource::PlexShow,
         WatchSource::Export,
         WatchSource::PlexHistory,
         WatchSource::Tautulli,
         WatchSource::TautulliAbsence,
+        WatchSource::Jellyfin,
+        WatchSource::Tracearr,
+        WatchSource::TracearrAbsence,
+        WatchSource::Trakt,
     ];
 
     /// The inverse of [`WatchSource::label`], for reading persisted snapshots.
@@ -135,6 +158,20 @@ pub struct EvidenceHealth {
     /// the evidence (if any) came from another server than the operator set.
     #[serde(default)]
     pub plex_settings_unpaired: bool,
+    /// A Jellyfin or Emby server is configured.
+    #[serde(default)]
+    pub jellyfin_configured: bool,
+    /// Every Jellyfin user was listed, and every user's whole library paged to
+    /// its end.
+    #[serde(default)]
+    pub jellyfin_complete: bool,
+    /// A Tracearr or Trakt source is configured (`watch_sources`).
+    #[serde(default)]
+    pub watch_sources_configured: bool,
+    /// Every configured Tracearr/Trakt source had every account paged to the
+    /// end of its history.
+    #[serde(default)]
+    pub watch_sources_complete: bool,
 }
 
 impl EvidenceHealth {
@@ -154,12 +191,15 @@ impl EvidenceHealth {
     }
 
     /// Whether the never-played reclaim rule may be armed this cycle: Plex was
-    /// read completely, and so was Tautulli if it is configured.
+    /// read completely (Leaving Soon lives there), and so was every other
+    /// configured source.
     pub fn never_played_reclaim_safe(&self) -> bool {
         self.plex_configured
             && self.plex_items_ok
             && self.plex_history_complete
             && (!self.tautulli_configured || self.tautulli_complete)
+            && (!self.jellyfin_configured || self.jellyfin_complete)
+            && (!self.watch_sources_configured || self.watch_sources_complete)
             && !self.plex_settings_unpaired
     }
 
@@ -181,6 +221,12 @@ impl EvidenceHealth {
         }
         if self.tautulli_configured && !self.tautulli_complete {
             problems.push("tautulli history incomplete, not recording, or not kept for every user and library");
+        }
+        if self.jellyfin_configured && !self.jellyfin_complete {
+            problems.push("jellyfin/emby read failed or did not cover every user and library");
+        }
+        if self.watch_sources_configured && !self.watch_sources_complete {
+            problems.push("a tracearr/trakt source failed or did not read every account's whole history");
         }
         // Only Plex item state has an admin whose "no plays" can hide someone
         // else's play; the flag is fail-closed `true` when Plex is absent.
@@ -248,6 +294,10 @@ mod tests {
             tautulli_complete: tautulli.1,
             multi_account,
             plex_settings_unpaired: false,
+            jellyfin_configured: false,
+            jellyfin_complete: false,
+            watch_sources_configured: false,
+            watch_sources_complete: false,
         }
     }
 
@@ -261,6 +311,10 @@ mod tests {
     #[case::tautulli_alone(health((false, false, false), (true, true), false), false)]
     // The operator's Plex was not read, whatever the environment's Plex said.
     #[case::settings_url_without_its_token(EvidenceHealth { plex_settings_unpaired: true, ..health((true, true, true), (true, true), false) }, false)]
+    #[case::jellyfin_partly_read(EvidenceHealth { jellyfin_configured: true, ..health((true, true, true), (false, false), false) }, false)]
+    #[case::jellyfin_fully_read(EvidenceHealth { jellyfin_configured: true, jellyfin_complete: true, ..health((true, true, true), (false, false), false) }, true)]
+    #[case::watch_source_partly_read(EvidenceHealth { watch_sources_configured: true, ..health((true, true, true), (false, false), false) }, false)]
+    #[case::watch_sources_fully_read(EvidenceHealth { watch_sources_configured: true, watch_sources_complete: true, ..health((true, true, true), (false, false), false) }, true)]
     fn never_played_reclaim_is_armed_only_on_a_fully_read_record(#[case] health: EvidenceHealth, #[case] safe: bool) {
         assert_eq!(health.never_played_reclaim_safe(), safe, "{:?}", health.problems());
         if safe {
@@ -353,10 +407,14 @@ mod tests {
                 | WatchSource::Export
                 | WatchSource::PlexHistory
                 | WatchSource::Tautulli
-                | WatchSource::TautulliAbsence => {}
+                | WatchSource::TautulliAbsence
+                | WatchSource::Jellyfin
+                | WatchSource::Tracearr
+                | WatchSource::TracearrAbsence
+                | WatchSource::Trakt => {}
             }
             assert_eq!(WatchSource::from_label(source.label()), Some(source));
         }
-        assert_eq!(WatchSource::from_label("jellyfin"), None, "an unknown label is no evidence, not a guess");
+        assert_eq!(WatchSource::from_label("emby"), None, "an unknown label is no evidence, not a guess");
     }
 }

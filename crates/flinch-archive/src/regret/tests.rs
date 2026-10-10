@@ -163,8 +163,18 @@ fn a_finished_season_counts_one_viewing_and_show_plays_set_the_velocity() {
 #[case::out_of_retention(1_000_000_000, Some(100), true, 6.02)]
 #[case::a_tiny_file_is_never_free(1, None, false, MIN_FRICTION)]
 fn friction_follows_size_seeders_and_retention(#[case] bytes: u64, #[case] seeders: Option<u32>, #[case] oor: bool, #[case] expected: f64) {
-    let friction = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: oor }.friction();
+    let friction = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: oor, streams: false }.friction();
     assert!((friction - expected).abs() < 1e-9, "{friction}");
+}
+
+#[rstest]
+#[case::lowered_toward_the_floor(1_000_000_000, Some(1), 0.1 + 0.25 * 2.9)]
+#[case::never_below_the_floor(1, None, MIN_FRICTION)]
+fn streaming_lowers_friction_toward_the_floor(#[case] bytes: u64, #[case] seeders: Option<u32>, #[case] expected: f64) {
+    let item = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: false, streams: true };
+    let friction = item.friction();
+    assert!((friction - expected).abs() < 1e-9, "{friction}");
+    assert!(friction >= MIN_FRICTION && friction <= Reacquisition { streams: false, ..item }.friction());
 }
 
 #[test]

@@ -1,12 +1,13 @@
-use super::{quantize, select, violations, Method, Sequence, Unit};
+use super::{quantize, select, violations, Force, Method, Sequence, Unit};
 use proptest::prelude::*;
+use rstest::rstest;
 use std::collections::BTreeMap;
 
 const GIB: u64 = 1 << 30;
 const Q: u64 = 100 * 1024 * 1024;
 
 fn unit(volume: &str, gib: u64, regret: f64) -> Unit {
-    Unit { size_bytes: gib * GIB, regret, volume: volume.to_string(), sequence: None, selectable: true, handed: false }
+    Unit { size_bytes: gib * GIB, regret, volume: volume.to_string(), sequence: None, selectable: true, handed: false, force: None }
 }
 
 fn season(show: &str, index: u32, played: bool, gib: u64, regret: f64) -> Unit {
@@ -178,6 +179,83 @@ fn five_thousand_items_solve_to_a_feasible_ordered_plan() {
     assert!(cost(&selection.chosen) <= cost(&greedy.chosen) + 1e-6, "the exact plan never costs more than the greedy one");
 }
 
+fn forced(unit: Unit, force: Force) -> Unit {
+    Unit { force: Some(force), ..unit }
+}
+
+#[rstest]
+#[case::milp(false)]
+#[case::greedy(true)]
+fn every_must_evict_unit_goes_when_its_volume_needs_space_even_past_the_target(#[case] emergency: bool) {
+    // The 2 GiB unit alone covers the target at least regret; both must-go
+    // units leave anyway, and the one on a healthy volume stays.
+    let units = [
+        unit("m", 2, 0.1),
+        forced(unit("m", 5, 9.0), Force::Must),
+        forced(unit("m", 5, 8.0), Force::Must),
+        forced(unit("healthy", 5, 0.0), Force::Must),
+    ];
+    let selection = select(&units, &targets(&[("m", GIB), ("healthy", 0)]), Q, emergency);
+    assert_eq!(selection.chosen, vec![1, 2]);
+}
+
+#[rstest]
+#[case::milp(false)]
+#[case::greedy(true)]
+fn a_must_evict_season_takes_the_seasons_it_depends_on_and_never_an_excluded_unit(#[case] emergency: bool) {
+    // Unplayed S1 may go only after S2 and S3; the cheap film is not needed.
+    let mut pinned = forced(unit("tv", 50, 0.0), Force::Must);
+    pinned.selectable = false;
+    let units = [
+        forced(season("Andor", 1, false, 10, 0.0), Force::Must),
+        season("Andor", 2, false, 10, 5.0),
+        season("Andor", 3, false, 10, 5.0),
+        unit("tv", 30, 0.1),
+        pinned,
+    ];
+    let selection = select(&units, &targets(&[("tv", 10 * GIB)]), Q, emergency);
+    assert_eq!(selection.chosen, vec![0, 1, 2]);
+    assert!(violations(&units, &selection.chosen).is_empty());
+}
+
+#[rstest]
+#[case::milp_within_the_preferred(false, 10, vec![2])]
+#[case::greedy_within_the_preferred(true, 10, vec![2])]
+#[case::milp_past_the_preferred(false, 25, vec![0, 1, 2])]
+#[case::greedy_past_the_preferred(true, 25, vec![0, 1, 2])]
+fn preferred_units_go_first_and_only_as_far_as_the_target_needs(#[case] emergency: bool, #[case] gib: u64, #[case] chosen: Vec<usize>) {
+    // The unruled unit is the cheapest; every preferred one goes before it.
+    let units = [unit("m", 10, 0.1), forced(unit("m", 10, 3.0), Force::Prefer), forced(unit("m", 10, 2.0), Force::Prefer)];
+    assert_eq!(select(&units, &targets(&[("m", gib * GIB)]), Q, emergency).chosen, chosen);
+}
+
+#[rstest]
+#[case::milp_while_others_suffice(false, 20, vec![1, 2])]
+#[case::greedy_while_others_suffice(true, 20, vec![1, 2])]
+#[case::milp_once_nothing_else_fills(false, 25, vec![0, 1, 2])]
+#[case::greedy_once_nothing_else_fills(true, 25, vec![0, 1, 2])]
+fn spared_units_go_only_once_nothing_else_on_the_volume_fills_the_target(
+    #[case] emergency: bool,
+    #[case] gib: u64,
+    #[case] chosen: Vec<usize>,
+) {
+    // The spared unit is by far the cheapest, yet both dearer ones go first;
+    // another volume's units never count as "something else".
+    let units = [forced(unit("m", 10, 0.01), Force::Spare), unit("m", 10, 3.0), unit("m", 10, 2.0), unit("other", 50, 0.0)];
+    assert_eq!(select(&units, &targets(&[("m", gib * GIB)]), Q, emergency).chosen, chosen);
+}
+
+#[rstest]
+#[case::milp(false)]
+#[case::greedy(true)]
+fn preferred_units_lead_the_rest_and_spared_units_trail_it(#[case] emergency: bool) {
+    // Preferred first, then the rest, the spared one last of all.
+    let units = [forced(unit("m", 10, 0.0), Force::Spare), unit("m", 10, 0.5), forced(unit("m", 10, 5.0), Force::Prefer)];
+    assert_eq!(select(&units, &targets(&[("m", 10 * GIB)]), Q, emergency).chosen, vec![2]);
+    assert_eq!(select(&units, &targets(&[("m", 20 * GIB)]), Q, emergency).chosen, vec![1, 2]);
+    assert_eq!(select(&units, &targets(&[("m", 30 * GIB)]), Q, emergency).chosen, vec![0, 1, 2]);
+}
+
 fn arb_units() -> impl Strategy<Value = Vec<Unit>> {
     prop::collection::vec((0u32..4, 1u32..6, any::<bool>(), 1u64..30, 0u32..1000, any::<bool>(), 0u8..10), 1..40).prop_map(|rows| {
         rows.into_iter()
@@ -187,6 +265,13 @@ fn arb_units() -> impl Strategy<Value = Vec<Unit>> {
                     s.volume = "tv-b".to_string();
                 }
                 s.selectable = pin != 0;
+                // Rules ride along: the invariants hold whatever they force.
+                s.force = match pin {
+                    1 => Some(Force::Must),
+                    2 => Some(Force::Prefer),
+                    3 => Some(Force::Spare),
+                    _ => None,
+                };
                 s
             })
             .collect()

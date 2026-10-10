@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, ExternalLink, PanelRightOpen, Search } from 'lucide-react';
-import { Card, DropdownMenu, EmptyState, GiB, Sheet, day, pct } from './ui.jsx';
+import { Card, DropdownMenu, EmptyState, GiB, JustWatch, Sheet, day, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
 import { Advice, Disk, PlexIds, Reacquisition } from './DetailCells.jsx';
 import { MeaningStatus, useMeaningSearch } from './MeaningSearch.jsx';
+import { instanceLabel, parseArrRef } from './arrRef.js';
 
 const isNum = (v) => v !== null && v !== undefined;
 
 /** Sources that can testify to absence of playback (as opposed to only presence). */
-const ABSENCE_SOURCES = ['plex', 'plex_show', 'export', 'tautulli_no_stream'];
+const ABSENCE_SOURCES = ['plex', 'plex_show', 'export', 'tautulli_no_stream', 'jellyfin', 'tracearr_no_play'];
 
 const onDisk = (i) => (i.size_bytes || 0) > 0;
 
@@ -20,6 +21,7 @@ const onDisk = (i) => (i.size_bytes || 0) > 0;
 const FILTERS = [
   { key: 'on_disk', label: 'On disk', test: onDisk },
   { key: 'delete', label: 'Planned', test: (i) => onDisk(i) && i.decision === 'delete' },
+  { key: 'archive', label: 'To archive', test: (i) => onDisk(i) && i.decision === 'archive' },
   { key: 'protected', label: 'Protected', test: (i) => onDisk(i) && i.protected },
   { key: 'kept', label: 'Kept', test: (i) => onDisk(i) && i.decision === 'keep' && !i.protected },
   {
@@ -35,6 +37,10 @@ const SOURCE_LABEL = {
   plex_history: 'history',
   tautulli: 'tautulli',
   tautulli_no_stream: 'tautulli',
+  jellyfin: 'jellyfin',
+  tracearr: 'tracearr',
+  tracearr_no_play: 'tracearr',
+  trakt: 'trakt',
   export: 'export',
 };
 
@@ -76,6 +82,9 @@ function decisionOf(item) {
     if (announced) return { text: 'Leaving soon', tone: 'text-state-warn', title: 'Announced in Leaving Soon before it is deleted' };
     return { text: 'Planned', tone: 'text-state-warn' };
   }
+  if (item.decision === 'archive') {
+    return { text: 'To archive', tone: 'text-state-ok', title: 'Moves to the archive root instead of being deleted: still playable' };
+  }
   if (item.protected) return { text: 'Protected', tone: 'text-fg' };
   if (item.decision === 'keep') return { text: 'Kept', tone: 'text-fg-muted' };
   return { text: item.size_bytes ? 'No action' : 'Not on disk', tone: 'text-fg-faint' };
@@ -107,7 +116,7 @@ const SEARCH_MODES = [
   { key: 'meaning', label: 'Meaning', placeholder: 'Describe it, press Enter' },
 ];
 
-export default function MediaTable({ items, kind }) {
+export default function MediaTable({ items, kind, focus, instances }) {
   const [q, setQ] = useState('');
   const [mode, setMode] = useState('title');
   const [filter, setFilter] = useState('on_disk');
@@ -127,6 +136,15 @@ export default function MediaTable({ items, kind }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // A Keep link from a notification (`?item=<card id>`) opens that item once,
+  // as soon as the items have loaded.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focus || focused.current) return;
+    const item = items.find((i) => i.id === focus && i.kind === kind);
+    if (item) { focused.current = true; setSel(item); }
+  }, [focus, items, kind]);
 
   // Themes present among this kind's rows; the selector shows only when there are any.
   const themes = useMemo(
@@ -187,7 +205,7 @@ export default function MediaTable({ items, kind }) {
   const totalBytes = rows.reduce((sum, i) => sum + (i.size_bytes || 0), 0);
 
   const emptyState = <EmptyState title={`No matching ${noun}`} body="Change the filter or clear the search." />;
-  const actions = (i) => actionsFor(i, () => setSel(i));
+  const actions = (i) => actionsFor(i, instances, () => setSel(i));
 
   return (
     <>
@@ -359,13 +377,25 @@ function metaOf(item) {
   ].filter(Boolean).join(' · ');
 }
 
+/** The instance a named-instance item comes from (`4k`); nothing for the default. */
+function InstanceBadge({ item }) {
+  const ref = parseArrRef(item.id);
+  if (!ref?.instance) return null;
+  return (
+    <span title={`From ${instanceLabel(ref.app, ref.instance)}`}
+      className="ml-1.5 inline-block rounded-sm border border-line px-1 align-middle text-[10.5px] leading-4 text-fg-muted">
+      {ref.instance}
+    </span>
+  );
+}
+
 function TitleCell({ item }) {
   const meta = metaOf(item);
   return (
     <div className="flex min-w-0 items-center gap-2.5">
       <Poster item={item} />
       <div className="min-w-0 flex-1">
-        <div className="truncate-1 text-fg" title={item.title}>{item.title}</div>
+        <div className="truncate-1 text-fg" title={item.title}>{item.title}<InstanceBadge item={item} /></div>
         {meta && <div className="truncate-1 text-xs text-fg-faint">{meta}</div>}
       </div>
     </div>
@@ -406,25 +436,29 @@ function Decision({ item }) {
 /**
  * Link to the item in Radarr/Sonarr. Their routers key items by `titleSlug`
  * (`/series/for-all-mankind`, `/movie/872585`); a numeric id resolves to
- * "that series cannot be found". The apps sit beside Flinch under the same
- * parent domain (flinch.example.com → sonarr.example.com). Returns null when
- * there is no slug or no sibling host to point at (local dev).
+ * "that series cannot be found". A named instance links to its `public_url`
+ * from `status.arr_instances` when set. Otherwise the apps sit beside Flinch
+ * under the same parent domain (flinch.example.com → sonarr.example.com, a
+ * named instance → radarr-4k.example.com). Returns null when there is no slug
+ * or nothing to point at (local dev).
  */
-function arrUrl(item) {
-  const app = item.id.startsWith('radarr-') ? 'radarr' : 'sonarr';
+function arrUrl(item, ref, instances) {
+  if (!item.title_slug || !ref) return null;
+  const path = `${ref.app === 'radarr' ? '/movie/' : '/series/'}${encodeURIComponent(item.title_slug)}`;
+  const configured = ref.instance && instances?.find((i) => i.app === ref.app && i.name === ref.instance)?.public_url;
+  if (configured) return `${configured.replace(/\/+$/, '')}${path}`;
   const labels = window.location.hostname.split('.');
-  if (!item.title_slug || labels.length < 2) return null;
-  const host = [app, ...labels.slice(1)].join('.');
-  const slug = encodeURIComponent(item.title_slug);
-  return `https://${host}${app === 'radarr' ? `/movie/${slug}` : `/series/${slug}`}`;
+  if (labels.length < 2) return null;
+  const host = [ref.instance ? `${ref.app}-${ref.instance}` : ref.app, ...labels.slice(1)].join('.');
+  return `https://${host}${path}`;
 }
 
-function actionsFor(item, openDetails) {
-  const url = arrUrl(item);
-  const app = item.id.startsWith('radarr-') ? 'Radarr' : 'Sonarr';
+function actionsFor(item, instances, openDetails) {
+  const ref = parseArrRef(item.id);
+  const url = arrUrl(item, ref, instances);
   return [
     { label: 'Details', icon: <PanelRightOpen size={13} />, onSelect: openDetails },
-    ...(url ? [{ label: `Open in ${app}`, icon: <ExternalLink size={13} />, onSelect: () => window.open(url, '_blank', 'noopener') }] : []),
+    ...(url ? [{ label: `Open in ${instanceLabel(ref.app, ref.instance)}`, icon: <ExternalLink size={13} />, onSelect: () => window.open(url, '_blank', 'noopener') }] : []),
     { label: 'Copy library id', icon: <Copy size={13} />, onSelect: () => navigator.clipboard?.writeText(item.id) },
   ];
 }
@@ -500,6 +534,7 @@ function ItemDetail({ item, actions }) {
               {why.map((w) => <li key={w}>{w}</li>)}
             </ul>
           )}
+        {item.reason?.includes('streams on ') && <p className="mt-1.5 text-xs"><JustWatch /></p>}
       </section>
 
       <details className="text-xs">

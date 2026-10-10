@@ -1,15 +1,41 @@
-//! What one cycle publishes for the UI: status.json with the items beside it,
-//! and a history point. The plan itself is `eviction-plan.json` (see main).
+//! What one cycle publishes: the plan as `eviction-plan.json` and a log line,
+//! then for the UI status.json with the items beside it, and a history point.
 
 use super::state_dir;
 use anyhow::Result;
+use flinch_archive::arr::instances::Connection;
+use flinch_archive::capacity::VolumeForecast;
 use flinch_archive::daemon::{self, HistoryPoint, NeverPlayedHold, QualityCounts};
 use flinch_archive::embedding::EmbeddingStatus;
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::SyncSummary;
 use flinch_archive::outside::OutsideDeletion;
+use flinch_archive::plan::{EvictionPlan, Manifest};
 use flinch_archive::watch::EvidenceHealth;
 use flinch_archive::{ItemSnapshot, ReconcileOutput, StatusSnapshot};
+
+/// Log the plan and write it, dry run or not, before anything acts on it.
+pub(super) fn plan(plan: &EvictionPlan, forecasts: &[VolumeForecast], dry_run: bool, now: u64) -> Result<()> {
+    let gib = |bytes: u64| bytes as f64 / 1_073_741_824.0;
+    println!(
+        "[flinch-arrd] plan: {} item(s), {:.1} of {:.1} GiB needed, regret {:.2}{}",
+        plan.items.len(),
+        gib(plan.total_reclaimed_bytes),
+        gib(plan.target_bytes),
+        plan.total_regret,
+        plan.method.map_or(" (healthy: solver skipped)".to_string(), |method| format!(" ({method:?})")),
+    );
+    if !plan.moves.is_empty() {
+        println!("[flinch-arrd] plan: {} move(s) to the archive, {:.1} GiB", plan.moves.len(), gib(plan.moved_bytes()));
+    }
+    if let Some(error) = &plan.solver_error {
+        eprintln!("[flinch-arrd] HiGHS failed, plan made greedily: {error}");
+    }
+    std::fs::create_dir_all(state_dir()).ok();
+    let manifest = serde_json::to_vec_pretty(&Manifest::new(plan, forecasts, dry_run, now))?;
+    flinch_archive::persist::replace(&state_dir().join("eviction-plan.json"), &manifest)?;
+    Ok(())
+}
 
 /// The run's own facts, published beside the items.
 pub(super) struct Run<'a> {
@@ -36,8 +62,31 @@ pub(super) struct Run<'a> {
     pub(super) embedding: EmbeddingStatus,
     /// Incoming storage likely wasted, for the operator.
     pub(super) inflow: Vec<flinch_archive::inflow::Suggestion>,
+    /// What acting on approved advice did; `None` while off.
+    pub(super) inflow_actions: Option<flinch_archive::inflow::act::InflowActionsStatus>,
+    /// What this cycle's notifications did; `None` with no channel.
+    pub(super) notify: Option<flinch_archive::notify::SendReport>,
     /// Storage by theme; `None` before themes exist.
     pub(super) themes: Option<flinch_archive::themes::ThemesStatus>,
+    /// Downgrade moves, upgrade churn and upgrade searches; each `None` while off.
+    pub(super) quality: super::upgrade_search::Quality,
+    /// What the operator's rules did; `None` without rules.
+    pub(super) rules: Option<flinch_archive::rules::RulesStatus>,
+    /// What the torrent clients hold and keep; `None` with no client.
+    pub(super) torrents: Option<flinch_archive::torrents::map::TorrentStatus>,
+    /// What the native executor did; `None` while Maintainerr executes.
+    pub(super) native: Option<flinch_archive::executor::NativeStatus>,
+    /// What the streaming lookups know; `None` while streaming is off.
+    pub(super) streaming: Option<flinch_archive::signals::streaming::StreamingStatus>,
+    /// Duplicate copies; `None` while the finder is off.
+    pub(super) dupes: Option<flinch_archive::dupes::DupesStatus>,
+    /// Household self-service; `None` while it is off.
+    pub(super) household: Option<flinch_archive::requests::HouseholdStatus>,
+    /// The archive tier; `None` while it is off.
+    pub(super) archive: Option<flinch_archive::archive::ArchiveStatus>,
+    /// Every *arr instance of the cycle; published by [`Connection::view`],
+    /// never with its key.
+    pub(super) arrs: &'a [Connection],
 }
 
 pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
@@ -56,7 +105,18 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         outside,
         embedding,
         inflow,
+        inflow_actions,
+        notify,
         themes,
+        quality,
+        rules,
+        torrents,
+        native,
+        streaming,
+        dupes,
+        household,
+        archive,
+        arrs,
     } = run;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let dir = state_dir();
@@ -92,7 +152,22 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         outside_deletions: outside,
         embedding: Some(embedding),
         inflow,
+        notify,
         themes,
+        quality_actions: quality.actions,
+        upgrade_churn: quality.churn,
+        upgrade_search: quality.search,
+        rules,
+        inflow_actions,
+        torrents,
+        trash: flinch_archive::trash::TrashState::read(&dir).and_then(|state| state.summary()),
+        streaming,
+        watch_sources: flinch_archive::watch_sources::WatchSourcesStatus::read(&dir),
+        dupes,
+        household,
+        archive,
+        arr_instances: arrs.iter().map(Connection::view).collect(),
+        native,
     };
     daemon::write_snapshots(&dir.join("status.json"), &dir.join("items.json"), &status, items)?;
     daemon::append_history(

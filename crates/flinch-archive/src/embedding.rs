@@ -34,19 +34,14 @@ pub use weights::{model_id, poster_model_id, FetchError, ModelFiles};
 /// The vector cache, in the state directory.
 pub const STORE_FILE: &str = "embeddings.json";
 
-/// The subject a card's vector belongs to: a season (`sonarr-7-s2`) shares its
-/// show's (`sonarr-7`); a movie is its own subject.
+/// The subject a card's vector belongs to: a season (`sonarr-7-s2`,
+/// `sonarr@anime-7-s2`) shares its show's (`sonarr-7`, `sonarr@anime-7`; see
+/// [`crate::arr::ArrSeries::subject`]); a movie is its own subject.
 pub fn subject_of(card_id: &str) -> &str {
-    match card_id.rsplit_once("-s") {
-        Some((show, season)) if show.starts_with("sonarr-") && !season.is_empty() && season.bytes().all(|b| b.is_ascii_digit()) => show,
+    match crate::ids::ArrRef::card(card_id) {
+        Some(crate::ids::ArrRef { season: Some(_), .. }) => card_id.rsplit_once("-s").map_or(card_id, |(show, _)| show),
         _ => card_id,
     }
-}
-
-/// The subject of a Sonarr series: the prefix every one of its season card
-/// ids shares (see [`crate::arr::ArrSeries::season_card_id`]).
-pub fn series_subject(series_id: u32) -> String {
-    format!("sonarr-{series_id}")
 }
 
 /// Embedding as the operator configured it (`settings.json` `embedding`).

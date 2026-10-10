@@ -32,7 +32,7 @@ pub(super) async fn attach(
     series: &[ArrSeries],
     targets: &mut [WatchTarget],
     (resolution, plex_rows, tautulli_rows): (&Resolution, &[PlexMetadata], &[TautulliRow]),
-    read: &mut HashMap<u32, SonarrEpisodes>,
+    read: &mut HashMap<String, SonarrEpisodes>,
 ) {
     let from_history = history::history_entries(targets, resolution, plex_rows);
     let from_tautulli = tautulli::plays_by_target(targets, resolution, tautulli_rows);
@@ -46,30 +46,37 @@ pub(super) async fn attach(
     if waiting.is_empty() {
         return;
     }
-    let mut seasons_of: HashMap<&str, (u32, u32)> = HashMap::new();
+    // Card id → its show and season; the show's subject keys its read.
+    let mut seasons_of: HashMap<&str, (&ArrSeries, String, u32)> = HashMap::new();
     for series_item in series {
         for season in &series_item.seasons {
             let id = series_item.season_card_id(season.season_number);
             if let Some(id) = waiting.get(&id) {
-                seasons_of.insert(id.as_str(), (series_item.id, season.season_number));
+                seasons_of.insert(id.as_str(), (series_item, series_item.subject(), season.season_number));
             }
         }
     }
-    let unread: BTreeSet<u32> = seasons_of.values().map(|(series_id, _)| *series_id).filter(|id| !read.contains_key(id)).collect();
-    for series_id in unread {
-        match fetch_series_episodes(http, args, series_id).await {
+    let mut unread: Vec<(&ArrSeries, &str)> = seasons_of
+        .values()
+        .filter(|(_, subject, _)| !read.contains_key(subject))
+        .map(|(show, subject, _)| (*show, subject.as_str()))
+        .collect();
+    unread.sort_unstable_by_key(|(_, subject)| *subject);
+    unread.dedup_by_key(|(_, subject)| *subject);
+    for (show, subject) in unread {
+        match fetch_series_episodes(http, args, &show.instance, show.id).await {
             Ok(episodes) => {
-                read.insert(series_id, episodes);
+                read.insert(subject.to_string(), episodes);
             }
             Err(error) => {
-                eprintln!("[flinch-arrd] sonarr episodes of series {series_id} unreadable, its seasons stay below complete: {error:#}")
+                eprintln!("[flinch-arrd] sonarr episodes of {subject} unreadable, its seasons stay below complete: {error:#}")
             }
         }
     }
     let mut known = 0;
     for target in targets.iter_mut() {
-        let Some((series_id, season)) = seasons_of.get(target.id.as_str()) else { continue };
-        let numbers = read.get(series_id).and_then(|episodes| episodes.on_disk(*season, target.episode_files.unwrap_or(0)));
+        let Some((_, subject, season)) = seasons_of.get(target.id.as_str()) else { continue };
+        let numbers = read.get(subject).and_then(|episodes| episodes.on_disk(*season, target.episode_files.unwrap_or(0)));
         known += usize::from(numbers.is_some());
         target.episodes_on_disk = numbers;
     }

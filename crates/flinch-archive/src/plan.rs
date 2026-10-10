@@ -10,77 +10,32 @@
 //!   nothing and the solver never runs.
 //! - **Which items is the solver's.** [`knapsack::select`] solves the 0-1
 //!   program with HiGHS, or greedily in an emergency, and never orphans part
-//!   of a show.
+//!   of a show. With an archive tier ([`crate::archive`]) it may move a movie or a
+//!   whole series to an archive root instead of evicting it.
 //! - `flinch-archive` never deletes anything. The plan is handed to
 //!   Maintainerr only when `dry_run` is off, and Maintainerr deletes on its own
 //!   schedule.
 
+mod archive;
 pub mod candidates;
+mod config;
 pub mod knapsack;
+mod manifest;
+
+pub use archive::{arr_item, ArchiveDestination, PlanMove};
+pub use config::{InvalidPlannerConfig, PlannerConfig};
+pub use manifest::Manifest;
 
 use crate::capacity::VolumeForecast;
 use crate::daemon::NeverPlayedHold;
 use crate::regret::Regret;
-use knapsack::{Method, Sequence, Unit};
+use knapsack::{Force, Method, Sequence, Unit};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-const MIB: u64 = 1 << 20;
-
-/// The planner's knobs (`settings.json` `planner`). Every field defaults
-/// individually.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PlannerConfig {
-    /// Write the plan, hand nothing to Maintainerr. On until the operator has
-    /// read a few plans and turns it off.
-    pub dry_run: bool,
-    /// Sizes and targets are rounded up to this many MiB for the solver.
-    pub quantum_mb: u64,
-    /// Items on disk fewer days than this are never candidates.
-    pub grace_period_days: u32,
-    /// Seerr display name → weight of that user's watchlist and requests.
-    /// Unlisted users weigh 1.0; names match case-insensitively.
-    pub user_weights: BTreeMap<String, f64>,
-}
-
-impl Default for PlannerConfig {
-    fn default() -> Self {
-        Self { dry_run: true, quantum_mb: 100, grace_period_days: 30, user_weights: BTreeMap::new() }
-    }
-}
-
-/// A [`PlannerConfig`] outside its bounds; the message names the field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct InvalidPlannerConfig(pub &'static str);
-
-impl PlannerConfig {
-    pub fn validate(&self) -> Result<(), InvalidPlannerConfig> {
-        if !(1..=10_240).contains(&self.quantum_mb) {
-            return Err(InvalidPlannerConfig("the size quantum must be 1 to 10240 MiB"));
-        }
-        if self.grace_period_days > 3_650 {
-            return Err(InvalidPlannerConfig("the grace period must be at most 3650 days"));
-        }
-        if self.user_weights.values().any(|weight| !(weight.is_finite() && *weight >= 0.0)) {
-            return Err(InvalidPlannerConfig("user weights must be 0 or more"));
-        }
-        Ok(())
-    }
-
-    pub fn quantum_bytes(&self) -> u64 {
-        self.quantum_mb.saturating_mul(MIB)
-    }
-
-    /// The weight of a Seerr user; 1.0 when unlisted.
-    pub fn weight(&self, user: &str) -> f64 {
-        self.user_weights.iter().find(|(name, _)| name.eq_ignore_ascii_case(user)).map_or(1.0, |(_, weight)| *weight)
-    }
-}
-
 /// Why an item can never be selected this run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Exclusion {
     /// A favorite, or on a keep list (keep collection, keep tag, or the
     /// operator's own Maintainerr exclusion).
@@ -97,12 +52,23 @@ pub enum Exclusion {
     NoWatchEvidence,
     NeverPlayedOff,
     NeverPlayedHeld(NeverPlayedHold),
+    /// An operator rule keeps it ([`crate::rules`]): the rule's name.
+    Rule(String),
+    /// Its torrents keep it ([`crate::torrents`]): below their seed goal, or
+    /// holding its bytes through a hardlink that stays.
+    Seeding(crate::torrents::SeedHold),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Pin {
     Favorite,
     KeepList,
+    /// A household member asked to keep it ([`crate::requests`]), until
+    /// `until` (unix seconds).
+    Requested {
+        until: u64,
+    },
 }
 
 impl std::fmt::Display for Exclusion {
@@ -110,18 +76,24 @@ impl std::fmt::Display for Exclusion {
         match self {
             Self::Pinned(Pin::Favorite) => f.write_str("Pinned: favorite"),
             Self::Pinned(Pin::KeepList) => f.write_str("Pinned: on a keep list"),
+            Self::Pinned(Pin::Requested { until }) => {
+                write!(f, "Pinned: kept on request until {}", crate::notify::utc_date(until / 86_400))
+            }
             Self::Grace { days } => write!(f, "In its {days}-day grace period"),
-            Self::NotInPlex => f.write_str("Not matched in Plex"),
+            Self::NotInPlex => f.write_str("Not matched in the media server"),
             Self::NoGovernedDisk => f.write_str("On no governed disk"),
             Self::NoWatchEvidence => f.write_str("No watch evidence this run"),
             Self::NeverPlayedOff => f.write_str("Never played; never-played reclaim is off"),
             Self::NeverPlayedHeld(hold) => write!(f, "Never played; held {}", hold.until()),
+            Self::Rule(name) => write!(f, "Kept by rule \u{201c}{name}\u{201d}"),
+            Self::Seeding(hold) => write!(f, "{hold}"),
         }
     }
 }
 
-/// One library item as the planner sees it.
-#[derive(Debug, Clone, PartialEq)]
+/// One library item as the planner sees it. Serialized into
+/// `plan-inputs.json` so a rules preview can re-plan without the daemon.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaCandidate {
     pub id: String,
     pub title: String,
@@ -148,6 +120,10 @@ pub struct MediaCandidate {
     pub quality: crate::quality::QualityAdvice,
     /// How safe evicting it is, 0..1, never above `1 − P(watch)`.
     pub eviction_safety: f64,
+    /// An operator rule asks for it to go when its volume needs space
+    /// ([`crate::rules`]). Never set on a protected item, and ignored there.
+    #[serde(default)]
+    pub force: Option<Force>,
 }
 
 /// One selected item.
@@ -178,13 +154,15 @@ pub struct VolumeOutcome {
 }
 
 /// Why a candidate stays.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kept {
     Excluded(Exclusion),
     /// Its volume's forecast fits: nothing there needs to go.
     Healthy,
     /// Selectable, but the target was covered more cheaply.
     NotNeeded,
+    /// It moves to the archive root instead of leaving ([`PlanMove`]).
+    Archived,
 }
 
 impl std::fmt::Display for Kept {
@@ -193,6 +171,7 @@ impl std::fmt::Display for Kept {
             Self::Excluded(exclusion) => exclusion.fmt(f),
             Self::Healthy => f.write_str("Not needed: storage is healthy"),
             Self::NotNeeded => f.write_str("Not needed this run"),
+            Self::Archived => f.write_str("Moves to the archive: still playable"),
         }
     }
 }
@@ -206,6 +185,9 @@ pub struct EvictionPlan {
     /// Selected items in the order they should leave: prerequisites first,
     /// then most bytes per regret.
     pub items: Vec<PlanItem>,
+    /// Movies and whole series that move to an archive root instead; their
+    /// bytes count toward each volume's `planned_bytes`.
+    pub moves: Vec<PlanMove>,
     pub volumes: Vec<VolumeOutcome>,
     pub target_bytes: u64,
     pub total_reclaimed_bytes: u64,
@@ -241,38 +223,6 @@ impl EvictionPlan {
     }
 }
 
-/// `state/eviction-plan.json`: the plan as written every run, dry or not.
-#[derive(Debug, Serialize)]
-pub struct Manifest<'a> {
-    pub timestamp: String,
-    pub dry_run: bool,
-    pub forecast: &'a [VolumeForecast],
-    pub reclaim_target_bytes: u64,
-    pub total_reclaimed_bytes: u64,
-    pub total_regret: f64,
-    pub candidates_count: usize,
-    pub method: Option<Method>,
-    pub solver_error: Option<&'a str>,
-    pub items: &'a [PlanItem],
-}
-
-impl<'a> Manifest<'a> {
-    pub fn new(plan: &'a EvictionPlan, forecasts: &'a [VolumeForecast], dry_run: bool, now: u64) -> Self {
-        Self {
-            timestamp: crate::presence::format_utc(now),
-            dry_run,
-            forecast: forecasts,
-            reclaim_target_bytes: plan.target_bytes,
-            total_reclaimed_bytes: plan.total_reclaimed_bytes,
-            total_regret: plan.total_regret,
-            candidates_count: plan.candidates_count,
-            method: plan.method,
-            solver_error: plan.solver_error.as_deref(),
-            items: &plan.items,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PlanError {
     #[error(transparent)]
@@ -281,22 +231,33 @@ pub enum PlanError {
     InvalidRegret { id: String },
 }
 
-/// Plan one run.
-///
-/// Each forecast's `target_reclaim_bytes` is a covering constraint on its
-/// volume. All zero: a healthy plan with no method and no items. Any forecast
-/// in an emergency: the greedy pass instead of HiGHS.
+/// Plan one run with no archive tier: evictions only.
 pub fn generate_eviction_plan(
     candidates: &[MediaCandidate],
     forecasts: &[VolumeForecast],
     config: &PlannerConfig,
+) -> Result<EvictionPlan, PlanError> {
+    generate_plan(candidates, forecasts, config, &[])
+}
+
+/// Plan one run.
+///
+/// Each forecast's `target_reclaim_bytes` is a covering constraint on its
+/// volume. All zero: a healthy plan with no method and no items. Any forecast
+/// in an emergency: the greedy pass instead of HiGHS. Each `archive`
+/// destination lets its app's items move there instead of leaving.
+pub fn generate_plan(
+    candidates: &[MediaCandidate],
+    forecasts: &[VolumeForecast],
+    config: &PlannerConfig,
+    archive: &[ArchiveDestination],
 ) -> Result<EvictionPlan, PlanError> {
     config.validate()?;
     if let Some(bad) = candidates.iter().find(|c| !(c.regret.value.is_finite() && c.regret.value >= 0.0)) {
         return Err(PlanError::InvalidRegret { id: bad.id.clone() });
     }
     let exclusion = |candidate: &MediaCandidate| {
-        candidate.exclusion.or_else(|| candidate.volume.is_none().then_some(Exclusion::NoGovernedDisk)).or_else(|| {
+        candidate.exclusion.clone().or_else(|| candidate.volume.is_none().then_some(Exclusion::NoGovernedDisk)).or_else(|| {
             (candidate.age_days < config.grace_period_days as f32).then_some(Exclusion::Grace { days: config.grace_period_days })
         })
     };
@@ -309,17 +270,21 @@ pub fn generate_eviction_plan(
             sequence: candidate.sequence.clone(),
             selectable: exclusion(candidate).is_none(),
             handed: candidate.handed,
+            // A rule never forces a pinned or partway item, whoever set it.
+            force: candidate.force.filter(|_| !candidate.protect),
         })
         .collect();
     let targets: BTreeMap<String, u64> = forecasts.iter().map(|f| (f.volume.clone(), f.forecast.target_reclaim_bytes)).collect();
     let healthy = targets.values().all(|bytes| *bytes == 0);
-    let (method, solver_error, chosen) = if healthy {
-        (None, None, Vec::new())
+    let tier = archive::tier(candidates, archive, |c| exclusion(c).is_none() && !c.protect && !c.handed && c.force.is_none());
+    let (method, solver_error, chosen, moved) = if healthy {
+        (None, None, Vec::new(), Vec::new())
     } else {
         let emergency = forecasts.iter().any(|f| f.forecast.is_emergency);
-        let selection = knapsack::select(&units, &targets, config.quantum_bytes(), emergency);
-        (Some(selection.method), selection.solver_error, selection.chosen)
+        let selection = knapsack::select_with_moves(&units, &targets, config.quantum_bytes(), emergency, &tier.moves);
+        (Some(selection.method), selection.solver_error, selection.chosen, selection.moved)
     };
+    let moves = tier.plan_moves(&moved, candidates);
 
     let items: Vec<PlanItem> = knapsack::release_order(&units, &chosen)
         .into_iter()
@@ -349,14 +314,16 @@ pub fn generate_eviction_plan(
             outcome.eligible_bytes = outcome.eligible_bytes.saturating_add(unit.size_bytes);
         }
     }
-    for item in &items {
-        if let Some(outcome) = volumes.get_mut(item.volume.as_str()) {
-            outcome.planned_bytes = outcome.planned_bytes.saturating_add(item.size_bytes);
+    let freed = items.iter().map(|item| (&item.volume, item.size_bytes)).chain(moves.iter().map(|m| (&m.volume, m.size_bytes)));
+    for (volume, bytes) in freed {
+        if let Some(outcome) = volumes.get_mut(volume.as_str()) {
+            outcome.planned_bytes = outcome.planned_bytes.saturating_add(bytes);
         }
     }
     let volumes: Vec<VolumeOutcome> = volumes.into_values().collect();
 
     let selected: std::collections::HashSet<&str> = items.iter().map(|item| item.id.as_str()).collect();
+    let archived: HashSet<&str> = moves.iter().flat_map(|m| m.cards.iter().map(String::as_str)).collect();
     let kept = candidates
         .iter()
         .filter(|candidate| !selected.contains(candidate.id.as_str()))
@@ -364,6 +331,7 @@ pub fn generate_eviction_plan(
             let target = candidate.volume.as_deref().and_then(|volume| targets.get(volume)).copied().unwrap_or(0);
             let why = match exclusion(candidate) {
                 Some(exclusion) => Kept::Excluded(exclusion),
+                None if archived.contains(candidate.id.as_str()) => Kept::Archived,
                 None if target == 0 => Kept::Healthy,
                 None => Kept::NotNeeded,
             };
@@ -381,6 +349,7 @@ pub fn generate_eviction_plan(
         candidates_count: units.iter().filter(|unit| unit.selectable).count(),
         eligible_bytes: sum(&mut volumes.iter().map(|v| v.eligible_bytes)),
         items,
+        moves,
         volumes,
         kept,
     })

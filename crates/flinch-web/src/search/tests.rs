@@ -89,6 +89,31 @@ async fn items_rank_by_meaning_seasons_score_as_their_show_and_the_unembedded_ar
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+#[tokio::test]
+async fn a_named_instances_seasons_score_as_its_own_show() {
+    let (tmp, st) = library("named", Search::with_loader(stub_loader(Arc::default())));
+    let rows = serde_json::json!([
+        { "id": "radarr-1", "title": "Alien", "kind": "movie" },
+        { "id": "radarr@4k-1", "title": "Alien", "kind": "movie" },
+        { "id": "sonarr@anime-7-s1", "title": "Space Brothers", "kind": "season", "season_label": "S1" },
+        { "id": "sonarr-7-s1", "title": "Space Romance", "kind": "season", "season_label": "S1" },
+    ]);
+    std::fs::write(st.dir.join("items.json"), rows.to_string()).unwrap();
+    // Sonarr's show 7 and the anime Sonarr's show 7 are different shows.
+    VectorStore::from_vectors([
+        ("radarr-1".to_string(), vec![0.6, 0.8, 0.0, 0.0]),
+        ("radarr@4k-1".to_string(), vec![0.6, 0.8, 0.0, 0.0]),
+        ("sonarr@anime-7".to_string(), vec![1.0, 0.0, 0.0, 0.0]),
+        ("sonarr-7".to_string(), vec![0.0, 1.0, 0.0, 0.0]),
+    ])
+    .write(&st.dir)
+    .unwrap();
+    let found = json_of(send(&st, get("/api/search?q=space", &[BEARER])).await).await;
+    assert_eq!(ids(&found), ["sonarr@anime-7-s1", "radarr-1", "radarr@4k-1", "sonarr-7-s1"]);
+    assert_eq!(found["unranked"], 0);
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
 #[rstest]
 #[case::empty("")]
 #[case::blank("%20%20")]

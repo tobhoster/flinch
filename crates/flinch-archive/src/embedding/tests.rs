@@ -101,6 +101,9 @@ fn the_arr_text_stands_alone_and_a_long_overview_is_cut() {
 #[case::specials("sonarr-7-s0", "sonarr-7")]
 #[case::movie("radarr-3", "radarr-3")]
 #[case::show("sonarr-7", "sonarr-7")]
+#[case::named_season("sonarr@anime-7-s2", "sonarr@anime-7")]
+#[case::named_movie("radarr@4k-3", "radarr@4k-3")]
+#[case::name_starting_with_s("sonarr@sd-7-s1", "sonarr@sd-7")]
 fn seasons_share_their_shows_subject(#[case] card: &str, #[case] subject: &str) {
     assert_eq!(subject_of(card), subject);
 }

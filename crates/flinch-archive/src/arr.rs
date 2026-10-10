@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 mod dwell;
 pub mod history;
+pub mod instances;
 
 use dwell::days_on_disk;
 
@@ -97,6 +98,10 @@ pub struct ArrCollection {
 #[serde(rename_all = "camelCase")]
 pub struct ArrMovie {
     pub id: u32,
+    /// The instance it was read from ([`crate::ids`]); empty for the default.
+    /// Set by the daemon: the *arr itself does not know its FLINCH name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub title: String,
     /// What the Radarr web UI routes by (`/movie/<slug>`); the numeric id is not.
     #[serde(default)]
@@ -126,6 +131,10 @@ pub struct ArrMovie {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
+    /// The quality profile it downloads to (`qualityProfileId`): what a
+    /// downgrade moves ([`crate::quality::act`]).
+    #[serde(default)]
+    pub quality_profile_id: Option<u32>,
     /// Carries the operator's keep tag (resolved by the daemon from tag
     /// labels): a hard guard, exactly like a favorite.
     #[serde(skip)]
@@ -191,6 +200,9 @@ pub struct SeriesSeason {
 #[serde(rename_all = "camelCase")]
 pub struct ArrSeries {
     pub id: u32,
+    /// The instance it was read from (see [`ArrMovie::instance`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub title: String,
     /// What the Sonarr web UI routes by (`/series/<slug>`); the numeric id is not.
     #[serde(default)]
@@ -223,6 +235,9 @@ pub struct ArrSeries {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
+    /// The series' quality profile: Sonarr sets one per series, never per season.
+    #[serde(default)]
+    pub quality_profile_id: Option<u32>,
     /// Carries the operator's keep tag (see [`ArrMovie::keep`]).
     #[serde(skip)]
     pub keep: bool,
@@ -330,7 +345,7 @@ pub fn poster_url(images: &[ArrImage]) -> Option<String> {
 impl ArrMovie {
     /// The card id FLINCH keys every decision about this movie by.
     pub fn card_id(&self) -> String {
-        format!("radarr-{}", self.id)
+        crate::ids::movie_card_id(&self.instance, self.id)
     }
 
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
@@ -368,7 +383,12 @@ impl ArrMovie {
 impl ArrSeries {
     /// The card id of one of this show's seasons.
     pub fn season_card_id(&self, season: u32) -> String {
-        format!("sonarr-{}-s{season}", self.id)
+        crate::ids::season_card_id(&self.instance, self.id, season)
+    }
+
+    /// The show's subject, which its seasons share ([`crate::embedding::subject_of`]).
+    pub fn subject(&self) -> String {
+        crate::ids::show_subject(&self.instance, self.id)
     }
 
     pub fn external_ids(&self) -> crate::ids::ExternalIds {

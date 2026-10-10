@@ -78,6 +78,10 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_URL, optional: true } }
             - name: FLINCH_PLEX_TOKEN
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: PLEX_TOKEN, optional: true } }
+            # Jellyfin/Emby API key, used when Settings > Jellyfin / Emby names
+            # FLINCH_JELLYFIN_KEY as its key variable.
+            - name: FLINCH_JELLYFIN_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: JELLYFIN_API_KEY, optional: true } }
             # Optional signals for the regret score. Each one missing is
             # reported and treated as neutral. Seerr: requests and watchlists.
             - name: SEERR_URL
@@ -94,6 +98,35 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_URL, optional: true } }
             - name: SABNZBD_API_KEY
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_API_KEY, optional: true } }
+            # TMDB key for streaming availability (Settings > Streaming, key
+            # variable TMDB_API_KEY); unused while streaming is off.
+            - name: TMDB_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TMDB_API_KEY, optional: true } }
+            # Notification URLs with a secret in them (Settings > Notifications
+            # names the variable; the URL never enters settings.json). Add one
+            # per channel you configure; these three are the usual ones.
+            - name: FLINCH_DISCORD_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: DISCORD_WEBHOOK_URL, optional: true } }
+            - name: FLINCH_NOTIFY_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: NOTIFY_URL, optional: true } }
+            - name: FLINCH_NTFY_TOKEN
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: NTFY_TOKEN, optional: true } }
+            # Household keep/remove links (Settings > Household): the same
+            # secret signs them here and verifies them in flinch-web.
+            - name: FLINCH_WEB_LINK_SECRET
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_LINK_SECRET, optional: true } }
+            # Torrent client passwords (Settings > Torrents names the variable;
+            # the password never enters settings.json).
+            - name: FLINCH_QBIT_PASSWORD
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: QBITTORRENT_PASSWORD, optional: true } }
+            - name: FLINCH_TRANSMISSION_PASSWORD
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRANSMISSION_PASSWORD, optional: true } }
+            # Watch-source tokens (Settings > Watch sources names the variable;
+            # the token never enters settings.json). One TRAKT_TOKEN_* per member.
+            - name: FLINCH_TRACEARR_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRACEARR_API_KEY, optional: true } }
+            - name: FLINCH_TRAKT_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRAKT_CLIENT_ID, optional: true } }
           # Everything it writes goes to /state or /data; the image stays as built.
           securityContext:
             allowPrivilegeEscalation: false

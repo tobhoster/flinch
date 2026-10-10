@@ -13,15 +13,40 @@ use super::state_dir;
 use flinch_archive::capacity::{App, EvictionLedger, HandedOver};
 use flinch_archive::govern::Governance;
 use flinch_archive::maintainerr::{self as mx, MaintainerrError, OwnedState, SyncItem};
-use flinch_archive::{LibraryKind, ReconcileOutput};
+use flinch_archive::{ArchiveCard, LibraryKind, ReconcileOutput};
 use std::collections::{HashMap, HashSet};
+
+/// One sync item per card. Plex ids come only from the GUID join; a card
+/// without them is never protected or scheduled. `copies` holds every copy
+/// the GUID join merged, so the hand-off can refuse an item it cannot pin to
+/// the copy it judged.
+pub(super) fn sync_items(
+    cards: &[ArchiveCard],
+    plex_ids: &HashMap<String, flinch_archive::ids::PlexIds>,
+    play_keys: &HashMap<String, flinch_archive::plex::PlayKeys>,
+) -> Vec<SyncItem> {
+    cards
+        .iter()
+        .map(|card| SyncItem {
+            card_id: card.id.clone(),
+            kind: card.kind,
+            plex: plex_ids.get(&card.id).cloned(),
+            copies: play_keys
+                .get(&card.id)
+                .filter(|_| plex_ids.contains_key(&card.id))
+                .map(|keys| keys.item_keys().to_vec())
+                .unwrap_or_default(),
+            bytes: card.size_bytes,
+        })
+        .collect()
+}
 
 /// This cycle's decisions, as the hand-off needs them.
 pub(super) struct Handoff<'a> {
     /// Every card with its Plex ids, by card id.
     pub(super) items: &'a HashMap<&'a str, &'a SyncItem>,
-    /// Card id → title, booked with each hand-over for the operator.
-    pub(super) names: &'a HashMap<&'a str, &'a str>,
+    /// Every card: its title is booked with each hand-over for the operator.
+    pub(super) cards: &'a [ArchiveCard],
     pub(super) report: &'a ReconcileOutput,
     /// Evictions past the grace window, in eviction order.
     pub(super) eligible: &'a [String],
@@ -48,7 +73,8 @@ pub(super) async fn sync(
     ledger: &mut EvictionLedger,
     operator_keeps: usize,
 ) -> mx::SyncSummary {
-    let Handoff { items, names, report, eligible, titles, caps, enforcing, now, plex_listed, seerr } = handoff;
+    let Handoff { items, cards, report, eligible, titles, caps, enforcing, now, plex_listed, seerr } = handoff;
+    let names: HashMap<&str, &str> = cards.iter().map(|card| (card.id.as_str(), card.title.as_str())).collect();
     let observed = match observed {
         Ok(observed) => observed,
         Err(error) => return mx::SyncSummary::unavailable(&error, !enforcing, operator_keeps),
@@ -95,5 +121,9 @@ pub(super) async fn sync(
             eprintln!("[flinch-arrd] protected.json/scheduled.json write failed: {error}");
         }
     }
-    mx::SyncSummary::new(&synced, !enforcing)
+    let summary = mx::SyncSummary::new(&synced, !enforcing);
+    for problem in summary.problems.iter().chain(&summary.warnings) {
+        eprintln!("[flinch-arrd] maintainerr: {problem}");
+    }
+    summary
 }

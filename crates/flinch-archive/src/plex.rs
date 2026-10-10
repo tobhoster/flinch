@@ -14,6 +14,7 @@
 use crate::ids::ExternalIds;
 use serde::{Deserialize, Serialize};
 
+pub mod collections;
 pub mod episodes;
 pub mod guid;
 pub mod history;
@@ -22,6 +23,7 @@ pub mod library;
 pub mod migration;
 pub mod resolve;
 pub mod season;
+pub mod shelf;
 
 pub use episodes::{EpisodeIds, PlexEpisodes, SonarrEpisodes};
 pub use join::{PlayJoin, RowKey};
@@ -120,6 +122,9 @@ pub struct PlexDirectory {
 pub struct PlexAccount {
     #[serde(default)]
     pub id: u64,
+    /// The account's name (`/accounts` `name`), for `ignore_viewers`.
+    #[serde(default)]
+    pub name: String,
 }
 
 /// A `Guid` element (`includeGuids=1`): `{"id": "tmdb://603"}`.
@@ -211,6 +216,32 @@ pub struct PlexMetadata {
     pub roles: Vec<PlexTag>,
     #[serde(rename = "Country", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing_if = "Vec::is_empty")]
     pub countries: Vec<PlexTag>,
+    /// A movie row's copies (versions): one `Media` per file set, read by the
+    /// duplicate finder ([`crate::dupes`]). Never written back out.
+    #[serde(rename = "Media", default, deserialize_with = "crate::embedding::text::tolerant", skip_serializing)]
+    pub media: Vec<PlexMedia>,
+}
+
+/// One `Media` element: a version of the movie. Shape as python-plexapi's
+/// `media.Media` (`id`, `videoResolution`, `Part` with `file` and `size`).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlexMedia {
+    #[serde(default, deserialize_with = "lenient")]
+    pub id: Option<u64>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub video_resolution: Option<String>,
+    #[serde(rename = "Part", default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub parts: Vec<PlexPart>,
+}
+
+/// One file of a [`PlexMedia`].
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct PlexPart {
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub file: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
+    pub size: Option<u64>,
 }
 
 /// A number Plex may render as a string: history rows carry

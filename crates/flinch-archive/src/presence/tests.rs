@@ -44,7 +44,7 @@ fn re_downloaded() -> Presence {
     let records: Vec<HistoryRecord> = serde_json::from_str(page).expect("history page parses");
     let events: Vec<FileEvent> = records
         .iter()
-        .filter_map(HistoryRecord::file_event)
+        .filter_map(|record| record.file_event(""))
         .map(|(card, event)| {
             assert_eq!(card, "radarr-10");
             event
@@ -95,7 +95,7 @@ fn radarr_and_sonarr_records_map_to_their_cards() {
     ]"#;
     let records: Vec<HistoryRecord> = serde_json::from_str(rows).expect("records parse");
     let mapped: Vec<Option<(String, Option<u32>, Change)>> =
-        records.iter().map(|record| record.file_event().map(|(card, event)| (card, event.episode, event.change))).collect();
+        records.iter().map(|record| record.file_event("").map(|(card, event)| (card, event.episode, event.change))).collect();
     assert_eq!(
         mapped,
         [
@@ -118,7 +118,7 @@ fn only_a_file_that_left_is_a_removal() {
     ]"#;
     let records: Vec<HistoryRecord> = serde_json::from_str(rows).expect("records parse");
     let removals: Vec<Option<(String, RemovalReason)>> =
-        records.iter().map(|record| record.removal().map(|removal| (removal.card, removal.reason))).collect();
+        records.iter().map(|record| record.removal("").map(|removal| (removal.card, removal.reason))).collect();
     assert_eq!(
         removals,
         [
@@ -128,6 +128,9 @@ fn only_a_file_that_left_is_a_removal() {
             None,
         ]
     );
+    let named: Vec<Option<String>> = records.iter().map(|record| record.removal("anime").map(|removal| removal.card)).collect();
+    assert_eq!(named[2].as_deref(), Some("sonarr@anime-4-s2"), "a named instance's record names its own card");
+    assert_eq!(records[0].removal("4k").map(|removal| removal.card).as_deref(), Some("radarr@4k-3"));
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! history) and `tautulli.json` (Tautulli streams) are the outcome record, and
 //! either may be absent — a household runs on one, the other, or both.
 
-use super::plays::PlayLog;
+use super::plays::{Play, PlayLog};
 use super::FitItem;
 use crate::card::LibraryKind;
 use crate::plex::{public_normalise, PlayJoin, PlayKeys, PlexMetadata};
@@ -82,6 +82,14 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
     let plex: Vec<PlexMetadata> = read_optional_json(&state_dir.join("playback.json"))?;
     let streams: Vec<TautulliRow> = read_optional_json(&state_dir.join("tautulli.json"))?;
     let log = PlayLog::new(&plex, &streams);
+    let mut jellyfin: HashMap<String, crate::jellyfin::CardPlays> = read_optional_json(&state_dir.join(crate::jellyfin::PLAYS_FILE))?;
+    // Tracearr/Trakt plays the daemon joined by catalogue id, merged in the same way.
+    let sources: HashMap<String, crate::jellyfin::CardPlays> = read_optional_json(&state_dir.join(crate::watch_sources::PLAYS_FILE))?;
+    for (id, plays) in sources {
+        let merged = jellyfin.entry(id).or_default();
+        merged.item.extend(plays.item);
+        merged.audience.extend(plays.audience);
+    }
 
     let mut unreadable_rows = 0;
     let mut snapshots = Vec::new();
@@ -103,7 +111,8 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
         .into_iter()
         .filter_map(|snapshot| {
             let unique = snapshot.year.is_some_and(|year| movie_titles.get(&(public_normalise(&snapshot.title), year)) == Some(&1));
-            fit_item(snapshot, unique, &log)
+            let extra = jellyfin.remove(&snapshot.id).unwrap_or_default();
+            fit_item(snapshot, unique, &log, extra)
         })
         .collect();
     let vectors = crate::embedding::VectorStore::read(state_dir)?;
@@ -111,7 +120,8 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.
-fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitItem> {
+/// `jellyfin` holds the plays the daemon joined by catalogue id this cycle.
+fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog, jellyfin: crate::jellyfin::CardPlays) -> Option<FitItem> {
     let age_days = row.age_days?;
     let kind = if row.kind == "movie" { LibraryKind::Movie } else { LibraryKind::Season };
     let season_index = row.season_label.as_deref().and_then(|label| label.trim_start_matches('S').parse::<u32>().ok());
@@ -130,10 +140,15 @@ fn fit_item(row: SnapshotRow, unique_title: bool, log: &PlayLog) -> Option<FitIt
         None if unique_title => PlayJoin::fallback(kind, &row.title, row.year),
         None => PlayJoin::Unresolved,
     };
+    let merged = |mut from_log: Vec<Play>, mut more: Vec<Play>| {
+        from_log.append(&mut more);
+        from_log.sort_by_key(|play| play.epoch);
+        from_log
+    };
     Some(FitItem {
         on_disk: row.on_disk,
-        plays: log.item_plays(&join).into_iter().cloned().collect(),
-        audience_plays: log.audience_plays(&join).into_iter().cloned().collect(),
+        plays: merged(log.item_plays(&join).into_iter().cloned().collect(), jellyfin.item),
+        audience_plays: merged(log.audience_plays(&join).into_iter().cloned().collect(), jellyfin.audience),
         id: row.id,
         title: row.title,
         kind,

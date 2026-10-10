@@ -76,7 +76,12 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             title: card.title.clone(),
             kind: if card.kind == flinch_archive::LibraryKind::Movie { "movie" } else { "season" }.to_string(),
             size_bytes: card.size_bytes,
-            decision: if is_delete { "delete" } else { "keep" }.to_string(),
+            decision: match (is_delete, kept) {
+                (true, _) => "delete",
+                (false, Some(Kept::Archived)) => "archive",
+                _ => "keep",
+            }
+            .to_string(),
             // One sentence, straight from the plan: why it is cheap to lose,
             // or the one rule (or the forecast) that keeps it.
             reason: match (pick, kept) {
@@ -127,11 +132,14 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
         }
     };
 
+    // Joined by card id and show subject: both carry the instance.
+    let movie_of: HashMap<String, &flinch_archive::arr::ArrMovie> = movies.iter().map(|movie| (movie.card_id(), movie)).collect();
+    let show_of: HashMap<String, &flinch_archive::arr::ArrSeries> = series.iter().map(|show| (show.subject(), show)).collect();
     let mut items: Vec<flinch_archive::ItemSnapshot> = cards
         .iter()
         .map(|card| {
-            let movie = movies.iter().find(|m| m.card_id() == card.id);
-            let show = series.iter().find(|s| card.id.starts_with(&format!("sonarr-{}-", s.id)));
+            let movie = movie_of.get(&card.id).copied();
+            let show = show_of.get(flinch_archive::embedding::subject_of(&card.id)).copied().filter(|_| movie.is_none());
             card_row(card, movie, show)
         })
         .collect();

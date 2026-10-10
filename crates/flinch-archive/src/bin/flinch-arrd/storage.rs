@@ -3,7 +3,7 @@
 
 use super::state_dir;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
-use flinch_archive::capacity::{App, AppDisks, CapacityConfig, EvictionLedger, LibraryVolumes, Occupancy, OnDisk, RecycleBin, Volume};
+use flinch_archive::capacity::{AppDisks, CapacityConfig, EvictionLedger, LibraryVolumes, Occupancy, OnDisk, Volume};
 use flinch_archive::govern::{self, Governance, Ingest};
 use flinch_archive::signals::Signals;
 use flinch_archive::ArchiveCard;
@@ -55,11 +55,8 @@ pub(super) fn govern(
 ) -> (Governance, EvictionLedger) {
     let prefix = library_prefix();
     let library = LibraryVolumes::build(disks, |root| prefix.as_deref().and_then(|prefix| probe(prefix, root)));
-    for (app, root) in &library.unmatched_roots {
-        eprintln!(
-            "[flinch-arrd] capacity: {}:{root} is on no reported mount and not mounted here; its items are never evicted",
-            app.label()
-        );
+    for (owner, root) in &library.unmatched_roots {
+        eprintln!("[flinch-arrd] capacity: {owner}:{root} is on no reported mount and not mounted here; its items are never evicted");
     }
     let located = govern::volume_map(&library, movies, series);
     // Library bytes per governed volume: what the disk holds that FLINCH can name.
@@ -80,14 +77,9 @@ pub(super) fn govern(
         .collect();
     let mut ledger = EvictionLedger::read(&ledger_path());
     let present: HashSet<&str> = cards.iter().map(|card| card.id.as_str()).collect();
-    ledger.observe(|id| present.contains(id), |app| library.recycle_secs(app), &measured, now);
-    for app in [App::Radarr, App::Sonarr] {
-        if library.recycle_bin(app) == RecycleBin::NeverEmptied {
-            eprintln!(
-                "[flinch-arrd] capacity: {} never empties its recycle bin; its deletes free no space until someone does",
-                app.label()
-            );
-        }
+    ledger.observe(|id| present.contains(id), |id| library.recycle_secs_of(id), &measured, now);
+    for owner in library.never_emptied() {
+        eprintln!("[flinch-arrd] capacity: {owner} never empties its recycle bin; its deletes free no space until someone does");
     }
     let ingest = Ingest::attribute(&library, movies, series, signals, now);
     let on_disk = OnDisk { library: library_bytes, credit: ledger.credits(), held: ledger.held() };

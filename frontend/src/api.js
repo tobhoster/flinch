@@ -10,11 +10,16 @@ try {
   // Storage unavailable: nothing was kept.
 }
 
-/** Thrown for a 401. `loginConfigured` is false when the server has no login set. */
+/**
+ * Thrown for a 401. `loginConfigured` is false when the server has no
+ * password login set; `sso` is `{ name, login }` when it offers single
+ * sign-on, else null.
+ */
 export class Locked extends Error {
-  constructor(message, loginConfigured) {
+  constructor(message, loginConfigured, sso = null) {
     super(message);
     this.loginConfigured = loginConfigured;
+    this.sso = sso;
   }
 }
 
@@ -60,7 +65,7 @@ async function request(url, init = {}) {
     const text = await res.text().catch(() => '');
     let body = {};
     try { body = JSON.parse(text) || {}; } catch { /* not JSON: treat the login as set up */ }
-    const locked = new Locked(body.error || 'Log in required', body.login_configured !== false);
+    const locked = new Locked(body.error || 'Log in required', body.login_configured !== false, body.sso || null);
     for (const listener of lockListeners) listener(locked);
     throw locked;
   }
@@ -68,9 +73,9 @@ async function request(url, init = {}) {
 }
 
 /**
- * `{ authenticated, login_configured }`: whether to show the dashboard, the
- * login, or how to set one up. Gives up after 10 s, so a hung server cannot
- * keep the page blank.
+ * `{ authenticated, login_configured, sso? }`: whether to show the dashboard,
+ * the login (a form, a single sign-on button, or both), or how to set one
+ * up. Gives up after 10 s, so a hung server cannot keep the page blank.
  */
 export async function loadSession() {
   const res = await send('/api/session', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
@@ -153,4 +158,93 @@ export async function saveSettings(settings) {
   });
   if (!res.ok) throw new Error(await reason(res));
   return true;
+}
+
+/**
+ * Queue an undo of a native delete of the last 30 days: the daemon monitors
+ * and searches it again on its next run. Rejects with the server's reason.
+ */
+export async function restoreItem(id) {
+  const res = await request(`/api/restore/${encodeURIComponent(id)}`, { method: 'POST' });
+  if (!res.ok) throw new Error(await reason(res));
+  return true;
+}
+
+/**
+ * What the draft `rules` would change, planned on the daemon's last inputs:
+ * `{ saved, draft, added, removed, conflicts, rules, uncertain, forced }`.
+ * Saves nothing; rejects with the server's reason (an invalid rule, no inputs yet).
+ */
+export async function previewRules(rules) {
+  const res = await request('/api/rules/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rules }),
+  });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
+}
+
+/**
+ * Asks the daemon to post a test to every saved notification channel; resolves
+ * with the request's id. Rejects with the server's reason (a test still waiting).
+ */
+export async function requestNotifyTest() {
+  const res = await request('/api/notify/test', { method: 'POST' });
+  if (!res.ok) throw new Error(await reason(res));
+  return (await res.json()).id;
+}
+
+/** The daemon's latest test answer, `{ id, finished_at, error, channels }`, or null. */
+export function loadNotifyTest() {
+  return getJson('/api/notify/test');
+}
+
+/**
+ * The TRaSH sync's last preview, apply and pending selection
+ * (`{ enabled, apps: [{ app, changes, … }], last_apply, apply_pending, … }`), or null.
+ */
+export function loadTrashDiff() {
+  return getJson('/api/trash/diff');
+}
+
+/** Queues the selected change ids for the daemon; rejects with the server's reason. */
+export async function applyTrash(changes) {
+  const res = await request('/api/trash/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changes }),
+  });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
+}
+
+/**
+ * Store the copy to keep in a duplicate group (`keep: null` clears it).
+ * `confirm` needs the same copy chosen first; only a confirmed choice is
+ * acted on. Resolves with `{ decision }`; rejects with the server's reason.
+ */
+export async function decideDupe(group, keep, confirm) {
+  const res = await request('/api/dupes/decide', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ group, keep, confirm }),
+  });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
+}
+
+/**
+ * The household's requests, newest first: `{ enabled, secret, requests: [{ id,
+ * card_id, title, kind, by, at, until, status, decided_at }] }`, or null.
+ */
+export function loadRequests() {
+  return getJson('/api/requests');
+}
+
+/** Approve, deny or cancel one request; rejects with the server's reason. */
+export async function decideRequest(id, decision) {
+  const res = await request(`/api/requests/${encodeURIComponent(id)}/${decision}`, { method: 'POST' });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
 }

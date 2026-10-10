@@ -20,6 +20,7 @@ fn candidate(id: &str, volume: &str, gib: u64, regret: f64) -> MediaCandidate {
         protect: false,
         quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), &crate::quality::Item::default()),
         eviction_safety: 0.0,
+        force: None,
     }
 }
 

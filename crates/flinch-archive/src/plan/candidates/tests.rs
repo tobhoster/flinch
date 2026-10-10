@@ -41,6 +41,7 @@ struct World {
     signals: Signals,
     never_played: Option<Exclusion>,
     taste: HashMap<String, Reading>,
+    seeding: HashMap<String, crate::torrents::SeedHold>,
 }
 
 impl World {
@@ -56,6 +57,7 @@ impl World {
             signals: Signals::default(),
             never_played: None,
             taste: HashMap::new(),
+            seeding: HashMap::new(),
         }
     }
 
@@ -73,7 +75,8 @@ impl World {
             signals: &self.signals,
             taste: &self.taste,
             cold_themes: &HashMap::new(),
-            never_played: self.never_played,
+            never_played: self.never_played.clone(),
+            seeding: &self.seeding,
             now: NOW,
         };
         build(&library, config, &HazardModel::default()).into_iter().map(|candidate| (candidate.id.clone(), candidate)).collect()
@@ -105,6 +108,22 @@ fn the_first_rule_that_applies_keeps_an_item_out() {
 }
 
 #[test]
+fn a_torrent_hold_keeps_an_otherwise_eligible_item_and_a_pin_still_names_itself() {
+    use crate::torrents::SeedHold;
+    let below = SeedHold::BelowGoal { ratio_centi: 42, seeding_days: 3 };
+    let mut world = World::new(vec![movie_card(1), ArchiveCard { is_favorite: true, ..movie_card(2) }, movie_card(3)]);
+    world.seeding = HashMap::from([("radarr-1".to_string(), below), ("radarr-2".to_string(), SeedHold::HeldByTorrent)]);
+    let built = world.build(&PlannerConfig::default());
+    assert_eq!(built["radarr-1"].exclusion, Some(Exclusion::Seeding(below)));
+    assert_eq!(
+        built["radarr-1"].exclusion.as_ref().map(ToString::to_string).as_deref(),
+        Some("Seeding: ratio 0.42 after 3 day(s), below its seed goal")
+    );
+    assert_eq!(built["radarr-2"].exclusion, Some(Exclusion::Pinned(Pin::Favorite)));
+    assert_eq!(built["radarr-3"].exclusion, None);
+}
+
+#[test]
 fn seasons_join_their_show_in_order_and_movies_stand_alone() {
     let world = World::new(vec![season_card(7, 2, None), season_card(7, 1, Some(100.0)), movie_card(1)]);
     let built = world.build(&PlannerConfig::default());
@@ -118,7 +137,7 @@ fn a_user_who_requested_and_watchlisted_a_season_claims_it_once_with_both() {
     let mut world = World::new(vec![season_card(7, 1, Some(300.0)), season_card(7, 2, Some(300.0))]);
     world.series = vec![show(7, 70, &[1, 2])];
     let media = MediaRef::Show { tvdb: Some(70), tmdb: None };
-    world.signals.requests = vec![Request { media, seasons: vec![1], requester: "Ann".to_string() }];
+    world.signals.requests = vec![Request { media, seasons: vec![1], requester: "Ann".to_string(), requested_at: None }];
     world.signals.watchlists = vec![Watchlisted { media, user: "ann".to_string() }, Watchlisted { media, user: "Bo".to_string() }];
     let config = PlannerConfig { user_weights: BTreeMap::from([("ANN".to_string(), 2.0)]), ..PlannerConfig::default() };
     let built = world.build(&config);
@@ -141,4 +160,19 @@ fn a_never_played_title_with_a_taste_names_the_titles_it_resembles() {
 
     assert!(built["radarr-4"].reason.ends_with(" · like Hot Fuzz, Paddington (played here)"), "{}", built["radarr-4"].reason);
     assert!(!built["radarr-5"].reason.contains("like"), "played: taste does not speak for it: {}", built["radarr-5"].reason);
+}
+
+#[test]
+fn a_season_of_a_show_that_streams_costs_less_to_lose_and_says_where() {
+    use crate::signals::streaming::{Stream, Title};
+    let mut world = World::new(vec![season_card(7, 1, Some(300.0)), season_card(8, 1, Some(300.0))]);
+    world.series = vec![ArrSeries { tmdb_id: Some(77), ..show(7, 70, &[1]) }, ArrSeries { tmdb_id: Some(88), ..show(8, 80, &[1]) }];
+    let before = world.build(&PlannerConfig::default());
+    world.signals.streams = HashMap::from([(Title::Tv(77), Stream { provider: "Netflix".to_string(), region: "DE".to_string() })]);
+    let after = world.build(&PlannerConfig::default());
+    assert!(after["sonarr-7-s1"].regret.friction < before["sonarr-7-s1"].regret.friction);
+    assert!(after["sonarr-7-s1"].regret.friction >= crate::regret::MIN_FRICTION);
+    assert!(after["sonarr-7-s1"].reason.ends_with(" · streams on Netflix (DE)"), "{}", after["sonarr-7-s1"].reason);
+    assert_eq!(after["sonarr-8-s1"].regret, before["sonarr-8-s1"].regret, "unknown availability: no discount");
+    assert!(!after["sonarr-8-s1"].reason.contains("streams"));
 }

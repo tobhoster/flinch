@@ -11,8 +11,14 @@
 //!
 //! Advice never feeds back into regret: the plan is the same with or without it.
 //!
-//! The advice is published; FLINCH never changes a quality profile itself.
-//! Recyclarr owns what profiles are, and a move can trigger a re-download.
+//! The advice is published. Only when the operator switches quality actions
+//! on does FLINCH act on downgrade advice ([`act`]); Recyclarr or the quality
+//! sync owns what profiles are. [`churn`] flags items the *arrs keep
+//! downloading again.
+
+pub mod act;
+pub mod churn;
+pub mod upgrade;
 
 use crate::regret::Regret;
 use crate::themes::ColdTheme;

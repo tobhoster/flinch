@@ -104,10 +104,10 @@ impl fmt::Display for Misconfigured {
             write!(f, " (id {id})")?;
         }
         match (&self.problem, self.route) {
-            (CollectionProblem::Untitled, Route::Delete) => write!(f, " has no title: name it in Settings → Maintainerr collections"),
+            (CollectionProblem::Untitled, Route::Delete) => write!(f, " has no title: name it in Settings → Collections"),
             (CollectionProblem::Untitled, Route::LeavingSoon) => write!(
                 f,
-                " has no title: name it in Settings → Maintainerr collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
+                " has no title: name it in Settings → Collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
             ),
             (CollectionProblem::NotFound, Route::Delete) => write!(f, " not found: create it in Maintainerr and bind a delete rule to it"),
             (CollectionProblem::NotFound, Route::LeavingSoon) => write!(

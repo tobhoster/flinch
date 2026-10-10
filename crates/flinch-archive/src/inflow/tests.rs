@@ -53,7 +53,7 @@ fn show(status: &str) -> ArrSeries {
 
 fn run(cards: &[ArchiveCard], series: &[ArrSeries], requests: &[Request], vectors: &VectorStore) -> Vec<Suggestion> {
     let record = record();
-    suggest(&Inputs { cards, series, movies: &[], requests, vectors, record: &record })
+    suggest(&Inputs { cards, series, movies: &[], requests, streams: &HashMap::new(), vectors, record: &record })
 }
 
 #[test]
@@ -92,12 +92,46 @@ fn a_show_without_a_vector_is_never_called_cold() {
 #[case::with_vector(true, 1)]
 #[case::without_vector(false, 0)]
 fn a_cold_request_is_flagged_for_its_requester_only_with_a_vector(#[case] with_show: bool, #[case] expected: usize) {
-    let request = Request { media: MediaRef::Show { tvdb: Some(70), tmdb: None }, seasons: vec![3], requester: "sam".to_string() };
+    let request = Request {
+        media: MediaRef::Show { tvdb: Some(70), tmdb: None },
+        seasons: vec![3],
+        requester: "sam".to_string(),
+        requested_at: None,
+    };
     // An ended show is outside the unstarted rule; only the request names it.
     let out = run(&[season(1, None, None)], &[show("ended")], &[request], &vectors(with_show));
     assert_eq!(out.len(), expected);
     if let Some(first) = out.first() {
         assert_eq!((first.rule, first.requester.as_deref()), (Rule::ColdRequest, Some("sam")));
+    }
+}
+
+#[rstest]
+#[case::streams_on_a_subscribed_service(Some(77), Some(Rule::Streams))]
+#[case::unknown_availability_falls_back_to_taste(None, None)]
+fn a_request_that_streams_on_a_service_you_have_is_named(#[case] streaming_tmdb: Option<u64>, #[case] rule: Option<Rule>) {
+    let request = Request {
+        media: MediaRef::Show { tvdb: Some(70), tmdb: Some(77) },
+        seasons: vec![],
+        requester: "sam".to_string(),
+        requested_at: None,
+    };
+    let streams: HashMap<Title, Stream> =
+        streaming_tmdb.map(|id| (Title::Tv(id), Stream { provider: "Netflix".into(), region: "DE".into() })).into_iter().collect();
+    let record = record();
+    let (cards, series) = ([season(1, None, None)], [show("ended")]);
+    let out = suggest(&Inputs {
+        cards: &cards,
+        series: &series,
+        movies: &[],
+        requests: &[request],
+        streams: &streams,
+        vectors: &vectors(false),
+        record: &record,
+    });
+    assert_eq!(out.first().map(|s| s.rule), rule);
+    if rule.is_some() {
+        assert_eq!(out[0].why, "requested by sam, but it streams on Netflix (DE), a service you have");
     }
 }
 

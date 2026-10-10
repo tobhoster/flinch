@@ -8,7 +8,7 @@
 
 use super::{read_state, state_dir, write_state};
 use flinch_archive::arr::{ArrMovie, ArrSeries};
-use flinch_archive::embedding::{self, VectorStore};
+use flinch_archive::embedding::VectorStore;
 use flinch_archive::plan::candidates::Plays;
 use flinch_archive::themes::{self, ColdTheme, Holding, Member, Themes, ThemesStatus};
 use flinch_archive::{ArchiveCard, EvictionPlan};
@@ -32,7 +32,7 @@ pub(super) fn refresh(
     let subjects: Vec<(String, &[String])> = movies
         .iter()
         .map(|movie| (movie.card_id(), movie.genres.as_slice()))
-        .chain(series.iter().map(|show| (embedding::series_subject(show.id), show.genres.as_slice())))
+        .chain(series.iter().map(|show| (show.subject(), show.genres.as_slice())))
         .collect();
     let members: Vec<Member> =
         subjects.iter().filter_map(|(subject, genres)| Some(Member { subject, vector: vectors.vector(subject)?, genres })).collect();

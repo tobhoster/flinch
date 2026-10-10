@@ -13,7 +13,8 @@
 //!   readily the household plays titles like it ([`crate::taste`]). Anyone
 //!   partway through it raises P to at least 0.95.
 //! - **C_reacq** is how hard it is to get back: bigger files, few seeders and
-//!   usenet copies past retention cost more.
+//!   usenet copies past retention cost more; a title streaming on a service
+//!   the household subscribes to costs less, never below the floor.
 //! - **A_household** is who still wants it: on someone's watchlist, or
 //!   requested by them, weighted per user.
 //!
@@ -41,6 +42,9 @@ pub const PARTWAY: std::ops::RangeInclusive<f32> = 0.10..=0.90;
 pub const PARTWAY_FLOOR: f64 = 0.95;
 /// C_reacq never falls below this: a tiny file is cheap to replace, never free.
 pub const MIN_FRICTION: f64 = 0.1;
+/// The share of C_reacq above [`MIN_FRICTION`] a title keeps while it streams
+/// on a subscribed service: watchable without a download, though not owned.
+pub const STREAMING_SHARE: f64 = 0.25;
 
 /// The hazard's parameters. `λ₀` is per day.
 ///
@@ -296,17 +300,27 @@ pub struct Reacquisition {
     pub seeders: Option<u32>,
     /// No usenet copy is within the servers' retention.
     pub usenet_out_of_retention: bool,
+    /// It streams, in the operator's region, on a service the household
+    /// subscribes to ([`crate::signals::streaming`]); `false` when unknown.
+    pub streams: bool,
 }
 
 impl Reacquisition {
     /// `1 + 0.3·log₁₀(S / 1 GB) + 2 / max(seeders, 1) + 5·[out of retention]`,
     /// at least [`MIN_FRICTION`]. Unknown seeders add nothing: missing evidence
-    /// never makes an item look harder to replace than it is.
+    /// never makes an item look harder to replace than it is. A title that
+    /// streams keeps only [`STREAMING_SHARE`] of its friction above the floor:
+    /// cheaper to lose, never free.
     pub fn friction(&self) -> f64 {
         let size = 0.3 * (self.size_bytes.max(1) as f64 / 1e9).log10();
         let seeders = self.seeders.map_or(0.0, |seeders| 2.0 / f64::from(seeders.max(1)));
         let retention = if self.usenet_out_of_retention { 5.0 } else { 0.0 };
-        (1.0 + size + seeders + retention).max(MIN_FRICTION)
+        let friction = (1.0 + size + seeders + retention).max(MIN_FRICTION);
+        if self.streams {
+            MIN_FRICTION + STREAMING_SHARE * (friction - MIN_FRICTION)
+        } else {
+            friction
+        }
     }
 }
 

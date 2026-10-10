@@ -40,7 +40,7 @@ export function Reacquisition({ friction }) {
 /** Advice action labels, shared by the table column and the detail sheet. */
 export const ADVICE = { keep_original: 'Keep', downgrade_quality: 'Downgrade', eligible_for_eviction: 'Evictable' };
 
-/** The quality advice; nothing in Radarr or Sonarr is changed. */
+/** The quality advice; Radarr or Sonarr change only when quality actions are on. */
 export function Advice({ advice, full = false }) {
   if (!advice?.action) return <span className="text-fg-faint">—</span>;
   const label = ADVICE[advice.action.type] ?? advice.action.type;

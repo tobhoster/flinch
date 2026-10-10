@@ -1,5 +1,5 @@
 import React from 'react';
-import { SectionTitle } from './ui.jsx';
+import { JustWatch, SectionTitle } from './ui.jsx';
 
 const LIMIT = 10;
 
@@ -7,18 +7,20 @@ const RULE = {
   cold_unstarted: 'never started',
   abandoned: 'abandoned',
   cold_request: 'cold request',
+  streams: 'streams already',
 };
 
 /**
  * Incoming storage nobody is likely to watch, from `status.inflow`: advice
- * for the operator, never acted on by FLINCH. An absent or empty list (an
- * older snapshot, or nothing flagged) renders nothing.
+ * for the operator, acted on only for shows approved under Settings → Rules
+ * (inflow actions). An absent or empty list (an older snapshot, or nothing
+ * flagged) renders nothing.
  */
 export default function Inflow({ items }) {
   if (!items?.length) return null;
   return (
     <section className="min-w-0">
-      <SectionTitle hint="advice only" term="inflow">Coming in, likely unwatched</SectionTitle>
+      <SectionTitle hint="advice; approve in Settings" term="inflow">Coming in, likely unwatched</SectionTitle>
       <ul className="space-y-1 text-fg-muted">
         {items.slice(0, LIMIT).map((s) => (
           <li key={`${s.subject}-${s.rule}-${s.requester ?? ''}`} className="break-words">
@@ -30,6 +32,7 @@ export default function Inflow({ items }) {
         ))}
         {items.length > LIMIT && <li className="text-fg-faint">+{items.length - LIMIT} more</li>}
       </ul>
+      {items.some((s) => s.rule === 'streams') && <p className="mt-1 text-xs"><JustWatch /></p>}
     </section>
   );
 }

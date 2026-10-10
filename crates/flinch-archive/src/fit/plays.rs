@@ -21,14 +21,20 @@ pub const SAME_VIEWING_SECS: u64 = 86_400;
 ///
 /// A Plex account id and a Tautulli user are different names for the same
 /// people, so viewers are only ever counted within one namespace.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Viewer {
     PlexAccount(u64),
     TautulliUser(String),
+    /// A Jellyfin or Emby user id.
+    JellyfinUser(String),
+    /// A Tracearr user id (one identity across its media servers).
+    TracearrUser(String),
+    /// A Trakt account, as the operator named its source.
+    TraktUser(String),
 }
 
 /// One play of a library item.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Play {
     pub epoch: u64,
     /// Episode number within its season; `None` for a movie or an unnumbered row.
@@ -187,6 +193,9 @@ impl PlayEvidence {
 
         let mut plex: HashSet<u64> = HashSet::new();
         let mut tautulli: HashSet<&str> = HashSet::new();
+        let mut jellyfin: HashSet<&str> = HashSet::new();
+        let mut tracearr: HashSet<&str> = HashSet::new();
+        let mut trakt: HashSet<&str> = HashSet::new();
         for play in audience_plays.into_iter().filter(|play| play.complete() && play.epoch < as_of) {
             match &play.viewer {
                 Some(Viewer::PlexAccount(id)) => {
@@ -195,10 +204,19 @@ impl PlayEvidence {
                 Some(Viewer::TautulliUser(name)) => {
                     tautulli.insert(name.as_str());
                 }
+                Some(Viewer::JellyfinUser(id)) => {
+                    jellyfin.insert(id.as_str());
+                }
+                Some(Viewer::TracearrUser(id)) => {
+                    tracearr.insert(id.as_str());
+                }
+                Some(Viewer::TraktUser(id)) => {
+                    trakt.insert(id.as_str());
+                }
                 None => {}
             }
         }
-        let viewers = plex.len().max(tautulli.len()) as u32;
+        let viewers = plex.len().max(tautulli.len()).max(jellyfin.len()).max(tracearr.len()).max(trakt.len()) as u32;
         Self { rewatched, viewers }
     }
 }
