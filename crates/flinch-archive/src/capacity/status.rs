@@ -3,7 +3,7 @@
 //! target (the eligible set is big enough) and whether the target is *met*
 //! (FLINCH has handed that much over).
 
-use super::{ratio, sum, App, CapacityConfig, HeldEviction, OnDisk, Volume, VolumeForecast};
+use super::{ratio, sum, CapacityConfig, HeldEviction, OnDisk, Volume, VolumeForecast};
 use crate::plan::knapsack::Method;
 use crate::plan::EvictionPlan;
 use serde::{Deserialize, Serialize};
@@ -82,7 +82,8 @@ pub struct CycleCapacity<'a> {
     pub volumes: &'a [Volume],
     pub forecasts: &'a [VolumeForecast],
     pub plan: &'a EvictionPlan,
-    pub unmatched_roots: &'a [(App, String)],
+    /// (instance key, root): `radarr`, `radarr@4k` ([`crate::ids::instance_key`]).
+    pub unmatched_roots: &'a [(String, String)],
     pub on_disk: &'a OnDisk,
     /// Handed-over bytes still on disk, per volume.
     pub handed: &'a BTreeMap<String, u64>,
@@ -153,7 +154,7 @@ impl CapacityStatus {
             held_bytes: total(|v| v.held_bytes),
             untracked_bytes: total(|v| v.untracked_bytes),
             handed_bytes: total(|v| v.handed_bytes),
-            unmatched_roots: unmatched_roots.iter().map(|(app, root)| format!("{}:{root}", app.label())).collect(),
+            unmatched_roots: unmatched_roots.iter().map(|(owner, root)| format!("{owner}:{root}")).collect(),
             volumes: rows,
         }
     }

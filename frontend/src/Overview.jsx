@@ -4,8 +4,13 @@ import RecentRuns from './Progress.jsx';
 import Capacity from './Capacity.jsx';
 import MaintainerrSync from './Maintainerr.jsx';
 import OutsideDeletions from './OutsideDeletions.jsx';
+import Inflow from './Inflow.jsx';
+import Themes from './Themes.jsx';
+import QualityActions from './QualityActions.jsx';
+import Dupes from './Dupes.jsx';
+import HouseholdRequests from './HouseholdRequests.jsx';
 import ModelCard from './ModelCard.jsx';
-import { GiB, SectionTitle, ago } from './ui.jsx';
+import { GiB, JustWatch, SectionTitle, ago } from './ui.jsx';
 import { Explain, GlossaryCard } from './Explain.jsx';
 
 const CANDIDATE_LIMIT = 25;
@@ -18,6 +23,9 @@ const SOURCES = [
   ['Show-level', ['plex_show']],
   ['Tautulli', ['tautulli', 'tautulli_no_stream']],
   ['History', ['plex_history']],
+  ['Jellyfin', ['jellyfin']],
+  ['Tracearr', ['tracearr', 'tracearr_no_play']],
+  ['Trakt', ['trakt']],
   ['Export', ['export']],
 ];
 const KNOWN_SOURCES = new Set(SOURCES.flatMap(([, keys]) => keys));
@@ -31,7 +39,7 @@ const KEPT_GROUPS = [
   [/grace period/, 'In grace period', 'grace_period'],
   [/^Not needed/, 'Eligible, not needed', 'eligible'],
   [/^Never played/, 'Never played', 'never_played'],
-  [/^Not matched in Plex/, 'Not matched in Plex', 'unresolved'],
+  [/^Not matched in the media server/, 'Not matched in the media server', 'unresolved'],
   [/^On no governed disk/, 'Not governed', 'not_governed'],
   [/must go first/, 'Earlier season first', 'plan'],
 ];
@@ -143,8 +151,13 @@ export default function Overview({ status, items, history, loading }) {
           : <NothingPlanned kept={kept} cheapest={cheapest} status={s} />}
         <div className="min-w-0 space-y-6">
           <RecentRuns history={history} target={s.capacity?.target_utilization} />
-          <MaintainerrSync sync={s.sync} dryRun={s.dry_run} />
+          <MaintainerrSync sync={s.sync} native={s.native} dryRun={s.dry_run} />
           <OutsideDeletions items={s.outside_deletions} />
+          <Inflow items={s.inflow} />
+          <Themes themes={s.themes} />
+          <QualityActions actions={s.quality_actions} churn={s.upgrade_churn} search={s.upgrade_search} />
+          <Dupes dupes={s.dupes} />
+          <HouseholdRequests household={s.household} />
           {s.quality && (
             <p className="text-fg-muted">
               Quality advice: <span className="num text-fg">{s.quality.keep ?? 0}</span> keep
@@ -211,6 +224,7 @@ function CandidateList({ items }) {
       {items.length > shown.length && (
         <p className="pt-2 text-xs text-fg-muted">{items.length - shown.length} more in Series and Movies.</p>
       )}
+      {shown.some((i) => i.reason?.includes('streams on ')) && <p className="pt-1 text-xs"><JustWatch /></p>}
     </section>
   );
 }

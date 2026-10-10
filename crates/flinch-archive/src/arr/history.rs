@@ -43,6 +43,11 @@ pub struct HistoryRecord {
     pub episode: Option<HistoryEpisode>,
     #[serde(default)]
     pub data: Option<HistoryData>,
+    /// The download client's id for the release (`HistoryResource.DownloadId`
+    /// in both apps): a torrent client's info hash, upper-cased by the *arr
+    /// (`QBittorrent.cs`, `TransmissionBase.cs`: `Hash.ToUpper()`).
+    #[serde(default)]
+    pub download_id: Option<String>,
 }
 
 /// `MovieHistoryEventType` / `EpisodeHistoryEventType`, the members that move files.
@@ -84,9 +89,10 @@ pub struct HistoryData {
 }
 
 impl HistoryRecord {
-    /// The card this record is about and what it did to that card's files;
-    /// `None` when it moved no file or cannot be placed or dated.
-    pub fn file_event(&self) -> Option<(String, FileEvent)> {
+    /// The card this record is about in `instance` (the one it was read from;
+    /// empty for the default) and what it did to that card's files; `None`
+    /// when it moved no file or cannot be placed or dated.
+    pub fn file_event(&self, instance: &str) -> Option<(String, FileEvent)> {
         let change = match self.event_type {
             EventType::DownloadFolderImported | EventType::MovieFolderImported | EventType::SeriesFolderImported => Change::Imported,
             EventType::MovieFileDeleted | EventType::EpisodeFileDeleted => match self.data.as_ref().and_then(|data| data.reason) {
@@ -100,10 +106,10 @@ impl HistoryRecord {
         };
         let at = presence::parse_utc(&self.date)?;
         let (card, episode) = match (self.movie_id.filter(|id| *id > 0), self.series_id.filter(|id| *id > 0)) {
-            (Some(movie), _) => (format!("radarr-{movie}"), None),
+            (Some(movie), _) => (crate::ids::movie_card_id(instance, movie), None),
             (None, Some(series)) => {
                 let season = self.episode.as_ref()?.season_number;
-                (format!("sonarr-{series}-s{season}"), Some(self.episode_id?))
+                (crate::ids::season_card_id(instance, series, season), Some(self.episode_id?))
             }
             (None, None) => return None,
         };
@@ -112,8 +118,8 @@ impl HistoryRecord {
 
     /// The file this record removed: a deletion or a disappearance, not a
     /// swap for a newer file (an upgrade, or Radarr's manual override).
-    pub fn removal(&self) -> Option<Removal> {
-        let (card, event) = self.file_event()?;
+    pub fn removal(&self, instance: &str) -> Option<Removal> {
+        let (card, event) = self.file_event(instance)?;
         if event.change != Change::Removed {
             return None;
         }
@@ -125,5 +131,16 @@ impl HistoryRecord {
             }
         };
         Some(Removal { card, at: event.at, reason })
+    }
+
+    /// The card and episode an import filled, when, and the lower-cased id
+    /// of the download it came from ([`crate::torrents`]).
+    pub fn import_download(&self, instance: &str) -> Option<(String, Option<u32>, u64, String)> {
+        let (card, event) = self.file_event(instance)?;
+        if event.change != Change::Imported {
+            return None;
+        }
+        let id = self.download_id.as_deref().filter(|id| !id.is_empty())?.to_ascii_lowercase();
+        Some((card, event.episode, event.at, id))
     }
 }

@@ -1,11 +1,16 @@
 //! Everything the daemon reads over HTTP: *arr inventory and disks, Plex watch
 //! state, Tautulli history, and the connections it borrows from Maintainerr.
+//! Every *arr read goes to each instance in turn ([`super::args`]); what one
+//! instance says is its own (ids, tags, mounts) and is kept apart.
 
 use super::Args;
 use anyhow::{Context, Result};
+use flinch_archive::arr::instances::Connection;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
 use flinch_archive::body;
+use flinch_archive::capacity::App;
 use flinch_archive::plex::SonarrEpisodes;
+use flinch_archive::rules::facts::InstanceTags;
 
 /// Redirects are not followed (a key or token would travel with them), so one
 /// answered here would otherwise read as an empty or unparseable body.
@@ -27,19 +32,25 @@ pub(super) async fn fetch_json(client: &reqwest::Client, url: &str, api_key: &st
     serde_json::from_slice(&body).context("arr response was not JSON")
 }
 
-/// Every episode of one series (`/api/v3/episode`), for confirming a season
-/// whose Plex episode count differs from Sonarr's file count.
-pub(super) async fn fetch_series_episodes(client: &reqwest::Client, args: &Args, series_id: u32) -> Result<SonarrEpisodes> {
-    let url = format!("{}/api/v3/episode?seriesId={series_id}", args.sonarr_url.trim_end_matches('/'));
-    let rows = fetch_json(client, &url, &args.sonarr_key).await?;
+/// Every episode of one series (`/api/v3/episode`) in its Sonarr instance,
+/// for confirming a season whose Plex episode count differs from Sonarr's
+/// file count.
+pub(super) async fn fetch_series_episodes(client: &reqwest::Client, args: &Args, instance: &str, series_id: u32) -> Result<SonarrEpisodes> {
+    let arr = args.arr(App::Sonarr, instance).with_context(|| format!("no Sonarr instance named {instance:?}"))?;
+    let url = format!("{}/api/v3/episode?seriesId={series_id}", arr.base);
+    let rows = fetch_json(client, &url, &arr.key).await?;
     Ok(SonarrEpisodes::from_rows(rows.as_array().map(Vec::as_slice).unwrap_or_default()))
 }
 
 pub(super) struct Fetched {
     pub(super) movies: Vec<ArrMovie>,
     pub(super) series: Vec<ArrSeries>,
-    /// Files both apps removed lately, from the cached history read.
+    /// Files every instance removed lately, from the cached history read.
     pub(super) removals: Vec<flinch_archive::outside::Removal>,
+    /// Card id → download ids (torrent hashes) of its files, from the same read.
+    pub(super) downloads: std::collections::BTreeMap<String, Vec<String>>,
+    /// Each instance's tag id → label, for rules scoped by tag.
+    pub(super) tags: Vec<InstanceTags>,
 }
 
 /// Parse a JSON array row by row: a malformed row is skipped and counted,
@@ -57,28 +68,37 @@ fn parse_rows<T: serde::de::DeserializeOwned>(app: &str, value: serde_json::Valu
     Ok(rows.parsed)
 }
 
-/// Ids of the tags labelled with the operator's keep label (case-insensitive).
-/// `None` means the labels could not be read — the caller then fails closed.
-async fn keep_tag_ids(client: &reqwest::Client, base: &str, key: &str, keep_tag: &str) -> Option<Vec<u32>> {
+/// One app's tag id → label (`GET /api/v3/tag`).
+pub(super) type TagLabels = std::collections::HashMap<u32, String>;
+
+/// Every tag of one app. `None` means the labels could not be read.
+async fn tag_labels(client: &reqwest::Client, base: &str, key: &str) -> Option<TagLabels> {
     #[derive(serde::Deserialize)]
     struct Tag {
         id: u32,
         label: String,
     }
-    let keep_tag = keep_tag.trim();
-    if keep_tag.is_empty() {
-        return Some(Vec::new());
-    }
     match fetch_json(client, &format!("{base}/api/v3/tag"), key)
         .await
         .and_then(|value| serde_json::from_value::<Vec<Tag>>(value).context("tag payload shape"))
     {
-        Ok(tags) => Some(tags.into_iter().filter(|tag| tag.label.eq_ignore_ascii_case(keep_tag)).map(|tag| tag.id).collect()),
+        Ok(tags) => Some(tags.into_iter().map(|tag| (tag.id, tag.label)).collect()),
         Err(error) => {
-            eprintln!("[flinch-arrd] tags unreadable at {base}: every item there is held this cycle: {error:#}");
+            eprintln!("[flinch-arrd] tags unreadable at {base}: keep-tagged items there are held and tag rules see no tags: {error:#}");
             None
         }
     }
+}
+
+/// Ids of the tags labelled with the operator's keep label (case-insensitive).
+/// `None` means a keep label is set but the labels could not be read — the
+/// caller then fails closed.
+fn keep_tag_ids(labels: Option<&TagLabels>, keep_tag: &str) -> Option<Vec<u32>> {
+    let keep_tag = keep_tag.trim();
+    if keep_tag.is_empty() {
+        return Some(Vec::new());
+    }
+    labels.map(|labels| labels.iter().filter(|(_, label)| label.eq_ignore_ascii_case(keep_tag)).map(|(id, _)| *id).collect())
 }
 
 /// A keep-tagged item is a hard guard. Unreadable tags hold every item of that
@@ -115,41 +135,62 @@ async fn season_arrivals(
     Ok(newest)
 }
 
+/// Every instance's library. One unreadable library fails the read: an
+/// instance whose items vanished would read as deleted, never as unknown.
 pub(super) async fn fetch_inventory(client: &reqwest::Client, args: &Args, keep_tag: &str) -> Result<Fetched> {
-    let radarr = args.radarr_url.trim_end_matches('/');
-    let sonarr = args.sonarr_url.trim_end_matches('/');
-    let (movie_url, series_url) = (format!("{radarr}/api/v3/movie"), format!("{sonarr}/api/v3/series"));
-    let (movies, series, radarr_keep, sonarr_keep) = tokio::join!(
-        fetch_json(client, &movie_url, &args.radarr_key),
-        fetch_json(client, &series_url, &args.sonarr_key),
-        keep_tag_ids(client, radarr, &args.radarr_key, keep_tag),
-        keep_tag_ids(client, sonarr, &args.sonarr_key, keep_tag),
-    );
-    let mut movies: Vec<ArrMovie> = parse_rows("radarr", movies?)?;
-    let mut series: Vec<ArrSeries> = parse_rows("sonarr", series?)?;
-    for movie in &mut movies {
-        movie.keep = mark_keep(&movie.tags, radarr_keep.as_deref());
-    }
-    for show in &mut series {
-        show.keep = mark_keep(&show.tags, sonarr_keep.as_deref());
-        if !show.seasons.iter().any(|season| season.statistics.episode_file_count > 0) {
-            continue;
-        }
-        match season_arrivals(client, sonarr, &args.sonarr_key, show.id).await {
-            Ok(mut newest) => {
-                for season in &mut show.seasons {
-                    season.files_added = newest.remove(&season.season_number);
+    let (mut movies, mut series, mut tags) = (Vec::new(), Vec::new(), Vec::new());
+    for arr in &args.arrs {
+        let path = match arr.app {
+            App::Radarr => "movie",
+            App::Sonarr => "series",
+        };
+        let url = format!("{}/api/v3/{path}", arr.base);
+        let (rows, labels) = tokio::join!(fetch_json(client, &url, &arr.key), tag_labels(client, &arr.base, &arr.key));
+        let rows = rows.with_context(|| format!("{} library", arr.key()))?;
+        let keep = keep_tag_ids(labels.as_ref(), keep_tag);
+        match arr.app {
+            App::Radarr => {
+                let mut read: Vec<ArrMovie> = parse_rows(&arr.key(), rows)?;
+                for movie in &mut read {
+                    movie.instance.clone_from(&arr.name);
+                    movie.keep = mark_keep(&movie.tags, keep.as_deref());
                 }
+                movies.append(&mut read);
             }
-            Err(error) => {
-                eprintln!("[flinch-arrd] sonarr: file dates for {:?} unreadable, its seasons read as fresh: {error:#}", show.title)
+            App::Sonarr => {
+                let mut read: Vec<ArrSeries> = parse_rows(&arr.key(), rows)?;
+                for show in &mut read {
+                    show.instance.clone_from(&arr.name);
+                    show.keep = mark_keep(&show.tags, keep.as_deref());
+                    file_dates(client, arr, show).await;
+                }
+                series.append(&mut read);
             }
         }
+        tags.push((arr.app, arr.name.clone(), labels));
     }
     // Dwell runs from when the household got each item, not from its current
     // file: needs today's files and their dates, so it comes last.
-    let removals = super::history::attach(client, args, &mut movies, &mut series).await;
-    Ok(Fetched { movies, series, removals })
+    let super::history::Attached { removals, downloads } = super::history::attach(client, args, &mut movies, &mut series).await;
+    Ok(Fetched { movies, series, removals, downloads, tags })
+}
+
+/// Each season's newest file date, for a show with files; unreadable dates
+/// leave its seasons reading as fresh.
+async fn file_dates(client: &reqwest::Client, arr: &Connection, show: &mut ArrSeries) {
+    if !show.seasons.iter().any(|season| season.statistics.episode_file_count > 0) {
+        return;
+    }
+    match season_arrivals(client, &arr.base, &arr.key, show.id).await {
+        Ok(mut newest) => {
+            for season in &mut show.seasons {
+                season.files_added = newest.remove(&season.season_number);
+            }
+        }
+        Err(error) => {
+            eprintln!("[flinch-arrd] {}: file dates for {:?} unreadable, its seasons read as fresh: {error:#}", arr.key(), show.title)
+        }
+    }
 }
 /// Does a value look like a redacted secret rather than a usable one?
 pub(super) fn looks_masked(value: &str) -> bool {
@@ -199,63 +240,54 @@ pub(super) async fn maintainerr_seerr_configured(http: &reqwest::Client, args: &
     let settings = maintainerr_settings(http, args).await.ok()?;
     Some(settings.get("seerr_url").and_then(|url| url.as_str()).is_some_and(|url| !url.trim().is_empty()))
 }
-/// Each app's view of its disks: every mount (`/api/v3/diskspace`) and where
-/// its library lives (`/api/v3/rootfolder`). An app that refuses is logged and
-/// left out — its items then sit on no governed volume and are never evicted.
+/// Each instance's view of its disks: every mount (`/api/v3/diskspace`) and
+/// where its library lives (`/api/v3/rootfolder`). An instance that refuses
+/// is logged and left out — its items then sit on no governed volume and are
+/// never evicted.
 pub(super) async fn fetch_disks(client: &reqwest::Client, args: &Args) -> Vec<flinch_archive::capacity::AppDisks> {
+    let mut found = Vec::new();
+    for arr in &args.arrs {
+        match instance_disks(client, arr).await {
+            Ok(disks) => found.push(disks),
+            Err(error) => eprintln!("[flinch-arrd] {} disks unavailable, its items stay ungoverned: {error:#}", arr.key()),
+        }
+    }
+    found
+}
+
+async fn instance_disks(client: &reqwest::Client, arr: &Connection) -> Result<flinch_archive::capacity::AppDisks> {
     use flinch_archive::arr::{ArrDiskSpace, ArrMediaManagement, ArrRootFolder};
-    use flinch_archive::capacity::{App, AppDisks, RecycleBin};
-    let one = |app: App, base: &str, key: &str| {
-        let base = base.trim_end_matches('/').to_string();
-        let key = key.to_string();
-        async move {
-            let (disk_url, root_url, media_url) =
-                (format!("{base}/api/v3/diskspace"), format!("{base}/api/v3/rootfolder"), format!("{base}/api/v3/config/mediamanagement"));
-            let (disks, roots, media) = tokio::join!(
-                fetch_json(client, &disk_url, &key),
-                fetch_json(client, &root_url, &key),
-                fetch_json(client, &media_url, &key),
-            );
-            let diskspace: Vec<ArrDiskSpace> = serde_json::from_value(disks?).context("diskspace payload shape")?;
-            let roots: Vec<ArrRootFolder> = serde_json::from_value(roots?).context("rootfolder payload shape")?;
-            // The recycle bin only decides how long evicted bytes are credited;
-            // unreadable settings fall back to the longer default, the safe side.
-            let recycle = match media
-                .and_then(|value| serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape"))
-            {
-                Ok(settings) => RecycleBin::from_settings(&settings.recycle_bin, settings.recycle_bin_cleanup_days),
-                Err(error) => {
-                    eprintln!(
-                        "[flinch-arrd] {} recycle-bin settings unreadable, assuming {} days: {error:#}",
-                        app.label(),
-                        RecycleBin::DEFAULT_DAYS
-                    );
-                    RecycleBin::Unknown
-                }
-            };
-            let (accessible, unreachable): (Vec<ArrRootFolder>, Vec<ArrRootFolder>) =
-                roots.into_iter().partition(|root| root.accessible != Some(false));
-            for root in &unreachable {
-                eprintln!("[flinch-arrd] {} root folder {} is not accessible — its items stay ungoverned", app.label(), root.path);
-            }
-            anyhow::Ok(AppDisks {
-                app,
-                diskspace: diskspace.iter().map(Into::into).collect(),
-                root_folders: accessible.into_iter().map(Into::into).collect(),
-                recycle,
-            })
+    use flinch_archive::capacity::{AppDisks, RecycleBin};
+    let base = &arr.base;
+    let (disk_url, root_url, media_url) =
+        (format!("{base}/api/v3/diskspace"), format!("{base}/api/v3/rootfolder"), format!("{base}/api/v3/config/mediamanagement"));
+    let (disks, roots, media) = tokio::join!(
+        fetch_json(client, &disk_url, &arr.key),
+        fetch_json(client, &root_url, &arr.key),
+        fetch_json(client, &media_url, &arr.key),
+    );
+    let diskspace: Vec<ArrDiskSpace> = serde_json::from_value(disks?).context("diskspace payload shape")?;
+    let roots: Vec<ArrRootFolder> = serde_json::from_value(roots?).context("rootfolder payload shape")?;
+    // The recycle bin only decides how long evicted bytes are credited;
+    // unreadable settings fall back to the longer default, the safe side.
+    let recycle = match media.and_then(|value| serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape"))
+    {
+        Ok(settings) => RecycleBin::from_settings(&settings.recycle_bin, settings.recycle_bin_cleanup_days),
+        Err(error) => {
+            eprintln!("[flinch-arrd] {} recycle-bin settings unreadable, assuming {} days: {error:#}", arr.key(), RecycleBin::DEFAULT_DAYS);
+            RecycleBin::Unknown
         }
     };
-    let (radarr, sonarr) =
-        tokio::join!(one(App::Radarr, &args.radarr_url, &args.radarr_key), one(App::Sonarr, &args.sonarr_url, &args.sonarr_key),);
-    [(App::Radarr, radarr), (App::Sonarr, sonarr)]
-        .into_iter()
-        .filter_map(|(app, result)| match result {
-            Ok(disks) => Some(disks),
-            Err(error) => {
-                eprintln!("[flinch-arrd] {} disks unavailable, its items stay ungoverned: {error:#}", app.label());
-                None
-            }
-        })
-        .collect()
+    let (accessible, unreachable): (Vec<ArrRootFolder>, Vec<ArrRootFolder>) =
+        roots.into_iter().partition(|root| root.accessible != Some(false));
+    for root in &unreachable {
+        eprintln!("[flinch-arrd] {} root folder {} is not accessible — its items stay ungoverned", arr.key(), root.path);
+    }
+    Ok(AppDisks {
+        app: arr.app,
+        instance: arr.name.clone(),
+        diskspace: diskspace.iter().map(Into::into).collect(),
+        root_folders: accessible.into_iter().map(Into::into).collect(),
+        recycle,
+    })
 }

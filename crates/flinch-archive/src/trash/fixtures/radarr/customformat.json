@@ -1,0 +1,58 @@
+[
+ {
+  "id": 1,
+  "name": "My Own",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+   {
+    "id": 1,
+    "name": "x265",
+    "implementation": "ReleaseTitleSpecification",
+    "implementationName": "Release Title",
+    "infoLink": "https://wiki.servarr.com/radarr/settings#custom-formats-2",
+    "negate": false,
+    "required": true,
+    "fields": [
+     {
+      "order": 0,
+      "name": "value",
+      "label": "Regular Expression",
+      "helpText": "Custom Format RegEx is Case Insensitive",
+      "value": "[xh][ ._-]?265",
+      "type": "textbox",
+      "advanced": false,
+      "privacy": "normal",
+      "isFloat": false
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "name": "Repack/Proper",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+   {
+    "id": 2,
+    "name": "Repack/Proper/Rerip",
+    "implementation": "ReleaseTitleSpecification",
+    "implementationName": "Release Title",
+    "negate": false,
+    "required": true,
+    "fields": [
+     {
+      "order": 0,
+      "name": "value",
+      "label": "Regular Expression",
+      "value": "\\b(Repack|Proper)\\b",
+      "type": "textbox",
+      "advanced": false,
+      "privacy": "normal",
+      "isFloat": false
+     }
+    ]
+   }
+  ]
+ }
+]

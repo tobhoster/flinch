@@ -111,8 +111,9 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
     let items_with_plays = household.items.iter().filter(|item| !item.plays.is_empty()).count();
     FittedModel {
         fitted_on: format!(
-            "{} library items ({items_with_plays} with plays), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
+            "{} library items ({items_with_plays} with plays, {} titles with a taste vector), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
             household.items.len(),
+            household.vectors.len(),
             household.plex_rows,
             household.tautulli_rows,
             dataset.len(),
@@ -120,7 +121,17 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
         kind,
         hazard: candidate::fit(kind, dataset),
         metrics,
+        outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now),
     }
+}
+
+fn horizon_secs() -> u64 {
+    (HORIZON_DAYS * 86_400.0) as u64
+}
+
+/// Who played what when, for per-viewer taste.
+fn activity(household: &Household) -> crate::taste::Activity {
+    crate::taste::Activity::new(household.items.iter().flat_map(|item| &item.plays))
 }
 
 /// Write `hazard.json` when the fit beats the priors; remove an older one when
@@ -146,14 +157,18 @@ pub fn read_status(state_dir: &Path) -> Option<FitStatus> {
 /// The daemon's refit: at most once per [`REFIT_SECS`], and only once it has
 /// published a library to fit on. `None` when none was due.
 pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, RefitError>> {
-    let due = read_status(state_dir).is_none_or(|last| now.saturating_sub(last.fitted_at_unix) >= REFIT_SECS);
+    // A `hazard.json` this build cannot read (written for other features or
+    // another outcome record) is refitted now rather than a day later.
+    let unreadable = state_dir.join(MODEL_FILE).exists() && super::load_model(state_dir).is_none();
+    let due = unreadable || read_status(state_dir).is_none_or(|last| now.saturating_sub(last.fitted_at_unix) >= REFIT_SECS);
     (due && state_dir.join("items.json").exists()).then(|| refit(state_dir, now))
 }
 
-/// Build the panel `now` and fit it.
+/// Build the panel `now`, give its never-played rows their taste, and fit it.
 pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel) {
     let cuts = default_cuts();
-    let dataset = panel::build_dataset(&household.items, &PanelSpec { now, cuts_days: &cuts, horizon_days: HORIZON_DAYS });
+    let mut dataset = panel::build_dataset(&household.items, &PanelSpec { now, cuts_days: &cuts, horizon_days: HORIZON_DAYS });
+    crate::taste::fill(&mut dataset, &household.vectors, &activity(household), horizon_secs());
     let model = fit_model(household, &dataset, now, cuts.len());
     (dataset, model)
 }

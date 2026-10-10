@@ -6,11 +6,11 @@ use super::*;
 const GB: u64 = 1_000_000_000;
 const DAY: u64 = 86_400;
 
-fn three_days(_: App) -> u64 {
+fn three_days(_: &str) -> u64 {
     3 * DAY
 }
 
-fn no_bin(_: App) -> u64 {
+fn no_bin(_: &str) -> u64 {
     0
 }
 
@@ -155,7 +155,7 @@ fn an_item_left_on_disk_for_months_stops_being_tracked() {
 
 #[test]
 fn a_bin_that_is_never_emptied_keeps_its_credit_through_its_whole_window() {
-    let never_emptied = |_: App| STALE_ON_DISK_SECS;
+    let never_emptied = |_: &str| STALE_ON_DISK_SECS;
     let mut ledger = EvictionLedger::default();
     hand(&mut ledger, "radarr-1", 10, 0);
     // Maintainerr deleted it ten days after the hand-over.
@@ -288,4 +288,17 @@ fn a_membership_already_gone_keeps_its_credit_where_it_left() {
     ledger.observe(|_| false, three_days, &BTreeMap::new(), 40 * DAY);
     ledger.book(HandedOver { id: "radarr-1", title: "radarr-1", app: App::Radarr, volume: "/other", bytes: GB }, DAY, 40 * DAY);
     assert_eq!(credit(&ledger).pending, 2 * GB);
+}
+
+#[test]
+fn a_move_to_the_archive_is_credited_until_the_copy_frees_the_disk_and_is_no_deletion() {
+    let mut ledger = EvictionLedger::default();
+    ledger.observe(|_| true, three_days, &disk(500, 110), 500);
+    ledger.record_move(HandedOver { id: "radarr-1", title: "Heat", app: App::Radarr, volume: "/media", bytes: 10 * GB }, 1_000);
+    // Still in the library, now on the archive disk; the copy still holds /media.
+    ledger.observe(|id| id == "radarr-1", three_days, &disk(500, 100), 2_000);
+    assert_eq!(credit(&ledger).pending, 10 * GB, "credited although the card is still in the library");
+    assert!(ledger.handoffs.is_empty(), "never remembered as one of FLINCH's deletions");
+    ledger.observe(|id| id == "radarr-1", three_days, &disk(490, 100), 3_000);
+    assert!(ledger.entries.is_empty(), "settled once the drop shows, with no recycle window to wait out");
 }

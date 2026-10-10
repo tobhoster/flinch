@@ -1,11 +1,22 @@
 //! flinch-web — the swarm's window for a homelab.
 //!
 //! Serves the React UI (built by `frontend/` at image build time) next to the
-//! JSON API. It reads the state files the daemon publishes and writes only two:
-//! `settings.json` from the Settings page and `run.now` to ask for a run. No
-//! *arr keys, no database.
+//! JSON API. It reads the state files the daemon publishes and writes only
+//! requests for it: `settings.json` from the Settings page, `run.now` to ask
+//! for a run, `notify-test.json` to ask for a test notification, the Quality
+//! profiles selection, `restore/<item>` to undo a native delete,
+//! `dupes.json`, the duplicate copies the operator chose to keep, and
+//! `requests.json`, the household's keeps and removal requests. No *arr
+//! keys, no notification secrets, no database.
 
 mod auth;
+mod dupes;
+mod notify;
+mod requests;
+mod restore;
+mod rules;
+mod search;
+mod trash;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -27,6 +38,11 @@ struct AppState {
     web: Arc<PathBuf>,
     /// Who may use the API: the login, the API key and the live sessions.
     auth: Arc<auth::Auth>,
+    /// Semantic search: the query encoder once opened, and the vectors.
+    search: Arc<search::Search>,
+    /// The no-login links' key (`FLINCH_WEB_LINK_SECRET`); `None` turns every
+    /// link away.
+    links: Option<Arc<flinch_archive::requests::link::LinkSecret>>,
 }
 
 fn read_json(path: &Path) -> String {
@@ -41,13 +57,14 @@ async fn api_items(AxumState(st): AxumState<AppState>) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/json")], read_json(&st.dir.join("items.json")))
 }
 
-/// Settings as the browser sees them. The Plex token stays on the server;
-/// `plex_token_set` says whether one is saved.
+/// Settings as the browser sees them. The Plex and Jellyfin tokens stay on the
+/// server; `plex_token_set` / `jellyfin_token_set` say whether one is saved.
 #[derive(serde::Serialize)]
 struct SettingsView {
     #[serde(flatten)]
     settings: RuntimeSettings,
     plex_token_set: bool,
+    jellyfin_token_set: bool,
 }
 
 /// The settings the daemon runs with: `settings.json`, every missing field at
@@ -57,8 +74,10 @@ async fn api_settings_get(AxumState(st): AxumState<AppState>) -> Response {
     match read_settings(&st.dir.join("settings.json")) {
         Ok(settings) => {
             let plex_token_set = !settings.plex_token.is_empty();
-            let settings = RuntimeSettings { plex_token: String::new(), ..settings };
-            axum::Json(SettingsView { settings, plex_token_set }).into_response()
+            let jellyfin_token_set = !settings.jellyfin.token.is_empty();
+            let jellyfin = flinch_archive::jellyfin::JellyfinConfig { token: String::new(), ..settings.jellyfin.clone() };
+            let settings = RuntimeSettings { plex_token: String::new(), jellyfin, ..settings };
+            axum::Json(SettingsView { settings, plex_token_set, jellyfin_token_set }).into_response()
         }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
@@ -76,7 +95,11 @@ async fn api_settings_put(AxumState(st): AxumState<AppState>, body: String) -> R
     if let Err(error) = settings.validate() {
         return refuse(StatusCode::BAD_REQUEST, &error.to_string());
     }
-    if let Err(problem) = pair_plex_credential(&mut settings, read_settings(&path).ok()) {
+    let saved = read_settings(&path).ok();
+    if let Err(problem) = pair_jellyfin_credential(&mut settings, saved.as_ref()) {
+        return refuse(StatusCode::BAD_REQUEST, problem);
+    }
+    if let Err(problem) = pair_plex_credential(&mut settings, saved) {
         return refuse(StatusCode::BAD_REQUEST, problem);
     }
     match write_settings(&path, &settings) {
@@ -106,6 +129,31 @@ fn pair_plex_credential(settings: &mut RuntimeSettings, saved: Option<RuntimeSet
             Ok(())
         }
         _ => Err("A new Plex URL needs its token: enter the Plex token again"),
+    }
+}
+
+/// The Jellyfin URL and its key are one credential, like Plex's: a blank token
+/// keeps the saved one only for the same URL and server kind. A key named by
+/// environment variable needs no token at all.
+fn pair_jellyfin_credential(settings: &mut RuntimeSettings, saved: Option<&RuntimeSettings>) -> Result<(), &'static str> {
+    let jellyfin = &mut settings.jellyfin;
+    trim_in_place(&mut jellyfin.url);
+    trim_in_place(&mut jellyfin.token);
+    trim_in_place(&mut jellyfin.api_key_env);
+    if jellyfin.url.is_empty() {
+        jellyfin.token.clear();
+        return Ok(());
+    }
+    if !jellyfin.token.is_empty() {
+        return Ok(());
+    }
+    match saved.map(|saved| &saved.jellyfin) {
+        Some(saved) if saved.url.trim() == jellyfin.url && saved.kind == jellyfin.kind && !saved.token.is_empty() => {
+            jellyfin.token = saved.token.clone();
+            Ok(())
+        }
+        _ if !jellyfin.api_key_env.is_empty() => Ok(()),
+        _ => Err("A new Jellyfin URL needs its API key: enter it again, or name the variable that holds it"),
     }
 }
 
@@ -197,7 +245,7 @@ async fn api_unknown() -> Response {
     refuse(StatusCode::NOT_FOUND, "no such API endpoint")
 }
 
-/// Everything under `/api/` needs a session or the API key, except logging in and out and asking whether you are; the shell, its
+/// Everything under `/api/` needs a session or the API key, except logging in and out (by password or single sign-on) and asking whether you are; the shell, its
 /// assets, the logos and the health probe carry no data and stay open. The
 /// login is the one open route that reads a body, so it reads only a few KiB:
 /// protected routes refuse before reading theirs.
@@ -206,14 +254,27 @@ fn app(state: AppState) -> Router {
         .route("/api/status", get(api_status))
         .route("/api/items", get(api_items))
         .route("/api/history", get(api_history))
+        .route("/api/search", get(search::api_search))
         .route("/api/run", post(api_run))
         .route("/api/settings", get(api_settings_get).put(api_settings_put))
+        .route("/api/notify/test", get(notify::result).post(notify::request))
+        .route("/api/rules/preview", post(rules::api_preview))
+        .route("/api/trash/diff", get(trash::diff))
+        .route("/api/trash/apply", post(trash::apply))
+        .route("/api/restore/{id}", post(restore::request))
+        .route("/api/dupes/decide", post(dupes::decide))
+        .route("/api/requests", get(requests::list))
+        .route("/api/requests/{id}/{decision}", post(requests::decide))
         .route("/api/{*rest}", any(api_unknown))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_auth));
     Router::new()
         .route("/api/login", post(auth::login).layer(DefaultBodyLimit::max(auth::LOGIN_BODY_LIMIT)))
         .route("/api/logout", post(auth::logout))
         .route("/api/session", get(auth::session))
+        .route(auth::oidc::LOGIN_PATH, get(auth::oidc::start))
+        .route(auth::oidc::CALLBACK_PATH, get(auth::oidc::callback))
+        // The household's no-login links: the token is the credential.
+        .route("/r/{token}", get(requests::show).post(requests::act))
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/assets/{path}", get(assets))
@@ -232,7 +293,9 @@ async fn main() -> Result<()> {
     let web = std::env::var("FLINCH_WEB_DIR").unwrap_or_else(|_| "web".to_string());
     let auth = Arc::new(auth::Auth::from_env());
     let dir = PathBuf::from(dir);
-    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth });
+    let links = flinch_archive::requests::link::LinkSecret::from_env().map(Arc::new);
+    let search = Arc::new(search::Search::new());
+    let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth, search, links });
     let addr = format!("0.0.0.0:{port}");
     println!("flinch-web on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.context("bind")?;

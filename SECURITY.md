@@ -19,9 +19,11 @@ Only the latest release gets fixes.
 
 - **The UI needs a login; automations need the API key.** `flinch-web`
   refuses every API request without a session from logging in
-  (`FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD`) or the API key
-  (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or `Authorization: Bearer`), and refuses
-  everything when neither is set. Both grant everything the UI can do,
+  (`FLINCH_WEB_USERNAME`, `FLINCH_WEB_PASSWORD`, or
+  [single sign-on](deploy/README.md#single-sign-on-openid-connect) for the
+  accounts you allow) or the API key (`FLINCH_WEB_TOKEN`, as `X-Api-Key` or
+  `Authorization: Bearer`), and refuses everything when none is set. Both
+  grant everything the UI can do,
   including turning off dry run, so treat them like an *arr API key. Serve
   the UI over HTTPS, and never publish it to the internet. Upgrading from the
   token alone: see

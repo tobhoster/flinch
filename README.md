@@ -8,9 +8,11 @@
 <h1 align="center">FLINCH</h1>
 
 <p align="center">
-  <b>Keeps each Plex library disk under 80% full by freeing what your household will miss least.</b><br>
-  A storage planner for the *arr stack. It forecasts every disk, picks the evictions with the
-  least expected regret, and leaves the deleting to Maintainerr.
+  <b>Keeps each media disk under 80% full by freeing what your household will miss least.</b><br>
+  A storage planner and library janitor for the *arr stack, and an alternative to Maintainerr
+  and Recyclarr in one: it forecasts every disk, picks the evictions with the least expected
+  regret, warns before anything unwatched goes, deletes (itself or through Maintainerr), and keeps
+  your quality profiles in sync with TRaSH-Guides.
 </p>
 
 <p align="center">
@@ -19,7 +21,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f28c28"></a>
   <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-1b2a4a?logo=rust">
   <img alt="Runs on any CPU" src="https://img.shields.io/badge/runs%20on-any%20CPU-1b2a4a">
-  <img alt="Works with Radarr, Sonarr, Plex and Maintainerr" src="https://img.shields.io/badge/works%20with-Radarr%20%C2%B7%20Sonarr%20%C2%B7%20Plex%20%C2%B7%20Maintainerr-f28c28">
+  <img alt="Works with Radarr, Sonarr, Plex, Jellyfin and Emby" src="https://img.shields.io/badge/works%20with-Radarr%20%C2%B7%20Sonarr%20%C2%B7%20Plex%20%C2%B7%20Jellyfin%20%C2%B7%20Emby-f28c28">
 </p>
 
 <p align="center">
@@ -30,29 +32,102 @@
 
 ## ✨ What it does
 
-- **Plans ahead, per disk.** Nothing is deleted while a disk's two-week
-  forecast stays 50 GiB under 80%.
-- **Frees what nobody will miss, first.** It picks the set of evictions with
-  the least expected regret, from your household's plays, requests and
-  watchlists, and how hard each title is to download again.
-- **Checks its forecast every day.** A daily fit replays the household's own
-  past ("given what was known then, did anyone play this within 90 days?") and
-  adopts a fitted P(watch) only when it beats the hand-set priors on titles it
-  never saw.
-- **Warns before anything unwatched goes** (one exception: see
-  [Known limits](docs/how-it-works.md#known-limits)). A title nobody finished
-  goes to a *Leaving Soon* row on the Plex home screen first. Play it and
-  FLINCH takes it back.
-- **Never touches what you protect.** Favorites, your keep tag, keep
-  collections and your own Maintainerr exclusions are off limits, and so is
-  anything on disk less than 30 days. Missing evidence means keep.
-- **Says where the space went.** Each disk shows how much of it isn't library
-  media, and any space an eviction should have freed that something still holds.
-- **Keeps Maintainerr tidy.** It releases its own exclusions for items that are
-  gone, and lists deletions it did not make and which will download again.
+Everything below the first group is optional and off until you switch it on.
+Dry run is on by default: a fresh install writes its plan and logs every write
+it would make, and sends nothing.
 
-FLINCH decides *what* goes. [Maintainerr](https://github.com/Maintainerr/Maintainerr)
-does the deleting, on its own schedule.
+### Plans what goes
+
+- **Plans ahead, per disk.** Nothing is deleted while a disk's two-week
+  forecast stays 50 GiB under 80%; then only enough to get back under it.
+- **Frees what nobody will miss, first.** An exact solver picks the set of
+  evictions with the least expected regret: the chance anyone plays it within
+  90 days, how hard it is to download again (size, seeders, usenet retention,
+  or whether it streams on a service you have), and who asked for it.
+- **Checks its forecast every day.** A daily fit replays the household's own
+  past and adopts a fitted P(watch) only when it beats the hand-set priors on
+  titles it never saw.
+- **Treats finished as finished.** A title everyone who started it has
+  finished is cheap to lose, however recently it ended. A season counts as
+  finished only when every episode still on disk was watched.
+- **Learns what you'd watch.** EmbeddingGemma 2 runs inside FLINCH on the CPU
+  (a pure-Rust candle port, no model server). Titles nobody opened yet are
+  compared with what each active viewer actually played, and reasons name the
+  look-alikes ("like *Hereditary*, *The Conjuring*, unplayed here").
+  [Details](deploy/README.md#taste-embeddings-embeddinggemma-2).
+- **Takes your rules as hard constraints.** Keep, keep for N days after a
+  request, keep the newest N seasons or the first season, prefer or must
+  evict: by library, folder, disk, tag, Plex section, requester, theme, genre,
+  quality, size, age, last play or P(watch). Each change is previewed as a
+  diff of the plan before it is saved.
+- **Archives instead of deleting.** With an archive disk, a movie or a whole
+  series moves to an archive root folder first; deletion covers only what
+  doesn't fit.
+
+### Deletes it safely, with or without Maintainerr
+
+- **Warns before anything unwatched goes.** A title nobody finished goes to a
+  *Leaving Soon* row first, on Plex or on Jellyfin/Emby, sorted by leave date,
+  with the dates in its summary and, if you like, a "Leaves Oct 23" badge on
+  the poster. Play it and FLINCH takes it back.
+- **Deletes itself or hands over to Maintainerr.** The native executor
+  deletes through Radarr and Sonarr after the window, re-checks every watch
+  source right before each delete, cleans up the Seerr request, removes the
+  torrent too, and can restore anything it deleted in the last 30 days.
+  Prefer Maintainerr? It stays the default.
+- **Lets torrents seed.** Items still seeding toward their goal stay, and an
+  item whose files a torrent hardlinks is not counted as freed space until the
+  torrent goes.
+- **Finds duplicate copies.** Movies held twice (Plex versions, two
+  libraries, two Radarrs) with the copy to keep, and big folders no item owns;
+  you confirm, FLINCH removes the rest.
+- **Never touches what you protect.** Favorites, your keep tag, keep
+  collections, your own Maintainerr exclusions and anything on disk less than
+  30 days are off limits. Missing evidence means keep.
+
+### Keeps quality in check (instead of Recyclarr)
+
+- **TRaSH-Guides sync, with a preview.** Custom formats, quality profiles
+  with score overrides (absolute or relative) and quality sizes, from
+  TRaSH-Guides or a Profilarr database, pinned to a commit, shown change by
+  change with the GiB it would free or cost on each disk, written only when
+  you apply. Presets add a compact profile, stop endless upgrades and set a
+  language preference.
+- **Acts on quality advice.** Large titles the household seldom watches move
+  to the compact profile, only when a release at least 30% smaller exists, a
+  few a day.
+- **Stops upgrade loops.** Titles re-grabbed again and again are flagged, and
+  can be unmonitored or have upgrades turned off.
+- **Upgrades what will be watched.** Titles below their profile's cutoff are
+  searched likeliest-watched first, only where the disk forecast has room.
+
+### Knows the household
+
+- **Reads every watch source.** Plex, Tautulli, Jellyfin/Emby, Tracearr and
+  Trakt, joined by TMDB/TVDB/IMDb id, never by title. Named guests can be left
+  out of the evidence.
+- **Tells people.** Discord, ntfy, Apprise or a webhook hear about Leaving
+  Soon, deletions, problems and a daily digest. Whoever requested a title is
+  told personally, and a weekly newsletter lists what's leaving.
+- **Lets the household decide, without a login.** Signed, expiring links keep
+  a title with one click; requesters can ask to remove their own titles, and
+  you approve.
+- **Shows where the disk goes.** Per disk, how much isn't library media and
+  what an eviction should have freed; per theme, how big it is and how much of
+  it was played this year.
+- **Turns off the tap.** Flags what's coming in that nobody will watch (cold
+  or abandoned monitored shows, cold requests). While a disk is over target it
+  can unmonitor the future seasons and switch off the import lists you ticked.
+- **Search by meaning.** The Movies and Series tables find titles by
+  description ("dinosaurs", "slow-burn horror"), not just by name.
+- **Several Radarrs and Sonarrs.** HD beside 4K, anime beside the rest; each
+  instance keeps its own disks, archive root, compact profile and TRaSH sync.
+- **Single sign-on.** Authelia, Authentik, Keycloak or any OpenID Connect
+  provider, beside or instead of the password.
+
+FLINCH decides *what* goes and, with the native executor, deletes it;
+[Maintainerr](https://github.com/Maintainerr/Maintainerr) can still do the
+deleting instead (Settings → Executor).
 
 <p align="center">
   <img src="docs/screenshots/cleanup.png" alt="The Maintainerr sync and the deletions FLINCH did not make: what Radarr and Sonarr removed without it, and which titles will download again" width="500">
@@ -63,32 +138,36 @@ does the deleting, on its own schedule.
 ```mermaid
 flowchart LR
     ARR["Radarr + Sonarr<br/>files · disks · imports · queue"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
-    PX["Plex + Tautulli<br/>who played what, when"] --> ID
-    ID --> R["regret per item"]
-    EXT["Seerr · Prowlarr · SABnzbd"] --> R
+    PX["Plex · Jellyfin/Emby · Tautulli<br/>Tracearr · Trakt"] --> ID
+    ID --> R["regret per item<br/>+ taste (EmbeddingGemma 2)"]
+    EXT["Seerr · Prowlarr · SABnzbd<br/>torrents · streaming"] --> R
     ARR --> FC["forecast per disk<br/>14 days ahead"]
+    RU["your rules"] --> S
     R --> S{"solver: least total regret<br/>that frees each target"}
     FC --> S
-    S -- "selected" --> LS["Leaving Soon<br/>or delete collection"]
-    LS --> M["Maintainerr deletes<br/>after the window"]
+    S -- "move" --> AR["archive disk"]
+    S -- "evict" --> LS["Leaving Soon<br/>(unwatched) or delete"]
+    LS --> M["native executor<br/>or Maintainerr"]
 ```
 
-1. **Match.** Every title is joined across Radarr, Sonarr, Plex and Tautulli by
+1. **Match.** Every title is joined across the *arrs and the media servers by
    catalogue id, never by name. An item that does not match is left alone.
 2. **Forecast.** Each disk's use is projected 14 days ahead. The target is how
    far that lands over 80%, plus 50 GiB. A target of zero on every disk means
    nothing happens this cycle.
 3. **Regret.** Each item's regret is P(played within 90 days) × the cost to
    download it again × how much the household claims it.
-4. **Exclude.** Pinned items, items in their 30-day grace period, items Plex
-   cannot address and items with no watch evidence never compete. Items nobody
-   played compete only when you allow it.
+4. **Exclude.** Pinned items, items in their 30-day grace period, items no
+   media server can address, items with no watch evidence, items still
+   seeding and items your rules keep never compete. Items nobody played
+   compete only when you allow it.
 5. **Solve.** An exact solver picks the cheapest set that covers each disk's
-   target, taking a show's seasons in order. At 95% full it switches to a fast
-   greedy pick.
-6. **Hand off.** The plan goes to `eviction-plan.json` every cycle. With dry
-   run off, selected items join a Maintainerr collection and Maintainerr
-   deletes them after its window. Every write is read back.
+   target (moving to an archive disk first when there is one), taking a show's
+   seasons in order. At 95% full it switches to a fast greedy pick.
+6. **Act.** The plan goes to `eviction-plan.json` every cycle. With dry run
+   off, unwatched items go to Leaving Soon and leave after its window;
+   finished ones leave at once. The native executor or Maintainerr does the
+   deleting. Every write is read back.
 
 The long version, with the formulas, is in
 [docs/how-it-works.md](docs/how-it-works.md).
@@ -153,10 +232,14 @@ The full list is in the [0.2.0 release notes](https://github.com/tobhoster/flinc
 
 ## 📦 Install
 
-You need Radarr, Sonarr, Plex and Maintainerr 3.10 or newer; Tautulli, Seerr,
-Prowlarr and SABnzbd are optional. FLINCH runs as two small pods on Kubernetes
-from one published image (`ghcr.io/tobhoster/flinch`, amd64 and arm64, about
-50 MB, no GPU).
+You need Radarr and Sonarr, and Plex or Jellyfin/Emby. Maintainerr 3.10 or
+newer is needed only if it does the deleting (the default; the native executor
+does it without). Tautulli, Tracearr, Trakt, Seerr, Prowlarr, SABnzbd,
+qBittorrent/Transmission and TMDB are optional. FLINCH runs as two small pods
+on Kubernetes from one published image (`ghcr.io/tobhoster/flinch`, amd64 and
+arm64, no GPU). With taste embeddings on, the daemon downloads about 580 MB
+of EmbeddingGemma 2 weights to its state volume once and needs up to 1 GiB of
+memory.
 
 1. **Configure** the namespace and service URLs in
    [`deploy/kustomization.yaml`](deploy/kustomization.yaml).
@@ -181,12 +264,14 @@ from one published image (`ghcr.io/tobhoster/flinch`, amd64 and arm64, about
    (see [Reach the UI](deploy/README.md#reach-the-ui)).
    Dry run starts **on**: FLINCH writes its plan and logs every write it would
    make, and sends nothing.
-5. **Set up Maintainerr** (two delete collections and two *Leaving Soon*
-   collections), then turn off **Settings → Planner → Dry run**.
+5. **Choose who deletes.** Either set up Maintainerr (two delete collections
+   and two *Leaving Soon* collections), or switch **Settings → Executor** to
+   native. Then turn off **Settings → Planner → Dry run**.
 
 The [install guide](deploy/README.md) covers each step, the exact Maintainerr
-settings, publishing the UI over HTTPS, running as a CronJob, building your
-own image, and keeping your own values out of git.
+settings, the native executor, every optional integration, publishing the UI
+over HTTPS, running as a CronJob, building your own image, and keeping your
+own values out of git.
 
 ## 🛡️ Safety
 
@@ -209,9 +294,14 @@ own image, and keeping your own values out of git.
 - **Seasons leave in order.** A show's watched seasons go from the first,
   unplayed ones from the last, and a season that must stay keeps every season
   due to leave after it.
-- **Deletes only through Maintainerr.** FLINCH never deletes a file itself and
-  never writes to Radarr or Sonarr. Every Maintainerr write is read back; a
-  failed one is retried, never assumed.
+- **Deletes through Maintainerr, or itself only when you choose.** By default
+  FLINCH never deletes a file itself. With the native executor (Settings →
+  Executor) it deletes through Radarr and Sonarr, after a Plex Leaving Soon
+  window for anything nobody finished and a last look at Plex right before
+  each delete; deletes of the last 30 days can be restored. Other writes to
+  Radarr or Sonarr happen only when you switch them on (the TRaSH quality
+  sync, quality actions). Every write is read back; a failed one is retried
+  or reported, never assumed.
 - **Per disk, never pooled.** Freeing the TV disk never counts toward a full
   movie disk, and bytes still in a recycle bin are credited, so nothing is
   deleted twice for the same gap.
@@ -220,21 +310,14 @@ own image, and keeping your own values out of git.
   for up to 14 days, so FLINCH evicts nothing more for them.
 
 The UI asks for a username and password (`FLINCH_WEB_USERNAME`,
-`FLINCH_WEB_PASSWORD`), because whoever can save Settings can turn off dry
-run; automations use the API key (`FLINCH_WEB_TOKEN`) instead. Serve
-it over HTTPS and keep it off the internet; see
+`FLINCH_WEB_PASSWORD`) or a single sign-on, because whoever can save Settings
+can turn off dry run; automations use the API key (`FLINCH_WEB_TOKEN`)
+instead. Serve it over HTTPS and keep it off the internet; see
 [Security](deploy/README.md#security) and [SECURITY.md](SECURITY.md).
 
 <p align="center">
   <img src="docs/screenshots/phone.png" alt="The Overview on a phone" width="300">
 </p>
-
-## 🔌 Extras
-
-- **Quality advice.** Per item: keep the original, downgrade to a compact
-  release, or eligible for eviction. Published only; FLINCH never changes a
-  quality profile.
-  [Details](docs/how-it-works.md#quality-advice-keep-downgrade-or-evict).
 
 ## 🚧 Status
 
@@ -248,21 +331,21 @@ it over HTTPS and keep it off the internet; see
   CodeQL and the Security workflow (secrets, dependency advisories and
   licenses, workflow linting, and a scan and smoke test of the image).
 - **In production on one homelab**, handing items to Maintainerr since
-  2026-09-22 (on 0.1.x; 0.2.0's changes merged on 2026-09-27). The regret
-  planner is newer and unreleased. Every exclusion FLINCH writes is read back
-  from Maintainerr each cycle. The Watch model card on the Overview shows
-  whether a fitted P(watch) or the hand-set priors run: the daily fit adopts
-  one only while it beats the priors out of fold.
+  2026-09-22. The regret planner is newer and unreleased, and the features
+  added since (native executor, Jellyfin/Emby shelf, TRaSH sync, quality
+  actions, archive tier, duplicates, household links, several *arr
+  instances, more watch sources) are tested against simulated servers only so
+  far: keep dry run on and read the logged writes before switching any of them
+  on. The Watch model card on the Overview shows whether a fitted P(watch) or
+  the hand-set priors run.
 - **TV on NFS can go ungoverned.** On that homelab, Sonarr's disk report left
   out all three of its NFS mounts, so FLINCH cannot measure those disks and never
-  evicts from them. The Storage card says so.
-- **One known limit can delete without a warning.** A season whose watched
-  episodes were deleted outside FLINCH (by hand, or by Plex's "Delete episodes
-  after playing") can read as completed and leave with no Leaving Soon warning,
-  its unwatched episodes included. Until that is fixed, keep watched episodes
-  on disk, or keep such a season with the keep tag on its show or a keep
-  collection. The rest fail closed. One Radarr and one Sonarr instance; Plex is
-  required to match items. The full list is in
+  evicts from them unless they are mounted into the daemon. The Storage card
+  says so.
+- **Known limits.** Two narrow cases can delete without a warning (Plex's own
+  watched counts with a deleted episode still in its trash; episodes numbered
+  differently in Plex and Sonarr). The rest fail closed: with several Radarr
+  or Sonarr instances, one instance down stops the cycle. The full list is in
   [docs/how-it-works.md](docs/how-it-works.md#known-limits).
 
 ## 🧑‍💻 Development
@@ -288,7 +371,7 @@ problems privately, as [SECURITY.md](SECURITY.md) describes.
 | `crates/flinch-archive` | the daemon (`flinch-arrd`), the forecast and its daily fit (`flinch-fit`), and the offline planner (`flinch-archive`) |
 | `crates/flinch-web` | the UI server, its JSON API and `flinch-demo` |
 | `frontend/` | the React UI, built into the image |
-| `deploy/` | the Dockerfile, kustomize manifests (with an optional HTTPS Ingress), install guide and Recyclarr config |
+| `deploy/` | the Dockerfile, kustomize manifests (with an optional HTTPS Ingress) and install guide |
 | `docs/` | how it works, and the screenshots above |
 
 ## License

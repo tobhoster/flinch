@@ -51,7 +51,32 @@ fn an_episode_tvdb_does_not_know_confirms_nothing() {
     // unrelated episodes into one.
     let tmdb_only: PlexMetadata =
         serde_json::from_str(r#"{"type":"episode","parentIndex":1,"Guid":[{"id":"tmdb://55"}]}"#).expect("episode row");
-    let unknown = SonarrEpisodes::from_rows(&[serde_json::json!({"seasonNumber": 1, "tvdbId": 0, "hasFile": true})]);
+    let unknown = SonarrEpisodes::from_rows(&[serde_json::json!({"seasonNumber": 1, "episodeNumber": 1, "tvdbId": 0, "hasFile": true})]);
     assert_eq!(PlexEpisodes::from_rows(&[tmdb_only]), PlexEpisodes::default());
-    assert_eq!(unknown, SonarrEpisodes::default());
+    assert!(unknown.numbered.is_empty() && unknown.with_files.is_empty(), "no TVDB id taken from a 0");
+    assert_eq!(unknown.on_disk(1, 1), Some(vec![1]), "its file still counts as on disk");
+}
+
+/// Sonarr episode rows of season 1, `(episode number, has a file)`.
+fn numbered(rows: &[(Option<u32>, bool)]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .map(|(number, has_file)| serde_json::json!({"seasonNumber": 1, "episodeNumber": number, "tvdbId": 100, "hasFile": has_file}))
+        .collect()
+}
+
+#[rstest]
+#[case::the_episodes_with_a_file(numbered(&[(Some(8), true), (Some(5), true), (Some(2), false), (Some(6), true), (Some(7), true)]), 4, Some(vec![5, 6, 7, 8]))]
+// A double episode is one file.
+#[case::a_file_holding_two_episodes(numbered(&[(Some(1), true), (Some(2), true)]), 1, Some(vec![1, 2]))]
+// Each case below could leave out an unwatched episode on disk, and the plays
+// of the others would then complete the season.
+#[case::fewer_numbers_than_files(numbered(&[(Some(5), true), (Some(6), true)]), 3, None)]
+#[case::a_file_without_an_episode_number(numbered(&[(Some(5), true), (None, true), (Some(6), true)]), 2, None)]
+#[case::an_unreadable_row([numbered(&[(Some(5), true)]), vec![serde_json::json!({"episodeNumber": 6, "hasFile": true})]].concat(), 1, None)]
+fn episodes_on_disk_are_trusted_only_when_every_file_is_numbered(
+    #[case] rows: Vec<serde_json::Value>,
+    #[case] files: u32,
+    #[case] on_disk: Option<Vec<u32>>,
+) {
+    assert_eq!(SonarrEpisodes::from_rows(&rows).on_disk(1, files), on_disk);
 }

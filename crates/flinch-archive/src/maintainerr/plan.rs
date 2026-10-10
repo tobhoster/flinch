@@ -123,7 +123,7 @@ impl Caps {
     }
 
     /// Whether one more add of `bytes` fits after `handed` adds of `handed_bytes`.
-    fn admits(&self, handed: usize, handed_bytes: u64, bytes: u64) -> bool {
+    pub fn admits(&self, handed: usize, handed_bytes: u64, bytes: u64) -> bool {
         handed < self.max_items && self.max_bytes > 0 && (handed == 0 || handed_bytes.saturating_add(bytes) <= self.max_bytes)
     }
 }

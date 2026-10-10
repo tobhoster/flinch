@@ -28,6 +28,7 @@ fn target(id: &str, tmdb: u32, added_days_ago: u64) -> WatchTarget {
         season_index: None,
         episodes_total: None,
         episode_files: None,
+        episodes_on_disk: None,
         external: ExternalIds { tmdb: Some(tmdb), ..ExternalIds::default() },
         added_epoch: Some(NOW - added_days_ago * DAY),
         on_disk: true,
@@ -54,6 +55,10 @@ fn healthy() -> EvidenceHealth {
         tautulli_complete: true,
         multi_account: false,
         plex_settings_unpaired: false,
+        jellyfin_configured: false,
+        jellyfin_complete: false,
+        watch_sources_configured: false,
+        watch_sources_complete: false,
     }
 }
 
@@ -190,7 +195,61 @@ fn only_a_readable_percent_finishes_a_stream(#[case] percent_field: &str, #[case
         r#"{{"media_type":"episode","rating_key":"11","parent_media_index":"1","media_index":"1","date":"{}"{percent_field}}}"#,
         NOW - 3 * DAY
     ));
-    assert_eq!(season_progress(&[&episode], Some(1)) >= 0.999, finished, "the only episode completes its season only when finished");
+    let only_episode = WatchTarget { episodes_on_disk: Some(vec![1]), ..season(1) };
+    let progress = season_plays(&[&episode]).progress(&only_episode);
+    assert_eq!(progress >= 0.999, finished, "the only episode completes its season only when finished");
+}
+
+/// A season of `files` episode files on disk.
+fn season(files: u32) -> WatchTarget {
+    WatchTarget {
+        kind: LibraryKind::Season,
+        season_index: Some(1),
+        episodes_total: Some(files),
+        episode_files: Some(files),
+        ..target("sonarr-7-s1", 1, 400)
+    }
+}
+
+fn episode_stream(number: Option<u32>, percent: u32) -> TautulliRow {
+    let number = number.map_or_else(String::new, |number| number.to_string());
+    stream(&format!(
+        r#"{{"media_type":"episode","parent_media_index":"1","media_index":"{number}","date":"{}","percent_complete":"{percent}"}}"#,
+        NOW - DAY
+    ))
+}
+
+fn finished(episodes: std::ops::RangeInclusive<u32>) -> Vec<(Option<u32>, u32)> {
+    episodes.map(|n| (Some(n), 100)).collect()
+}
+
+/// Episodes 5-12 on disk: 1-4 were deleted after they were watched.
+fn later_eight() -> Option<Vec<u32>> {
+    Some((5..=12).collect())
+}
+
+// Eight files on disk; a case says which episode numbers they hold. Streams of
+// the deleted 1-4 must not stand in for 9-12.
+#[rstest]
+#[case::the_watched_episodes_deleted_since(later_eight(), finished(1..=8), 0.5)]
+#[case::every_episode_on_disk_finished(Some((1..=8).collect()), finished(1..=8), 1.0)]
+#[case::the_last_one_on_disk_only_started(later_eight(), [finished(1..=11), vec![(Some(12), 40)]].concat(), 0.9375)]
+// Eight finished streams would complete eight files; the unnumbered one
+// matches no file.
+#[case::an_unnumbered_stream_never_completes(later_eight(), [finished(5..=11), vec![(None, 100)]].concat(), 0.875)]
+#[case::only_deleted_episodes_streamed(later_eight(), finished(1..=4), 0.01)]
+// Which episodes are on disk is unknown: just short of complete, announced.
+#[case::episodes_on_disk_unknown(None, finished(1..=8), crate::plex::season::UNVERIFIED)]
+fn a_season_completes_only_when_every_episode_on_disk_was_finished(
+    #[case] on_disk: Option<Vec<u32>>,
+    #[case] streams: Vec<(Option<u32>, u32)>,
+    #[case] expected: f32,
+) {
+    let target = WatchTarget { episodes_on_disk: on_disk, ..season(8) };
+    let rows: Vec<TautulliRow> = streams.into_iter().map(|(number, percent)| episode_stream(number, percent)).collect();
+    let progress = season_plays(&rows.iter().collect::<Vec<_>>()).progress(&target);
+    assert!((progress - expected).abs() < 1e-6, "{progress}");
+    assert_eq!(progress >= crate::watch::COMPLETE, expected == 1.0);
 }
 
 /// `get_users` and `get_libraries_table` answers in Tautulli's documented shape.

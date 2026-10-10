@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, ExternalLink, PanelRightOpen, Search } from 'lucide-react';
-import { Card, DropdownMenu, EmptyState, GiB, Sheet, day, pct } from './ui.jsx';
+import { Card, DropdownMenu, EmptyState, GiB, JustWatch, Sheet, day, pct } from './ui.jsx';
 import { Explain } from './Explain.jsx';
 import { Advice, Disk, PlexIds, Reacquisition } from './DetailCells.jsx';
+import { MeaningStatus, useMeaningSearch } from './MeaningSearch.jsx';
+import { instanceLabel, parseArrRef } from './arrRef.js';
 
 const isNum = (v) => v !== null && v !== undefined;
 
 /** Sources that can testify to absence of playback (as opposed to only presence). */
-const ABSENCE_SOURCES = ['plex', 'plex_show', 'export', 'tautulli_no_stream'];
+const ABSENCE_SOURCES = ['plex', 'plex_show', 'export', 'tautulli_no_stream', 'jellyfin', 'tracearr_no_play'];
 
 const onDisk = (i) => (i.size_bytes || 0) > 0;
 
@@ -19,6 +21,7 @@ const onDisk = (i) => (i.size_bytes || 0) > 0;
 const FILTERS = [
   { key: 'on_disk', label: 'On disk', test: onDisk },
   { key: 'delete', label: 'Planned', test: (i) => onDisk(i) && i.decision === 'delete' },
+  { key: 'archive', label: 'To archive', test: (i) => onDisk(i) && i.decision === 'archive' },
   { key: 'protected', label: 'Protected', test: (i) => onDisk(i) && i.protected },
   { key: 'kept', label: 'Kept', test: (i) => onDisk(i) && i.decision === 'keep' && !i.protected },
   {
@@ -34,6 +37,10 @@ const SOURCE_LABEL = {
   plex_history: 'history',
   tautulli: 'tautulli',
   tautulli_no_stream: 'tautulli',
+  jellyfin: 'jellyfin',
+  tracearr: 'tracearr',
+  tracearr_no_play: 'tracearr',
+  trakt: 'trakt',
   export: 'export',
 };
 
@@ -75,6 +82,9 @@ function decisionOf(item) {
     if (announced) return { text: 'Leaving soon', tone: 'text-state-warn', title: 'Announced in Leaving Soon before it is deleted' };
     return { text: 'Planned', tone: 'text-state-warn' };
   }
+  if (item.decision === 'archive') {
+    return { text: 'To archive', tone: 'text-state-ok', title: 'Moves to the archive root instead of being deleted: still playable' };
+  }
   if (item.protected) return { text: 'Protected', tone: 'text-fg' };
   if (item.decision === 'keep') return { text: 'Kept', tone: 'text-fg-muted' };
   return { text: item.size_bytes ? 'No action' : 'Not on disk', tone: 'text-fg-faint' };
@@ -100,12 +110,22 @@ const SORTABLE = [
   ...COLUMNS.filter((c) => c.key).map(({ key, label }) => ({ key, label })),
 ];
 
-export default function MediaTable({ items, kind }) {
+/** The search box: plain title text, or meaning (EmbeddingGemma 2 on the server). */
+const SEARCH_MODES = [
+  { key: 'title', label: 'Title', placeholder: 'Search titles' },
+  { key: 'meaning', label: 'Meaning', placeholder: 'Describe it, press Enter' },
+];
+
+export default function MediaTable({ items, kind, focus, instances }) {
   const [q, setQ] = useState('');
+  const [mode, setMode] = useState('title');
   const [filter, setFilter] = useState('on_disk');
+  const [theme, setTheme] = useState('');
   const [sort, setSort] = useState({ key: 'size_bytes', dir: -1 });
   const [sel, setSel] = useState(null);
   const inputRef = useRef(null);
+  const meaning = useMeaningSearch(kind);
+  const byRelevance = sort.key === 'relevance';
 
   useEffect(() => {
     const onKey = (e) => {
@@ -117,10 +137,33 @@ export default function MediaTable({ items, kind }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // A Keep link from a notification (`?item=<card id>`) opens that item once,
+  // as soon as the items have loaded.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focus || focused.current) return;
+    const item = items.find((i) => i.id === focus && i.kind === kind);
+    if (item) { focused.current = true; setSel(item); }
+  }, [focus, items, kind]);
+
+  // Themes present among this kind's rows; the selector shows only when there are any.
+  const themes = useMemo(
+    () => [...new Set(items.filter((i) => i.kind === kind && i.theme).map((i) => i.theme))].sort((a, b) => a.localeCompare(b)),
+    [items, kind],
+  );
+
+  // A theme that vanished at a recluster selects nothing rather than emptying the table.
+  const activeTheme = themes.includes(theme) ? theme : '';
+
+  // By meaning, the table holds the last search's matches (every row before
+  // the first); by title, the rows whose title holds the text.
   const searched = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return items.filter((i) => i.kind === kind && (!needle || i.title.toLowerCase().includes(needle)));
-  }, [items, kind, q]);
+    const matches = mode === 'meaning'
+      ? (i) => !meaning.hits || meaning.hits.has(i.id)
+      : (i) => !needle || i.title.toLowerCase().includes(needle);
+    return items.filter((i) => i.kind === kind && (!activeTheme || i.theme === activeTheme) && matches(i));
+  }, [items, kind, q, activeTheme, mode, meaning.hits]);
 
   const counts = useMemo(
     () => Object.fromEntries(FILTERS.map((f) => [f.key, searched.filter(f.test).length])),
@@ -130,20 +173,39 @@ export default function MediaTable({ items, kind }) {
   const rows = useMemo(() => {
     const test = FILTERS.find((f) => f.key === filter).test;
     const missing = sort.dir === -1 ? -Infinity : Infinity;
+    const value = byRelevance ? (i) => meaning.hits?.get(i.id) : (i) => i[sort.key];
     return searched.filter(test).sort((a, b) => {
-      const av = a[sort.key] ?? missing;
-      const bv = b[sort.key] ?? missing;
+      const av = value(a) ?? missing;
+      const bv = value(b) ?? missing;
       if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * sort.dir;
       return av > bv ? sort.dir : av < bv ? -sort.dir : 0;
     });
-  }, [searched, filter, sort]);
+  }, [searched, filter, sort, byRelevance, meaning.hits]);
+
+  const unsortRelevance = () => setSort((s) => (s.key === 'relevance' ? { key: 'size_bytes', dir: -1 } : s));
+  const switchMode = (next) => {
+    setMode(next);
+    meaning.clear();
+    unsortRelevance();
+    inputRef.current?.focus();
+  };
+  const editQuery = (text) => {
+    setQ(text);
+    if (mode === 'meaning' && !text.trim()) { meaning.clear(); unsortRelevance(); }
+  };
+  const submit = async (e) => {
+    if (e.key !== 'Enter' || mode !== 'meaning' || !q.trim()) return;
+    if (await meaning.run(q.trim())) setSort({ key: 'relevance', dir: -1 });
+  };
+  const sortable = meaning.hits ? [{ key: 'relevance', label: 'Relevance' }, ...SORTABLE] : SORTABLE;
+  const placeholder = SEARCH_MODES.find((m) => m.key === mode).placeholder;
 
   const toggle = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : (key === 'title' ? 1 : -1) }));
   const noun = kind === 'movie' ? 'movies' : 'seasons';
   const totalBytes = rows.reduce((sum, i) => sum + (i.size_bytes || 0), 0);
 
   const emptyState = <EmptyState title={`No matching ${noun}`} body="Change the filter or clear the search." />;
-  const actions = (i) => actionsFor(i, () => setSel(i));
+  const actions = (i) => actionsFor(i, instances, () => setSel(i));
 
   return (
     <>
@@ -162,24 +224,45 @@ export default function MediaTable({ items, kind }) {
             className={`${selectCls} flex-1 sm:hidden`}>
             {FILTERS.map((f) => <option key={f.key} value={f.key}>{f.label} ({counts[f.key]})</option>)}
           </select>
+          {themes.length > 0 && (
+            <select aria-label="Theme" value={activeTheme} onChange={(e) => setTheme(e.target.value)}
+              className={`${selectCls} w-full sm:w-auto sm:max-w-[14rem]`}>
+              <option value="">All themes</option>
+              {themes.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
 
           <span className="hidden text-xs text-fg-muted sm:ml-auto sm:inline">
             <span className="num">{rows.length}</span> {noun} · <span className="num">{GiB(totalBytes)}</span> GiB
           </span>
-          <div className="relative w-full sm:w-56">
+          <div role="radiogroup" aria-label="Search by" className="inline-flex items-center rounded-md border border-line bg-ink-900 p-0.5">
+            {SEARCH_MODES.map((m) => (
+              <button key={m.key} role="radio" aria-checked={mode === m.key} onClick={() => switchMode(m.key)}
+                className={`rounded px-2.5 py-1 text-xs transition-colors ${mode === m.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
             <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint" />
-            <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles"
+            <input ref={inputRef} value={q} onChange={(e) => editQuery(e.target.value)} onKeyDown={submit} placeholder={placeholder}
+              aria-label={mode === 'meaning' ? 'Search by meaning' : 'Search titles'} enterKeyHint="search" maxLength={200}
               className="min-h-[40px] w-full rounded-md border border-line bg-ink-900 py-1.5 pl-8 pr-8 text-[13px] placeholder:text-fg-faint focus:border-fg-faint focus:outline-none sm:min-h-0" />
             <kbd className="absolute right-2 hidden sm:block top-1/2 -translate-y-1/2 rounded border border-line px-1 text-[10px] text-fg-faint">/</kbd>
           </div>
         </div>
+
+        {mode === 'meaning' && (
+          <MeaningStatus search={meaning} noun={noun} byRelevance={byRelevance}
+            onSortByRelevance={() => setSort({ key: 'relevance', dir: -1 })} />
+        )}
 
         {/* Phones: sort lives here; from md up the table header drives the same state. */}
         <div className="flex items-center gap-2 md:hidden">
           <select aria-label="Sort by" value={sort.key}
             onChange={(e) => setSort({ key: e.target.value, dir: e.target.value === 'title' ? 1 : -1 })}
             className={`${selectCls} flex-1`}>
-            {SORTABLE.map((c) => <option key={c.key} value={c.key}>Sort: {c.label}</option>)}
+            {sortable.map((c) => <option key={c.key} value={c.key}>Sort: {c.label}</option>)}
           </select>
           <button className="btn min-h-[40px] min-w-[40px] justify-center px-2"
             onClick={() => setSort((s) => ({ ...s, dir: -s.dir }))}
@@ -294,13 +377,25 @@ function metaOf(item) {
   ].filter(Boolean).join(' · ');
 }
 
+/** The instance a named-instance item comes from (`4k`); nothing for the default. */
+function InstanceBadge({ item }) {
+  const ref = parseArrRef(item.id);
+  if (!ref?.instance) return null;
+  return (
+    <span title={`From ${instanceLabel(ref.app, ref.instance)}`}
+      className="ml-1.5 inline-block rounded-sm border border-line px-1 align-middle text-[10.5px] leading-4 text-fg-muted">
+      {ref.instance}
+    </span>
+  );
+}
+
 function TitleCell({ item }) {
   const meta = metaOf(item);
   return (
     <div className="flex min-w-0 items-center gap-2.5">
       <Poster item={item} />
       <div className="min-w-0 flex-1">
-        <div className="truncate-1 text-fg" title={item.title}>{item.title}</div>
+        <div className="truncate-1 text-fg" title={item.title}>{item.title}<InstanceBadge item={item} /></div>
         {meta && <div className="truncate-1 text-xs text-fg-faint">{meta}</div>}
       </div>
     </div>
@@ -341,25 +436,29 @@ function Decision({ item }) {
 /**
  * Link to the item in Radarr/Sonarr. Their routers key items by `titleSlug`
  * (`/series/for-all-mankind`, `/movie/872585`); a numeric id resolves to
- * "that series cannot be found". The apps sit beside Flinch under the same
- * parent domain (flinch.example.com → sonarr.example.com). Returns null when
- * there is no slug or no sibling host to point at (local dev).
+ * "that series cannot be found". A named instance links to its `public_url`
+ * from `status.arr_instances` when set. Otherwise the apps sit beside Flinch
+ * under the same parent domain (flinch.example.com → sonarr.example.com, a
+ * named instance → radarr-4k.example.com). Returns null when there is no slug
+ * or nothing to point at (local dev).
  */
-function arrUrl(item) {
-  const app = item.id.startsWith('radarr-') ? 'radarr' : 'sonarr';
+function arrUrl(item, ref, instances) {
+  if (!item.title_slug || !ref) return null;
+  const path = `${ref.app === 'radarr' ? '/movie/' : '/series/'}${encodeURIComponent(item.title_slug)}`;
+  const configured = ref.instance && instances?.find((i) => i.app === ref.app && i.name === ref.instance)?.public_url;
+  if (configured) return `${configured.replace(/\/+$/, '')}${path}`;
   const labels = window.location.hostname.split('.');
-  if (!item.title_slug || labels.length < 2) return null;
-  const host = [app, ...labels.slice(1)].join('.');
-  const slug = encodeURIComponent(item.title_slug);
-  return `https://${host}${app === 'radarr' ? `/movie/${slug}` : `/series/${slug}`}`;
+  if (labels.length < 2) return null;
+  const host = [ref.instance ? `${ref.app}-${ref.instance}` : ref.app, ...labels.slice(1)].join('.');
+  return `https://${host}${path}`;
 }
 
-function actionsFor(item, openDetails) {
-  const url = arrUrl(item);
-  const app = item.id.startsWith('radarr-') ? 'Radarr' : 'Sonarr';
+function actionsFor(item, instances, openDetails) {
+  const ref = parseArrRef(item.id);
+  const url = arrUrl(item, ref, instances);
   return [
     { label: 'Details', icon: <PanelRightOpen size={13} />, onSelect: openDetails },
-    ...(url ? [{ label: `Open in ${app}`, icon: <ExternalLink size={13} />, onSelect: () => window.open(url, '_blank', 'noopener') }] : []),
+    ...(url ? [{ label: `Open in ${instanceLabel(ref.app, ref.instance)}`, icon: <ExternalLink size={13} />, onSelect: () => window.open(url, '_blank', 'noopener') }] : []),
     { label: 'Copy library id', icon: <Copy size={13} />, onSelect: () => navigator.clipboard?.writeText(item.id) },
   ];
 }
@@ -393,6 +492,7 @@ function ItemDetail({ item, actions }) {
     ['Reacquisition', <Reacquisition friction={item.friction} />],
     ['Eviction safety', <Num value={item.eviction_safety} format={pct} />],
     ['Recommendation', <Advice advice={item.advice} full />],
+    ['Theme', <span className="text-fg-muted">{item.theme ?? '—'}</span>],
     ['Watched', <Watched item={item} />],
     ['Size', <Size bytes={item.size_bytes} />],
     ['On disk', <Days value={item.age_days} />],
@@ -434,6 +534,7 @@ function ItemDetail({ item, actions }) {
               {why.map((w) => <li key={w}>{w}</li>)}
             </ul>
           )}
+        {item.reason?.includes('streams on ') && <p className="mt-1.5 text-xs"><JustWatch /></p>}
       </section>
 
       <details className="text-xs">
@@ -453,5 +554,6 @@ const TERMS = {
   Reacquisition: 'reacquisition',
   'Eviction safety': 'eviction_safety',
   Recommendation: 'advice',
+  Theme: 'themes',
   Watched: 'evidence',
 };

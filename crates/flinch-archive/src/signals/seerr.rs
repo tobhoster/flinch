@@ -6,9 +6,11 @@
 //! `pageInfo.results` is the total count. A `MediaRequest` carries its
 //! `status` (`MediaRequestStatus`: 1 pending, 2 approved, 3 declined,
 //! 4 failed, 5 completed), its `media` (`mediaType` `movie` or `tv`, `tmdbId`,
-//! `tvdbId`), the requested `seasons` and the `requestedBy` user, whose
-//! `displayName` is computed when the user loads. `GET
-//! /api/v1/user/{id}/watchlist?page=` answers `{page, totalPages,
+//! `tvdbId`), the requested `seasons`, its `createdAt` (ISO 8601 UTC; see
+//! `components.schemas.MediaRequest` in
+//! <https://github.com/sct/overseerr/blob/develop/overseerr-api.yml>) and the
+//! `requestedBy` user, whose `displayName` is computed when the user loads.
+//! `GET /api/v1/user/{id}/watchlist?page=` answers `{page, totalPages,
 //! totalResults, results: [{mediaType, tmdbId, ...}]}` from the user's Plex
 //! watchlist.
 
@@ -91,6 +93,9 @@ struct UserRecord {
     plex_username: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    /// Jellyseerr's media-server name for a Jellyfin or Emby user.
+    #[serde(default)]
+    jellyfin_username: Option<String>,
 }
 
 impl UserRecord {
@@ -112,6 +117,8 @@ struct RequestRecord {
     #[serde(default)]
     seasons: Vec<SeasonRecord>,
     requested_by: UserRecord,
+    #[serde(default)]
+    created_at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +158,7 @@ pub fn parse_requests(records: Vec<serde_json::Value>) -> Vec<Request> {
                 media: record.media.media_ref()?,
                 seasons: record.seasons.iter().map(|season| season.season_number).collect(),
                 requester: record.requested_by.name(),
+                requested_at: record.created_at.as_deref().and_then(crate::presence::parse_utc),
             })
         })
         .collect()
@@ -159,6 +167,36 @@ pub fn parse_requests(records: Vec<serde_json::Value>) -> Vec<Request> {
 /// The users with a usable id.
 pub fn parse_users(records: Vec<serde_json::Value>) -> Vec<User> {
     rows::<UserRecord>(records).filter(|user| user.id > 0).map(|user| User { member: user.id, name: user.name() }).collect()
+}
+
+/// A Seerr user as the household's notifications address them: the name
+/// requests carry, the account's email, and every other name the operator
+/// may use to point a recipient override at them (`username`,
+/// `plexUsername`, Jellyseerr's `jellyfinUsername`, the email). The Seerr API
+/// (`components.schemas.User`) lists these fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Contact {
+    pub name: String,
+    pub email: Option<String>,
+    pub aliases: Vec<String>,
+}
+
+/// The users with a usable id and name, as contacts.
+pub fn parse_contacts(records: Vec<serde_json::Value>) -> Vec<Contact> {
+    rows::<UserRecord>(records)
+        .filter(|user| user.id > 0)
+        .filter_map(|user| {
+            let email = user.email.clone().filter(|email| email.contains('@'));
+            let aliases: Vec<String> = [&user.username, &user.plex_username, &user.jellyfin_username, &user.email]
+                .into_iter()
+                .flatten()
+                .filter(|alias| !alias.is_empty())
+                .cloned()
+                .collect();
+            let name = user.name();
+            (!name.is_empty()).then_some(Contact { name, email, aliases })
+        })
+        .collect()
 }
 
 /// The titles on one page of `user`'s watchlist.

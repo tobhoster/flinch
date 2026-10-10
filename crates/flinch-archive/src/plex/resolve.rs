@@ -104,19 +104,32 @@ pub struct Unconfirmed {
     pub show_rating_keys: Vec<String>,
 }
 
+/// (is a movie, normalised title, year): what a title-and-year match keys on.
+type TitleKey = (bool, String, u32);
+
+/// One title as told apart from another of the same name: its catalogue ids,
+/// or the target itself when it has none.
+type Identity<'a> = Result<&'a crate::ids::ExternalIds, &'a str>;
+
 /// Resolve every target against the library. An empty library (Plex disabled
 /// or down) still yields a usable [`Resolution`]: nothing resolves, and play
 /// joins fall back to the exact title+year rule.
+///
+/// The same title in two *arr instances (HD and 4K copies, one TMDB id) is
+/// two targets of one Plex item: both resolve to it, so a play of the movie
+/// counts for both copies, and the pair is not an ambiguity.
 pub fn resolve(targets: &[WatchTarget], library: &PlexLibrary) -> Resolution {
-    // (is a movie, normalised title, year) → targets carrying it.
-    let mut seen: HashMap<(bool, String, u32), usize> = HashMap::new();
+    // Each title key → the distinct titles carrying it.
+    let mut seen: HashMap<TitleKey, HashSet<Identity<'_>>> = HashMap::new();
     for target in targets {
         if let Some(year) = target.year {
-            *seen.entry((target.kind == LibraryKind::Movie, normalise(&target.title), year)).or_default() += 1;
+            let identity = if target.external.is_empty() { Err(target.id.as_str()) } else { Ok(&target.external) };
+            seen.entry((target.kind == LibraryKind::Movie, normalise(&target.title), year)).or_default().insert(identity);
         }
     }
-    let unique =
-        |target: &WatchTarget, year: u32| seen.get(&(target.kind == LibraryKind::Movie, normalise(&target.title), year)) == Some(&1);
+    let unique = |target: &WatchTarget, year: u32| {
+        seen.get(&(target.kind == LibraryKind::Movie, normalise(&target.title), year)).is_some_and(|titles| titles.len() == 1)
+    };
     let no_episode_ids = EpisodeIds::default();
     let mut resolution = Resolution::default();
     for target in targets {
@@ -130,7 +143,7 @@ pub fn resolve(targets: &[WatchTarget], library: &PlexLibrary) -> Resolution {
         }
     }
     resolution.ambiguous_movies =
-        seen.into_iter().filter(|((movie, _, _), count)| *movie && *count > 1).map(|((_, title, year), _)| (title, year)).collect();
+        seen.into_iter().filter(|((movie, _, _), titles)| *movie && titles.len() > 1).map(|((_, title, year), _)| (title, year)).collect();
     resolution
 }
 
@@ -357,3 +370,6 @@ impl Resolution {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests;

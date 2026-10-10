@@ -22,7 +22,7 @@ impl Volume {
 }
 
 /// Which *arr reported a mount. Paths are container-local, so they are only
-/// comparable within one app.
+/// comparable within one instance of one app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum App {
@@ -39,10 +39,12 @@ impl App {
     }
 }
 
-/// What one app says about its disks.
+/// What one instance says about its disks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppDisks {
     pub app: App,
+    /// The instance ([`crate::ids`]); empty for the default.
+    pub instance: String,
     pub diskspace: Vec<Volume>,
     pub root_folders: Vec<RootFolder>,
     /// How long a delete stays on disk in the app's recycle bin.
@@ -137,13 +139,15 @@ fn same_filesystem(a: &Volume, b: &Volume) -> bool {
 pub struct LibraryVolumes {
     /// One entry per distinct filesystem hosting a root folder, keyed by `path`.
     pub volumes: Vec<Volume>,
-    /// (app, mount path, key of the filesystem it shows).
-    mounts: Vec<(App, String, String)>,
-    /// Root folders no reported mount holds: their items can never be evicted,
-    /// so the operator must see them rather than find out when a disk fills.
-    pub unmatched_roots: Vec<(App, String)>,
-    /// Each reporting app's recycle bin; an app that never answered is `Unknown`.
-    recycle: Vec<(App, RecycleBin)>,
+    /// (instance key, mount path, key of the filesystem it shows); the
+    /// instance key is [`crate::ids::instance_key`]'s `radarr` or `radarr@4k`.
+    mounts: Vec<(String, String, String)>,
+    /// Root folders no reported mount holds, by instance key: their items can
+    /// never be evicted, so the operator must see them rather than find out
+    /// when a disk fills.
+    pub unmatched_roots: Vec<(String, String)>,
+    /// Each reporting instance's recycle bin; one that never answered is `Unknown`.
+    recycle: Vec<(String, RecycleBin)>,
 }
 
 impl LibraryVolumes {
@@ -157,24 +161,25 @@ impl LibraryVolumes {
     pub fn build(disks: &[AppDisks], probe: impl Fn(&str) -> Option<Volume>) -> Self {
         let mut library = Self::default();
         for disk in disks {
-            library.recycle.push((disk.app, disk.recycle));
+            let owner = crate::ids::instance_key(disk.app, &disk.instance);
+            library.recycle.push((owner.clone(), disk.recycle));
             for root in &disk.root_folders {
                 let reported = deepest_mount(&root.path, &disk.diskspace).filter(|mount| root.is_on(mount)).cloned();
                 let Some(mount) = reported.or_else(|| probe(&root.path).filter(|found| root.is_on(found))) else {
-                    library.unmatched_roots.push((disk.app, root.path.clone()));
+                    library.unmatched_roots.push((owner.clone(), root.path.clone()));
                     continue;
                 };
                 let mount = &mount;
-                if library.mounts.iter().any(|(app, path, _)| *app == disk.app && *path == mount.path) {
+                if library.mounts.iter().any(|(known, path, _)| *known == owner && *path == mount.path) {
                     continue;
                 }
                 let key = match library.volumes.iter().find(|known| same_filesystem(known, mount)) {
                     Some(known) => known.path.clone(),
                     None => {
                         // A different filesystem at an already-used path (two
-                        // apps, two shares, both at `/media`) needs its own key.
+                        // instances, two shares, both at `/media`) needs its own key.
                         let key = if library.volumes.iter().any(|known| known.path == mount.path) {
-                            format!("{} ({})", mount.path, disk.app.label())
+                            format!("{} ({owner})", mount.path)
                         } else {
                             mount.path.clone()
                         };
@@ -182,28 +187,47 @@ impl LibraryVolumes {
                         key
                     }
                 };
-                library.mounts.push((disk.app, mount.path.clone(), key));
+                library.mounts.push((owner.clone(), mount.path.clone(), key));
             }
         }
         library.volumes.sort_by(|a, b| a.path.cmp(&b.path));
         library
     }
 
-    /// The volume key an item's files live on, from the app that owns it.
-    pub fn volume_of(&self, app: App, item_path: &str) -> Option<&str> {
+    /// The volume key an item's files live on, from the instance that owns it.
+    pub fn volume_of(&self, app: App, instance: &str, item_path: &str) -> Option<&str> {
         self.mounts
             .iter()
-            .filter(|(owner, mount, _)| *owner == app && is_under(item_path, mount))
+            .filter(|(owner, mount, _)| owns(owner, app, instance) && is_under(item_path, mount))
             .max_by_key(|(_, mount, _)| trim_separators(mount).len())
             .map(|(_, _, key)| key.as_str())
     }
 
-    /// How long a delete by `app` may still occupy its volume.
-    pub fn recycle_secs(&self, app: App) -> u64 {
-        self.recycle_bin(app).hold_secs()
+    /// How long a delete by the instance may still occupy its volume.
+    pub fn recycle_secs(&self, app: App, instance: &str) -> u64 {
+        self.recycle_bin(app, instance).hold_secs()
     }
 
-    pub fn recycle_bin(&self, app: App) -> RecycleBin {
-        self.recycle.iter().find(|(owner, _)| *owner == app).map_or(RecycleBin::Unknown, |(_, bin)| *bin)
+    pub fn recycle_bin(&self, app: App, instance: &str) -> RecycleBin {
+        self.recycle.iter().find(|(owner, _)| owns(owner, app, instance)).map_or(RecycleBin::Unknown, |(_, bin)| *bin)
     }
+
+    /// How long a delete of `card_id` may still occupy its volume: its
+    /// instance's bin ([`crate::ids::ArrRef`]); an id naming none is `Unknown`.
+    pub fn recycle_secs_of(&self, card_id: &str) -> u64 {
+        crate::ids::ArrRef::card(card_id).map_or(RecycleBin::Unknown, |item| self.recycle_bin(item.app, item.instance)).hold_secs()
+    }
+
+    /// The instance keys whose bin is never emptied.
+    pub fn never_emptied(&self) -> impl Iterator<Item = &str> {
+        self.recycle.iter().filter(|(_, bin)| *bin == RecycleBin::NeverEmptied).map(|(owner, _)| owner.as_str())
+    }
+}
+
+/// Whether `owner` ([`crate::ids::instance_key`]) is `app`'s `instance`.
+fn owns(owner: &str, app: App, instance: &str) -> bool {
+    owner.strip_prefix(app.label()).is_some_and(|rest| match rest.strip_prefix('@') {
+        Some(name) => name == instance,
+        None => rest.is_empty() && instance.is_empty(),
+    })
 }

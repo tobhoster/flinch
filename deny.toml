@@ -8,7 +8,12 @@
 unmaintained = "all"
 unsound = "all"
 yanked = "deny"
-ignore = []
+ignore = [
+    # paste: unmaintained, not vulnerable. A build-time proc-macro that gemm
+    # (candle's CPU matmul, for the EmbeddingGemma 2 encoder) uses to generate
+    # code; it ships no runtime code and reads no input.
+    { id = "RUSTSEC-2024-0436", reason = "build-time proc-macro via candle/gemm; unmaintained, no known vulnerability" },
+]
 
 [licenses]
 # Only what the tree uses today, all permissive. A new license fails the check
@@ -22,6 +27,8 @@ allow = [
     "Unicode-3.0",
     # webpki-roots: the Mozilla root certificates reqwest trusts.
     "CDLA-Permissive-2.0",
+    # foldhash: hashbrown's hasher, reached through candle's safetensors.
+    "Zlib",
 ]
 confidence-threshold = 0.93
 

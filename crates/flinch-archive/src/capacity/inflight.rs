@@ -61,6 +61,29 @@ pub struct Eviction {
     /// The item's title at hand-over, for the operator.
     #[serde(default)]
     pub title: String,
+    /// A move to the archive root ([`crate::archive`]), not a deletion: its
+    /// bytes are credited to the volume it left like an eviction's, with no
+    /// recycle window, and it is never announced or remembered as deleted.
+    #[serde(default)]
+    pub archived: bool,
+}
+
+impl Eviction {
+    /// How long its bytes may legitimately stay on disk after it left:
+    /// `recycle_secs` answers for the card id, whose instance's bin holds it.
+    fn window(&self, id: &str, recycle_secs: &impl Fn(&str) -> u64) -> u64 {
+        if self.archived {
+            0
+        } else {
+            recycle_secs(id)
+        }
+    }
+}
+
+/// The ledger key of a card's move to the archive: never a card id, so the
+/// card still being in the library does not cancel the credit.
+fn archive_key(card_id: &str) -> String {
+    format!("archive:{card_id}")
 }
 
 /// What one hand-over the ledger records carries.
@@ -164,8 +187,28 @@ impl EvictionLedger {
             gone_at: None,
             held_since: None,
             title: handed.title.to_string(),
+            archived: false,
         });
         self.handoffs.entry(handed.id.to_string()).or_insert(now);
+    }
+
+    /// Record a card moved off `moved.volume` to the archive, read back at its
+    /// new path: it left that volume now, and its bytes there are credited
+    /// until the drop shows on disk (see [`Eviction::archived`]).
+    pub fn record_move(&mut self, moved: HandedOver<'_>, now: u64) {
+        self.entries.insert(
+            archive_key(moved.id),
+            Eviction {
+                app: moved.app,
+                volume: moved.volume.to_string(),
+                bytes: moved.bytes,
+                handed_at: now,
+                gone_at: Some(now),
+                held_since: None,
+                title: moved.title.to_string(),
+                archived: true,
+            },
+        );
     }
 
     /// Book a collection membership FLINCH made and Maintainerr still holds,
@@ -203,7 +246,7 @@ impl EvictionLedger {
     pub fn observe(
         &mut self,
         on_disk: impl Fn(&str) -> bool,
-        recycle_secs: impl Fn(App) -> u64,
+        recycle_secs: impl Fn(&str) -> u64,
         measured: &BTreeMap<String, Occupancy>,
         now: u64,
     ) {
@@ -218,13 +261,13 @@ impl EvictionLedger {
             let waited_out = eviction.held_since.is_some_and(|since| now.saturating_sub(since) >= HELD_CREDIT_SECS);
             // Never before its recycle window ends; on a disk never measured
             // again, not past the last moment it could still have been held.
-            let longest = recycle_secs(eviction.app).saturating_add(SETTLE_GRACE_SECS).saturating_add(HELD_CREDIT_SECS);
+            let longest = eviction.window(id, &recycle_secs).saturating_add(SETTLE_GRACE_SECS).saturating_add(HELD_CREDIT_SECS);
             !waited_out && now.saturating_sub(gone_at) < longest
         });
         for (volume, occupancy) in measured {
             self.settle(volume, *occupancy, &recycle_secs, now);
         }
-        for (id, eviction) in &self.entries {
+        for (id, eviction) in self.entries.iter().filter(|(_, eviction)| !eviction.archived) {
             self.handoffs.entry(id.clone()).or_insert(eviction.handed_at);
         }
         let tracked = &self.entries;
@@ -235,12 +278,12 @@ impl EvictionLedger {
     /// order the windows ended: freed once *other* has dropped by at least half
     /// an eviction's size since it left the library — each drop pays for one
     /// eviction only — and held when the grace runs out first.
-    fn settle(&mut self, volume: &str, occupancy: Occupancy, recycle_secs: &impl Fn(App) -> u64, now: u64) {
+    fn settle(&mut self, volume: &str, occupancy: Occupancy, recycle_secs: &impl Fn(&str) -> u64, now: u64) {
         let mut gone: Vec<(u64, u64, String)> = Vec::new();
         let mut credited = 0u64;
         for (id, eviction) in self.entries.iter().filter(|(_, eviction)| eviction.volume == volume) {
             if let Some(gone_at) = eviction.gone_at {
-                gone.push((gone_at.saturating_add(recycle_secs(eviction.app)), gone_at, id.clone()));
+                gone.push((gone_at.saturating_add(eviction.window(id, recycle_secs)), gone_at, id.clone()));
                 credited = credited.saturating_add(eviction.bytes);
             }
         }

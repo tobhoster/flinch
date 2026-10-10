@@ -8,6 +8,9 @@
 //! posting. SABnzbd `GET /api/?mode=get_config&section=servers&output=json`
 //! answers `{config: {servers: [{enable, retention, ...}]}}`, retention in
 //! days with 0 meaning unlimited; older releases write numbers as strings.
+//! Each release also carries its `title` and `size` in bytes (Prowlarr
+//! `ReleaseResource.cs`, https://github.com/Prowlarr/Prowlarr/blob/develop/src/Prowlarr.Api.V1/Search/ReleaseResource.cs):
+//! the smallest one is what [`crate::quality::act`] asks before a downgrade.
 
 use super::{rows, Release};
 use crate::card::{ArchiveCard, LibraryKind};
@@ -18,6 +21,8 @@ use std::collections::{BTreeMap, HashMap};
 pub const RELEASE_TTL_SECS: u64 = 7 * 86_400;
 /// Searches per cycle at most.
 pub const SEARCH_BUDGET: usize = 20;
+/// Releases smaller than this are samples or fakes, never a compact copy.
+pub const MIN_RELEASE_BYTES: u64 = 256 << 20;
 
 /// Prowlarr's query and search type for a card: `"{title} {year}"` as a
 /// movie search, `"{show} S{nn}"` as a TV search. `None` for a season card
@@ -39,6 +44,10 @@ struct SearchResult {
     seeders: Option<u32>,
     #[serde(default)]
     age: u32,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    size: u64,
 }
 
 #[derive(Deserialize)]
@@ -59,13 +68,28 @@ pub struct Searched {
     pub seeders: u32,
     /// The newest usenet post's age in days; `None` when none was found.
     pub youngest_usenet_days: Option<u32>,
+    /// The smallest whole release found, in bytes: for a season only season
+    /// packs count. `None` when none was found, and in a search cached before
+    /// sizes were kept.
+    #[serde(default)]
+    pub smallest_bytes: Option<u64>,
+    /// The largest whole release found, in bytes, under the same rules: what
+    /// an upgrade search may bring in. `None` as for `smallest_bytes`.
+    #[serde(default)]
+    pub largest_bytes: Option<u64>,
 }
 
 impl Searched {
-    /// Reduce one search's results. A malformed result is skipped.
-    pub fn from_results(results: Vec<serde_json::Value>, searched_at: u64) -> Self {
-        let mut found = Searched { searched_at, seeders: 0, youngest_usenet_days: None };
+    /// Reduce one search's results. A malformed result is skipped. `season`
+    /// names the season a TV search was for: an episode is not the season.
+    pub fn from_results(results: Vec<serde_json::Value>, searched_at: u64, season: Option<u32>) -> Self {
+        let mut found = Searched { searched_at, seeders: 0, youngest_usenet_days: None, smallest_bytes: None, largest_bytes: None };
         for result in rows::<SearchResult>(results) {
+            let whole = season.is_none_or(|season| season_pack(&result.title, season));
+            if whole && result.size >= MIN_RELEASE_BYTES {
+                found.smallest_bytes = Some(found.smallest_bytes.map_or(result.size, |bytes| bytes.min(result.size)));
+                found.largest_bytes = Some(found.largest_bytes.map_or(result.size, |bytes| bytes.max(result.size)));
+            }
             match result.protocol {
                 Protocol::Torrent => found.seeders = found.seeders.max(result.seeders.unwrap_or(0)),
                 Protocol::Usenet => {
@@ -86,6 +110,19 @@ impl Searched {
         };
         Release { seeders: Some(self.seeders), usenet_out_of_retention: retention_days.map(out_of_retention) }
     }
+}
+
+/// Whether a release title is a pack of `season`: it names `S01` (scene
+/// style) as a token not followed by an episode (`S01E01`).
+pub fn season_pack(title: &str, season: u32) -> bool {
+    let title = title.to_ascii_uppercase();
+    let token = format!("S{season:02}");
+    let bytes = title.as_bytes();
+    title.match_indices(&token).any(|(at, _)| {
+        let starts = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
+        let next = bytes.get(at + token.len());
+        starts && !next.is_some_and(|byte| byte.is_ascii_digit() || *byte == b'E')
+    })
 }
 
 /// The longest retention among the enabled usenet servers in a SABnzbd
@@ -151,5 +188,15 @@ impl ReleaseCache {
     /// old search beats none while the budget catches up.
     pub fn releases(&self, retention_days: Option<u32>) -> HashMap<String, Release> {
         self.0.iter().map(|(id, searched)| (id.clone(), searched.release(retention_days))).collect()
+    }
+
+    /// Every cached card's smallest whole release, stale or not.
+    pub fn smallest(&self) -> HashMap<String, u64> {
+        self.0.iter().filter_map(|(id, searched)| Some((id.clone(), searched.smallest_bytes?))).collect()
+    }
+
+    /// Every cached card's largest whole release, stale or not.
+    pub fn largest(&self) -> HashMap<String, u64> {
+        self.0.iter().filter_map(|(id, searched)| Some((id.clone(), searched.largest_bytes?))).collect()
     }
 }

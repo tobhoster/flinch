@@ -17,7 +17,7 @@ fn no_probe(_: &str) -> Option<Volume> {
 
 fn disks(app: App, diskspace: Vec<Volume>, roots: &[&str]) -> AppDisks {
     let root_folders = roots.iter().map(|path| RootFolder { path: path.to_string(), free_bytes: None }).collect();
-    AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled }
+    AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled }
 }
 
 /// Target 80%, 10-day window, no headroom: round numbers to reason about.
@@ -161,7 +161,7 @@ proptest! {
             vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/config", 10, 1)],
             &[root.as_str()],
         )], no_probe);
-        let key = library.volume_of(App::Sonarr, &item);
+        let key = library.volume_of(App::Sonarr, "", &item);
         prop_assert_eq!(key, Some("/media"));
         prop_assert!(library.volumes.iter().any(|v| Some(v.path.as_str()) == key));
     }
@@ -191,20 +191,29 @@ fn attribution_matches_whole_path_components(#[case] item: &str, #[case] expecte
         &[disks(App::Radarr, vec![vol("/", 100, 10), vol("/media", 1000, 500), vol("/media2", 1000, 10)], &["/media/movies"])],
         no_probe,
     );
-    assert_eq!(library.volume_of(App::Radarr, item), expected);
+    assert_eq!(library.volume_of(App::Radarr, "", item), expected);
 }
 
 #[test]
 fn windows_paths_attribute_by_backslash_components() {
     let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("D:\\Media", 1000, 500)], &["D:\\Media\\Movies\\"])], no_probe);
-    assert_eq!(library.volume_of(App::Radarr, "D:\\Media\\Movies\\Film"), Some("D:\\Media"));
-    assert_eq!(library.volume_of(App::Radarr, "D:\\MediaX\\Film"), None);
+    assert_eq!(library.volume_of(App::Radarr, "", "D:\\Media\\Movies\\Film"), Some("D:\\Media"));
+    assert_eq!(library.volume_of(App::Radarr, "", "D:\\MediaX\\Film"), None);
 }
 
 #[test]
 fn attribution_is_per_app_because_mount_paths_are_container_local() {
     let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("/data", 1000, 500)], &["/data/movies"])], no_probe);
-    assert_eq!(library.volume_of(App::Sonarr, "/data/tv/Show"), None, "Sonarr's /data is another container's path");
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/tv/Show"), None, "Sonarr's /data is another container's path");
+}
+
+#[test]
+fn attribution_is_per_instance_because_each_is_its_own_container() {
+    let uhd = AppDisks { instance: "4k".into(), ..disks(App::Radarr, vec![vol("/data", 8000, 500)], &["/data/movies"]) };
+    let library = LibraryVolumes::build(&[disks(App::Radarr, vec![vol("/data", 1000, 500)], &["/data/movies"]), uhd], no_probe);
+    assert_eq!(library.volume_of(App::Radarr, "", "/data/movies/Heat"), Some("/data"));
+    assert_eq!(library.volume_of(App::Radarr, "4k", "/data/movies/Heat"), Some("/data (radarr@4k)"), "the same path is 4k's own disk");
+    assert_eq!(library.volume_of(App::Radarr, "anime", "/data/movies/Heat"), None, "an instance that reported nothing governs nothing");
 }
 
 #[test]
@@ -216,8 +225,8 @@ fn a_share_mounted_at_different_paths_is_one_filesystem() {
         no_probe,
     );
     assert_eq!(library.volumes.len(), 1, "one disk must mean one goal, never a doubled eviction");
-    assert_eq!(library.volume_of(App::Sonarr, "/tv/Show"), Some("/movies"));
-    assert_eq!(library.volume_of(App::Radarr, "/movies/Film"), Some("/movies"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/tv/Show"), Some("/movies"));
+    assert_eq!(library.volume_of(App::Radarr, "", "/movies/Film"), Some("/movies"));
 }
 
 #[test]
@@ -231,15 +240,15 @@ fn distinct_filesystems_at_one_path_get_distinct_keys() {
     );
     let keys: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(keys, ["/media", "/media (sonarr)"]);
-    assert_eq!(library.volume_of(App::Sonarr, "/media/tv/Show"), Some("/media (sonarr)"));
-    assert_eq!(library.volume_of(App::Radarr, "/media/movies/Film"), Some("/media"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/media/tv/Show"), Some("/media (sonarr)"));
+    assert_eq!(library.volume_of(App::Radarr, "", "/media/movies/Film"), Some("/media"));
 }
 
 #[test]
 fn a_root_no_mount_holds_is_reported_not_guessed() {
     let library = LibraryVolumes::build(&[disks(App::Sonarr, Vec::new(), &["/tv"])], no_probe);
     assert!(library.volumes.is_empty());
-    assert_eq!(library.unmatched_roots, [(App::Sonarr, "/tv".to_string())]);
+    assert_eq!(library.unmatched_roots, [("sonarr".to_string(), "/tv".to_string())]);
 }
 
 #[test]
@@ -248,7 +257,8 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     // roots fall through to the container's root filesystem; each root's own
     // free space shows it lives elsewhere. Radarr's root agrees with `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app = |app, diskspace, root_folders| AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled };
+    let app =
+        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
     let library = LibraryVolumes::build(
         &[
             app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
@@ -262,8 +272,11 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     );
     let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(paths, ["/data"]);
-    assert_eq!(library.unmatched_roots, [(App::Sonarr, "/data/media/tv".to_string()), (App::Sonarr, "/data/media/anime".to_string())]);
-    assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Andor"), None, "never governed against `/`");
+    assert_eq!(
+        library.unmatched_roots,
+        [("sonarr".to_string(), "/data/media/tv".to_string()), ("sonarr".to_string(), "/data/media/anime".to_string())]
+    );
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Andor"), None, "never governed against `/`");
 }
 
 #[test]
@@ -272,7 +285,8 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     // NFS shares FLINCH has mounted read-only. tv and tv-b are their own
     // disks; anime sits on the share Radarr already reports as `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app = |app, diskspace, root_folders| AppDisks { app, diskspace, root_folders, recycle: RecycleBin::Disabled };
+    let app =
+        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
     let probe = |path: &str| match path {
         "/data/media/tv" => Some(vol("/data/media/tv", 834, 780)),
         "/data/media/tv-b" => Some(vol("/data/media/tv-b", 834, 666)),
@@ -293,9 +307,9 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
     assert_eq!(paths, ["/data", "/data/media/tv", "/data/media/tv-b"], "anime merged into the share Radarr reports");
     assert!(library.unmatched_roots.is_empty());
-    assert_eq!(library.volume_of(App::Sonarr, "/data/media/tv/Lioness/Season 1"), Some("/data/media/tv"));
-    assert_eq!(library.volume_of(App::Sonarr, "/data/media/anime/Frieren"), Some("/data"));
-    assert_eq!(library.volume_of(App::Radarr, "/data/media/movies/Heat (1995)"), Some("/data"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Lioness/Season 1"), Some("/data/media/tv"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/anime/Frieren"), Some("/data"));
+    assert_eq!(library.volume_of(App::Radarr, "", "/data/media/movies/Heat (1995)"), Some("/data"));
 }
 
 #[test]
@@ -303,10 +317,10 @@ fn a_probe_that_shows_a_different_filesystem_than_the_root_is_refused() {
     // The share is mounted at the wrong path here: statvfs reads a disk whose
     // free space disagrees with what Sonarr measured at the root.
     let root = RootFolder { path: "/data/media/tv".to_string(), free_bytes: Some(54 * GB) };
-    let app = AppDisks { app: App::Sonarr, diskspace: vec![vol("/", 510, 57)], root_folders: vec![root], recycle: RecycleBin::Disabled };
+    let app = AppDisks { root_folders: vec![root], ..disks(App::Sonarr, vec![vol("/", 510, 57)], &[]) };
     let library = LibraryVolumes::build(&[app], |_| Some(vol("/data/media/tv", 834, 528)));
     assert!(library.volumes.is_empty());
-    assert_eq!(library.unmatched_roots, [(App::Sonarr, "/data/media/tv".to_string())]);
+    assert_eq!(library.unmatched_roots, [("sonarr".to_string(), "/data/media/tv".to_string())]);
 }
 
 fn plan_on(volume: &str, target: u64, planned: u64, eligible: u64) -> EvictionPlan {
@@ -314,6 +328,7 @@ fn plan_on(volume: &str, target: u64, planned: u64, eligible: u64) -> EvictionPl
         method: None,
         solver_error: None,
         items: Vec::new(),
+        moves: Vec::new(),
         volumes: vec![VolumeOutcome { volume: volume.to_string(), target_bytes: target, planned_bytes: planned, eligible_bytes: eligible }],
         target_bytes: target,
         total_reclaimed_bytes: planned,
@@ -336,7 +351,7 @@ fn status_of(
         volumes,
         forecasts,
         plan,
-        unmatched_roots: &[(App::Sonarr, "/anime".to_string())],
+        unmatched_roots: &[("sonarr@anime".to_string(), "/anime".to_string())],
         on_disk,
         handed,
     })
@@ -365,7 +380,7 @@ fn a_target_is_covered_by_the_plan_and_met_only_once_handed_over(
     assert_eq!((status.volumes[0].covered, status.volumes[0].goal_met), (covered, met));
     assert_eq!(status.healthy, met.is_none());
     assert_eq!(status.volumes[0].eligible_bytes, 40 * GB);
-    assert_eq!(status.unmatched_roots, ["sonarr:/anime"]);
+    assert_eq!(status.unmatched_roots, ["sonarr@anime:/anime"]);
 }
 
 #[rstest]
@@ -411,6 +426,14 @@ fn recycle_bin_settings_decide_how_long_a_delete_holds_space(
 #[test]
 fn an_app_that_never_answered_holds_space_for_the_default_week() {
     let library = LibraryVolumes::build(&[], no_probe);
-    assert_eq!(library.recycle_bin(App::Radarr), RecycleBin::Unknown);
-    assert_eq!(library.recycle_secs(App::Radarr), 7 * 86_400);
+    assert_eq!(library.recycle_bin(App::Radarr, ""), RecycleBin::Unknown);
+    assert_eq!(library.recycle_secs(App::Radarr, ""), 7 * 86_400);
+}
+
+#[test]
+fn each_instance_answers_for_its_own_recycle_bin() {
+    let uhd = AppDisks { instance: "4k".into(), recycle: RecycleBin::Days(3), ..disks(App::Radarr, Vec::new(), &[]) };
+    let library = LibraryVolumes::build(&[disks(App::Radarr, Vec::new(), &[]), uhd], no_probe);
+    assert_eq!((library.recycle_secs_of("radarr-1"), library.recycle_secs_of("radarr@4k-1")), (0, 3 * 86_400));
+    assert_eq!(library.recycle_secs_of("sonarr@anime-1-s1"), 7 * 86_400, "an instance that never answered: the default week");
 }

@@ -3,117 +3,52 @@
 //! Run this as a long-lived process. Each cycle pulls the *arr libraries,
 //! merges media-server watch state, forecasts every library volume, plans the
 //! least-regret evictions that fit each forecast, and writes the plan to
-//! `state/eviction-plan.json`. It hands the plan to Maintainerr only when the
-//! planner's `dry_run` is off, and never deletes anything itself.
+//! `state/eviction-plan.json`. With `dry_run` off it hands the plan to
+//! Maintainerr, or with `executor: native` deletes itself (see `native`).
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use flinch_archive::daemon::{reconcile, NeverPlayedHold};
 use flinch_archive::maintainerr::{self as mx, HttpMaintainerr, OwnedState, SyncItem};
-use flinch_archive::plan::{candidates, Exclusion, Manifest};
+use flinch_archive::plan::{candidates, Exclusion};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::time::Duration;
 
+mod archive;
+mod args;
+mod arr_write;
+mod dupes;
+mod embeddings;
 mod evidence;
 mod fetch;
 mod handoff;
 mod history;
+mod household;
+mod inflow_act;
 mod media;
 mod model;
+mod native;
+mod notices;
 mod publish;
+mod quality_act;
+mod rules;
 mod signals;
 mod sink;
 mod snapshot;
 mod storage;
+mod streaming;
+mod themes;
+mod torrents;
+mod trash_sync;
+mod upgrade_guard;
+mod upgrade_search;
 
+#[cfg(test)]
+mod tests;
+
+use args::Args;
 use fetch::{fetch_disks, fetch_inventory, Fetched};
 use sink::Sink;
-
-#[derive(Parser, Debug)]
-#[command(name = "flinch-arrd", about = "Continuous *arr swarm loop")]
-struct Args {
-    #[arg(long, default_value = "http://radarr:7878")]
-    radarr_url: String,
-    #[arg(long, default_value = "")]
-    radarr_key: String,
-    #[arg(long, default_value = "http://sonarr:8989")]
-    sonarr_url: String,
-    #[arg(long, default_value = "")]
-    sonarr_key: String,
-    #[arg(long, default_value = "http://maintainerr:5555")]
-    maintainerr_url: String,
-    #[arg(long, default_value = "")]
-    maintainerr_key: String,
-    /// Seerr (Overseerr/Jellyseerr): requests and watchlists. Empty disables.
-    #[arg(long, default_value = "")]
-    seerr_url: String,
-    #[arg(long, default_value = "")]
-    seerr_key: String,
-    /// Prowlarr: seeders per title, for how hard a re-download would be.
-    #[arg(long, default_value = "")]
-    prowlarr_url: String,
-    #[arg(long, default_value = "")]
-    prowlarr_key: String,
-    /// SABnzbd: the usenet servers' retention.
-    #[arg(long, default_value = "")]
-    sabnzbd_url: String,
-    #[arg(long, default_value = "")]
-    sabnzbd_key: String,
-    /// JSON export of media-server watch state (see examples/watch-state.json).
-    #[arg(long)]
-    watch_state: Option<PathBuf>,
-    /// Run once and exit instead of looping.
-    #[arg(long)]
-    once: bool,
-    // Grace runs, per-run caps and collections are operator settings
-    // (state/settings.json, set from the UI); they have no flags.
-    #[arg(long, default_value_t = 3600)]
-    interval_s: u64,
-}
-
-/// Flag value unless an environment variable sets it. Environment wins when the
-/// flag would; for a container the flags are the defaults and env is the knob.
-fn env_or(env: &str, flag: String) -> String {
-    match std::env::var(env) {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => flag,
-    }
-}
-
-fn resolve(args: &mut Args) {
-    args.radarr_url = env_or("RADARR_URL", args.radarr_url.clone());
-    args.sonarr_url = env_or("SONARR_URL", args.sonarr_url.clone());
-    args.maintainerr_url = env_or("MAINTAINERR_URL", args.maintainerr_url.clone());
-    args.seerr_url = env_or("SEERR_URL", args.seerr_url.clone());
-    args.prowlarr_url = env_or("PROWLARR_URL", args.prowlarr_url.clone());
-    args.sabnzbd_url = env_or("SABNZBD_URL", args.sabnzbd_url.clone());
-    for (key, env) in [
-        (&mut args.radarr_key, "RADARR_API_KEY"),
-        (&mut args.sonarr_key, "SONARR_API_KEY"),
-        (&mut args.maintainerr_key, "MAINTAINERR_API_KEY"),
-        (&mut args.seerr_key, "SEERR_API_KEY"),
-        (&mut args.prowlarr_key, "PROWLARR_API_KEY"),
-        (&mut args.sabnzbd_key, "SABNZBD_API_KEY"),
-    ] {
-        if key.is_empty() {
-            *key = env_or(env, String::new());
-        }
-    }
-    if let Ok(value) = std::env::var("FLINCH_WATCH_STATE") {
-        if !value.is_empty() {
-            args.watch_state = Some(PathBuf::from(value));
-        }
-    }
-    if let Ok(value) = std::env::var("FLINCH_INTERVAL_S") {
-        if let Ok(seconds) = value.parse() {
-            args.interval_s = seconds;
-        }
-    }
-    if std::env::var("FLINCH_ONCE").map(|v| v == "1" || v == "true").unwrap_or(false) {
-        args.once = true;
-    }
-}
 
 fn state_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(std::env::var("FLINCH_STATE_DIR").unwrap_or_else(|_| "state".to_string()))
@@ -149,7 +84,7 @@ const MIN_TRIGGER_GAP: Duration = Duration::from_secs(60);
 
 fn main() -> Result<()> {
     let mut args = Args::parse();
-    resolve(&mut args);
+    args.resolve();
     // Maintainerr checks no key (MX-09); one is only sent when set.
     if args.radarr_key.is_empty() || args.sonarr_key.is_empty() {
         anyhow::bail!("Radarr and Sonarr api keys are required (flags or *_API_KEY env)");
@@ -163,6 +98,8 @@ async fn run(args: &Args) -> Result<()> {
     // Plex token in a header, and a redirect would hand it to another host. A
     // 3xx then surfaces as an error naming the status.
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build()?;
+    // The Settings page's "Send test" is answered between and during cycles.
+    tokio::spawn(notices::answer_tests(http.clone()));
 
     // A settings file that stops parsing must not revert every operator choice
     // to its default mid-flight: the last good copy stays in force, loudly.
@@ -195,6 +132,7 @@ async fn run(args: &Args) -> Result<()> {
         if let Err(error) = &result {
             eprintln!("[flinch-arrd] cycle failed: {error:#}");
             flinch_archive::daemon::record_cycle_error(state_dir().join("status.json").as_path(), &format!("{error:#}"));
+            notices::cycle_failed(&http, &settings).await;
         }
         if args.once {
             // A one-shot probe (CronJob) reports failure through its exit code.
@@ -217,7 +155,13 @@ async fn run(args: &Args) -> Result<()> {
 
 /// One full pass: inventory → evidence → forecast → plan → hand-off → publish.
 async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::daemon::RuntimeSettings, interval_s: u64) -> Result<()> {
-    let Fetched { movies, series, removals } = fetch_inventory(http, args, &settings.keep_tag).await?;
+    // Every *arr instance of this cycle: settings may add one without a restart.
+    let args = &args.for_cycle(&settings.instances);
+    // Quality profiles before anything else writes: an inventory outage must
+    // not hold back an apply, and a library read sizes each change.
+    let fetched = fetch_inventory(http, args, &settings.keep_tag).await;
+    trash_sync::run(http, args, settings, fetched.as_ref().ok().map(|f| (f.movies.as_slice(), f.series.as_slice()))).await;
+    let Fetched { movies, series, removals, downloads, tags } = fetched?;
     let disks = fetch_disks(http, args).await;
 
     // Cards first: the same set decides and displays, and Plex watch state
@@ -234,40 +178,37 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         plex_history_rows,
         tautulli_rows,
         plex_ids,
+        jellyfin_ids,
         play_keys,
         plex_keeps,
         plex_listed,
-    } = evidence::gather(args, http, settings, &movies, &series, &cards, cycle_now).await?;
+        plex_content,
+        jellyfin_plays,
+    } = evidence::gather(args, http, settings, &movies, &series, &mut cards, cycle_now).await?;
+    // Taste vectors of every movie and show, refreshed within today's budget.
+    let library = embeddings::Library { movies: &movies, series: &series, plex_content: &plex_content, plex_ids: &plex_ids };
+    let embeddings::Refresh { vectors, status: embedding } = embeddings::refresh(&settings.embedding, library, cycle_now).await;
 
     // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
     let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
     let dry_run = settings.planner.dry_run || forced_dry;
+    // Torrents still seeding or holding an item's bytes keep it this cycle.
+    let torrent_goes = settings.executor == flinch_archive::executor::Executor::Native;
+    let torrent_library = torrents::Library { movies: &movies, series: &series, downloads: &downloads, cards: &cards };
+    let torrents = torrents::gather(http, &settings.torrents, torrent_goes, torrent_library, dry_run).await;
     // --- Maintainerr, read first: an operator's exclusion pins its item. A dry
     // run reads the live state and prints every write it would send. ---
     let maintainerr = HttpMaintainerr::new(&args.maintainerr_url, &args.maintainerr_key)?;
     let mut api = if dry_run { Sink::DryRun(maintainerr) } else { Sink::Live(maintainerr) };
     let titles = settings.collection_titles();
     let mut owned = OwnedState::read(&state_dir());
-    // Plex ids come only from the GUID join; a card without them is never
-    // protected or scheduled.
-    let sync_items: Vec<SyncItem> = cards
-        .iter()
-        .map(|card| SyncItem {
-            card_id: card.id.clone(),
-            kind: card.kind,
-            plex: plex_ids.get(&card.id).cloned(),
-            // Every copy the GUID join merged, so the hand-off can refuse an
-            // item it cannot pin to the copy it judged.
-            copies: play_keys
-                .get(&card.id)
-                .filter(|_| plex_ids.contains_key(&card.id))
-                .map(|keys| keys.item_keys().to_vec())
-                .unwrap_or_default(),
-            bytes: card.size_bytes,
-        })
-        .collect();
+    // Plex ids come only from the GUID join; a confirmed duplicate choice
+    // settles an item's several-copies hold onto the copy kept.
+    let mut sync_items: Vec<SyncItem> = handoff::sync_items(&cards, &plex_ids, &play_keys);
+    let dupes_plex = dupes::Plex { content: &plex_content, play_keys: &play_keys, history: &plex_history_rows };
+    let dupes_found = dupes::find(http, args, &settings.dupes, &movies, dupes_plex, &mut sync_items).await;
     let observed = mx::observe(&mut api, &sync_items, &titles, &owned).await;
-    if let Err(error) = &observed {
+    if let (Err(error), flinch_archive::executor::Executor::Maintainerr) = (&observed, settings.executor) {
         eprintln!("[flinch-arrd] maintainerr unreadable, nothing is synced this cycle: {error}");
     }
     // Where each titled collection leads (route, window), for the item view.
@@ -293,7 +234,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     let joins: HashMap<&str, flinch_archive::plex::PlayJoin> =
         watch_targets.iter().map(|target| (target.id.as_str(), resolution.join(target))).collect();
     // P(watch) runs on the daily fit when one beat the priors, else the priors.
-    let (hazard, model_label) = model::hazard(&state_dir(), cycle_now);
+    let running = model::hazard(&state_dir(), cycle_now);
 
     // XC-03: deleting on the strength of *absent* plays needs every watch
     // source read completely, and a Leaving Soon collection to announce in.
@@ -307,7 +248,8 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         eprintln!("[flinch-arrd] never-played reclaim held off this cycle {}", hold.until());
     }
 
-    let signals = signals::gather(http, args, &cards, cycle_now).await;
+    let mut signals = signals::gather(http, args, &cards, cycle_now).await;
+    let streaming_status = streaming::gather(http, &settings.streaming, (&movies, &series), cycle_now, &mut signals).await;
     for problem in &signals.problems {
         eprintln!("[flinch-arrd] signals: {problem}");
     }
@@ -317,85 +259,102 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         .iter()
         .filter_map(|card| {
             let join = joins.get(card.id.as_str())?;
-            Some((card.id.clone(), (play_log.item_plays(join), play_log.audience_plays(join))))
+            let logged = (play_log.item_plays(join), play_log.audience_plays(join));
+            Some((card.id.clone(), evidence::jellyfin::with_plays(logged, jellyfin_plays.get(&card.id))))
         })
         .collect();
-    let in_plex: HashSet<String> = plex_ids.keys().cloned().collect();
-    let handed: HashSet<String> = owned.scheduled.keys().cloned().collect();
-    let candidates = candidates::build(
-        &candidates::Library {
-            cards: &cards,
-            movies: &movies,
-            series: &series,
-            watch: &watch,
-            plays: &plays,
-            located: &governance.located,
-            in_plex: &in_plex,
-            handed: &handed,
-            signals: &signals,
-            never_played,
-            now: cycle_now,
-        },
-        &settings.planner,
-        &hazard,
-    );
-    let report = reconcile(&candidates, &governance.forecasts, &settings.planner).context("planning")?;
+    // What the executor can act on: a Plex match, or a Jellyfin/Emby match when
+    // the native executor's Leaving Soon shelf lives there.
+    let jellyfin_shelf = settings.executor == flinch_archive::executor::Executor::Native
+        && settings.native.leaving_soon_server == flinch_archive::executor::ShelfServer::Jellyfin;
+    let in_plex: HashSet<String> = plex_ids.keys().chain(jellyfin_ids.keys().filter(|_| jellyfin_shelf)).cloned().collect();
+    let handed = native::handed(settings.executor, &owned);
+    // Taste has weight only in an adopted fit, and is asked with the outcomes
+    // that fit learned from; under the priors it would move nothing.
+    let taste = running.outcomes.as_ref().map(|record| flinch_archive::taste::read_cards(&cards, &vectors, record)).unwrap_or_default();
+    // Inflow advice asks taste too: the adopted fit's outcomes, else the household's.
+    let household = flinch_archive::inflow::household_record(&cards, cycle_now);
+    let inflow = flinch_archive::inflow::suggest(&flinch_archive::inflow::Inputs {
+        cards: &cards,
+        series: &series,
+        movies: &movies,
+        requests: &signals.requests,
+        streams: &signals.streams,
+        vectors: &vectors,
+        record: running.outcomes.as_ref().unwrap_or(&household),
+    });
+    // Themes of the taste vectors: storage by theme, and downgrade advice in cold ones.
+    let themed = themes::refresh(&vectors, (&movies, &series), &cards, &plays, cycle_now);
+    let library = candidates::Library {
+        cards: &cards,
+        movies: &movies,
+        series: &series,
+        watch: &watch,
+        plays: &plays,
+        located: &governance.located,
+        in_plex: &in_plex,
+        handed: &handed,
+        signals: &signals,
+        taste: &taste,
+        cold_themes: &themed.cold,
+        never_played,
+        seeding: &torrents.holds,
+        now: cycle_now,
+    };
+    let mut candidates = candidates::build(&library, &settings.planner, &running.hazard);
+    // Torrents below the desired ratio are drawn on last; a rule outranks that.
+    torrents::spare(&mut candidates, &torrents.spared);
+    let (mut household, rules_in_force) = household::prepare(settings, &library, &signals.contacts, &mut candidates, cycle_now);
+    let sources = flinch_archive::rules::facts::Sources { plex_ids: &plex_ids, tags: &tags, themes: &themed.themes };
+    let rule_status = rules::apply(&rules_in_force, &mut candidates, &library, &sources, &governance.forecasts, cycle_now);
+    let archive_to = archive::destinations(args, settings, &governance);
+    let report = reconcile(&candidates, &governance.forecasts, &settings.planner, &archive_to.0).context("planning")?;
     let plan = &report.plan;
     let gib = |bytes: u64| bytes as f64 / 1_073_741_824.0;
-    println!(
-        "[flinch-arrd] plan: {} item(s), {:.1} of {:.1} GiB needed, regret {:.2}{}",
-        plan.items.len(),
-        gib(plan.total_reclaimed_bytes),
-        gib(plan.target_bytes),
-        plan.total_regret,
-        plan.method.map_or(" (healthy: solver skipped)".to_string(), |method| format!(" ({method:?})")),
-    );
-    if let Some(error) = &plan.solver_error {
-        eprintln!("[flinch-arrd] HiGHS failed, plan made greedily: {error}");
-    }
-    std::fs::create_dir_all(state_dir()).ok();
-    let manifest = serde_json::to_vec_pretty(&Manifest::new(plan, &governance.forecasts, dry_run, cycle_now))?;
-    flinch_archive::persist::replace(&state_dir().join("eviction-plan.json"), &manifest)?;
+    publish::plan(plan, &governance.forecasts, dry_run, cycle_now)?;
 
-    // --- grace streaks, then the hand-off ---
+    // --- grace streaks, then the hand-off or the native executor ---
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // A cycle that cannot read Maintainerr is not an appearance: it can hand
-    // nothing over and planned without the operator's exclusions, so counting
-    // it would let an outage run down an item's grace window.
-    let eligible = if observed.is_ok() {
-        let candidates_path = state_dir().join("candidates.json");
-        let mut cstate = flinch_archive::daemon::read_candidate_state(&candidates_path);
-        let grace = flinch_archive::daemon::Grace { runs: settings.grace_runs, interval_s };
-        let past_grace = flinch_archive::daemon::advance_streaks(&mut cstate, &report.deleted_ids, grace, now);
-        flinch_archive::daemon::write_candidate_state(&candidates_path, &cstate)?;
-        plan.releasable(&past_grace, &handed)
-    } else {
-        Vec::new()
-    };
-    if dry_run {
-        println!("[flinch-arrd] dry run: plan written, nothing handed to Maintainerr");
-    }
+    let eligible = native::eligible(settings, observed.is_ok(), &report, &handed, interval_s, now, dry_run)?;
 
     let by_id: HashMap<&str, &SyncItem> = sync_items.iter().map(|item| (item.card_id.as_str(), item)).collect();
-    let names: HashMap<&str, &str> = cards.iter().map(|card| (card.id.as_str(), card.title.as_str())).collect();
-    let handoff = handoff::Handoff {
-        items: &by_id,
-        names: &names,
-        report: &report,
-        eligible: &eligible,
-        titles: &titles,
-        caps: mx::Caps::new(settings.max_items, settings.max_gib),
-        enforcing: !dry_run,
-        now,
-        plex_listed: plex_listed.as_ref(),
-        seerr: fetch::maintainerr_seerr_configured(http, args).await,
+    let (sync, native_status) = if settings.executor == flinch_archive::executor::Executor::Native {
+        let cycle = native::Cycle {
+            args,
+            http,
+            settings,
+            library: &library,
+            report: &report,
+            eligible: &eligible,
+            plex_ids: &plex_ids,
+            jellyfin_ids: &jellyfin_ids,
+            health: &health,
+            governance: &governance,
+            torrents: (torrents.session.as_ref(), &torrents.holdings),
+            dry_run,
+        };
+        (mx::SyncSummary { dry_run, ..Default::default() }, Some(native::run(cycle, &mut ledger).await))
+    } else {
+        let handoff = handoff::Handoff {
+            items: &by_id,
+            cards: &cards,
+            report: &report,
+            eligible: &eligible,
+            titles: &titles,
+            caps: mx::Caps::new(settings.max_items, settings.max_gib),
+            enforcing: !dry_run,
+            now,
+            plex_listed: plex_listed.as_ref(),
+            seerr: fetch::maintainerr_seerr_configured(http, args).await,
+        };
+        (handoff::sync(handoff, observed, &mut api, &mut owned, &governance, &mut ledger, operator_keeps.len()).await, None)
     };
-    let sync = handoff::sync(handoff, observed, &mut api, &mut owned, &governance, &mut ledger, operator_keeps.len()).await;
-    for problem in sync.problems.iter().chain(&sync.warnings) {
-        eprintln!("[flinch-arrd] maintainerr: {problem}");
-    }
+    // Moves are FLINCH's own writes, whichever executor deletes.
+    let archive_cycle = archive::Cycle { http, args, settings, report: &report, destinations: archive_to, dry_run, interval_s, now };
+    let archive_status = archive::run(archive_cycle, &mut ledger).await;
+    household::shelves(household.as_mut(), http, settings, &plex_ids, dry_run).await;
 
-    let items = snapshot::build_items(snapshot::ItemInputs {
+    let mut items = snapshot::build_items(snapshot::ItemInputs {
         cards: &cards,
         candidates: &candidates,
         movies: &movies,
@@ -408,10 +367,21 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         report: &report,
         plex_ids: &plex_ids,
         play_keys: &play_keys,
+        themes: &themed.themes,
     });
+    native::annotate(&mut items, native_status.as_ref());
     if let Err(error) = ledger.write(&storage::ledger_path()) {
         eprintln!("[flinch-arrd] evictions.json write failed: {error}");
     }
+    let problems = notices::problems(&health, &sync, &signals.problems, plan);
+    let household = household.as_ref();
+    let told =
+        notices::Cycle { settings, items: &items, ledger: &ledger, governance: &governance, plan, dry_run, problems, now, household };
+    let notify = notices::notify(http, told).await;
+    let library = quality_act::Library { candidates: &candidates, arr: (&movies, &series), report: &report, signals: &signals };
+    let quality = upgrade_search::quality_cycle(http, args, settings, (library, &governance), dry_run, now).await;
+    // Approved inflow advice, acted on only while a disk is over its target.
+    let inflow_actions = inflow_act::run(http, args, settings, &inflow, &governance.forecasts, dry_run, now).await;
 
     let (shadow_count, shadow_bytes) = flinch_archive::plan::never_played_preview(&candidates);
     publish::publish(
@@ -419,15 +389,29 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             report: &report,
             sync,
             governance: &governance,
-            handed: owned.scheduled.keys().filter_map(|id| by_id.get(id.as_str()).map(|item| (id.as_str(), item.bytes))).collect(),
+            handed: native::handed_bytes(settings.executor, &owned, &by_id),
+            native: native_status,
             dry_run,
             interval_s: (!args.once).then_some(interval_s),
-            model: model_label,
+            model: running.label,
             shadow: (shadow_count as u64, gib(shadow_bytes) as f32),
             health,
             never_played_hold,
             never_played_requested: settings.unwatched_reclaim_enabled,
             outside: history::outside(&removals, &ledger, (&movies, &series), now),
+            embedding,
+            inflow,
+            inflow_actions,
+            notify,
+            themes: themes::status(&themed, &cards, &plays, plan, cycle_now),
+            torrents: torrents.status,
+            rules: rule_status,
+            quality,
+            streaming: streaming_status,
+            dupes: dupes::act(http, args, settings, dupes_found, &candidates, dry_run, now).await,
+            household: household.map(household::Household::status),
+            archive: archive_status,
+            arrs: &args.arrs,
         },
         &items,
     )

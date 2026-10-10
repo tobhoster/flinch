@@ -15,8 +15,9 @@ kind: PersistentVolumeClaim
 metadata: { name: flinch-state-rwx }
 spec:
   accessModes: [ReadWriteMany]
-  # The state is a handful of JSON files; 1Gi leaves plenty of room.
-  resources: { requests: { storage: 1Gi } }
+  # JSON state is small; EmbeddingGemma 2's weights are not: 580 MB of text
+  # weights, 335 MB more with posters, written as a temp file then renamed.
+  resources: { requests: { storage: 4Gi } }
 ---
 # An optional media-server watch export the daemon merges
 # (examples/watch-state.json is the shape). Empty means no export: Plex and

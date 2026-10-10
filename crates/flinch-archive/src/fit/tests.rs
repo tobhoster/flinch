@@ -23,6 +23,7 @@ pub(super) fn item(id: &str, kind: LibraryKind, age_days: f32, plays: Vec<u64>) 
         size_bytes: 20_000_000_000,
         age_days,
         episodes_total: (kind == LibraryKind::Season).then_some(8),
+        episodes_on_disk: None,
         season_index: Some(1),
         show_title: (kind == LibraryKind::Season).then(|| "Show".to_string()),
         audience_plays: plays.clone(),

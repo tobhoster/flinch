@@ -28,11 +28,27 @@ pub(super) struct ItemInputs<'a> {
     pub(super) report: &'a ReconcileOutput,
     pub(super) plex_ids: &'a HashMap<String, flinch_archive::ids::PlexIds>,
     pub(super) play_keys: &'a HashMap<String, flinch_archive::plex::PlayKeys>,
+    /// Each movie's and show's theme.
+    pub(super) themes: &'a flinch_archive::themes::Themes,
 }
 
 pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
-    let ItemInputs { cards, candidates, movies, series, governance, owned, titles, destinations, watch, report, plex_ids, play_keys } =
-        inputs;
+    let ItemInputs {
+        cards,
+        candidates,
+        movies,
+        series,
+        governance,
+        owned,
+        titles,
+        destinations,
+        watch,
+        report,
+        plex_ids,
+        play_keys,
+        themes,
+    } = inputs;
+    let theme = |id: &str| themes.name_of(flinch_archive::embedding::subject_of(id)).map(str::to_string);
     // Publish the passive view the web UI renders (single source: this
     // daemon). The UI holds no keys and never talks to the arrs.
     // Snapshot for the UI: EVERYTHING in the libraries, not just what the
@@ -60,7 +76,12 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             title: card.title.clone(),
             kind: if card.kind == flinch_archive::LibraryKind::Movie { "movie" } else { "season" }.to_string(),
             size_bytes: card.size_bytes,
-            decision: if is_delete { "delete" } else { "keep" }.to_string(),
+            decision: match (is_delete, kept) {
+                (true, _) => "delete",
+                (false, Some(Kept::Archived)) => "archive",
+                _ => "keep",
+            }
+            .to_string(),
             // One sentence, straight from the plan: why it is cheap to lose,
             // or the one rule (or the forecast) that keeps it.
             reason: match (pick, kept) {
@@ -81,6 +102,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             quality: movie.and_then(|m| m.quality()),
             season_label: card.season_index.map(|n| format!("S{n}")),
             episodes: card.episodes_total.filter(|n| *n > 0),
+            episodes_on_disk: card.episodes_on_disk.clone(),
             age_days: Some(card.added_days_ago),
             last_watched_days: card.last_watched_days,
             // Display reads the SAME merged map the model scores: a UI that
@@ -106,14 +128,18 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
             // kept item still leaves on its collection's schedule.
             handed_at: membership.map(|entry| entry.added_at),
             leaves_at: membership.and_then(|entry| leaves_at(entry, destinations)),
+            theme: theme(&card.id),
         }
     };
 
+    // Joined by card id and show subject: both carry the instance.
+    let movie_of: HashMap<String, &flinch_archive::arr::ArrMovie> = movies.iter().map(|movie| (movie.card_id(), movie)).collect();
+    let show_of: HashMap<String, &flinch_archive::arr::ArrSeries> = series.iter().map(|show| (show.subject(), show)).collect();
     let mut items: Vec<flinch_archive::ItemSnapshot> = cards
         .iter()
         .map(|card| {
-            let movie = movies.iter().find(|m| m.card_id() == card.id);
-            let show = series.iter().find(|s| card.id.starts_with(&format!("sonarr-{}-", s.id)));
+            let movie = movie_of.get(&card.id).copied();
+            let show = show_of.get(flinch_archive::embedding::subject_of(&card.id)).copied().filter(|_| movie.is_none());
             card_row(card, movie, show)
         })
         .collect();
@@ -141,6 +167,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 quality: movie.quality(),
                 season_label: None,
                 episodes: None,
+                episodes_on_disk: None,
                 age_days: None,
                 last_watched_days: entry.and_then(|e| flinch_archive::plex::age_days(e.last_watched_epoch, snapshot_now)),
                 watched_fraction: entry.map(|e| e.progress),
@@ -158,6 +185,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 route: None,
                 handed_at: None,
                 leaves_at: None,
+                theme: theme(&id),
             });
         }
     }
@@ -184,6 +212,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 quality: None,
                 season_label: Some(format!("S{}", season.season_number)),
                 episodes: None,
+                episodes_on_disk: None,
                 age_days: None,
                 last_watched_days: entry.and_then(|e| flinch_archive::plex::age_days(e.last_watched_epoch, snapshot_now)),
                 watched_fraction: entry.map(|e| e.progress),
@@ -201,6 +230,7 @@ pub(super) fn build_items(inputs: ItemInputs) -> Vec<ItemSnapshot> {
                 route: None,
                 handed_at: None,
                 leaves_at: None,
+                theme: theme(&id),
             });
         }
     }

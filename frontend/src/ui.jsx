@@ -136,3 +136,17 @@ export function EmptyState({ icon: Icon, title, body }) {
     </div>
   );
 }
+
+/**
+ * Credit for streaming availability: TMDB's watch providers come from
+ * JustWatch, and TMDB's terms require naming it wherever providers show.
+ */
+export function JustWatch() {
+  return (
+    <span className="text-fg-faint">
+      Streaming data by{' '}
+      <a href="https://www.justwatch.com" target="_blank" rel="noreferrer" className="underline hover:text-fg-muted">JustWatch</a>
+      {' '}via TMDB
+    </span>
+  );
+}

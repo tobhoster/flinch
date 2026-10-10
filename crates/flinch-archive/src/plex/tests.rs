@@ -33,6 +33,7 @@ fn movie_target(id: &str, title: &str, year: Option<u32>, external: ExternalIds)
         season_index: None,
         episodes_total: None,
         episode_files: None,
+        episodes_on_disk: None,
         external,
         added_epoch: Some(1_700_000_000),
         on_disk: true,
@@ -41,17 +42,12 @@ fn movie_target(id: &str, title: &str, year: Option<u32>, external: ExternalIds)
 
 fn season_target(id: &str, show: &str, season: u32, files: u32, external: ExternalIds) -> WatchTarget {
     WatchTarget {
-        id: id.to_string(),
         kind: LibraryKind::Season,
-        title: show.to_string(),
-        year: Some(2022),
         show_title: Some(show.to_string()),
         season_index: Some(season),
         episodes_total: Some(files),
         episode_files: Some(files),
-        external,
-        added_epoch: Some(1_700_000_000),
-        on_disk: true,
+        ..movie_target(id, show, Some(2022), external)
     }
 }
 

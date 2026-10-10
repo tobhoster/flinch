@@ -2,10 +2,11 @@
 # shared flinch-state-rwx claim (flinch-state.yaml), and writes settings.json
 # there when you save Settings.
 #
-# People log in with FLINCH_WEB_USERNAME and FLINCH_WEB_PASSWORD; automations
-# send the API key in FLINCH_WEB_TOKEN (all in Secret flinch-secrets). Without
-# a login the UI says how to set one, and with neither the API refuses
-# everything. Sessions live in memory: a restart logs everyone out. There is
+# People log in with FLINCH_WEB_USERNAME and FLINCH_WEB_PASSWORD, or through
+# single sign-on (FLINCH_WEB_OIDC_*); automations send the API key in
+# FLINCH_WEB_TOKEN (all in Secret flinch-secrets). Without a login the UI says
+# how to set one, and with neither the API refuses everything. Sessions live
+# in memory: a restart logs everyone out. There is
 # no Ingress here: reach the UI with `kubectl port-forward`, or add the
 # deploy/ingress component (HTTPS).
 ---
@@ -46,6 +47,32 @@ spec:
             # The API key for automations; without it only the login opens the API.
             - name: FLINCH_WEB_TOKEN
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_TOKEN, optional: true } }
+            # Verifies the household's no-login keep/remove links (/r/<token>);
+            # flinch-arrd signs them with the same secret. Without it every
+            # link is refused.
+            - name: FLINCH_WEB_LINK_SECRET
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_LINK_SECRET, optional: true } }
+            # Single sign-on through an OpenID Connect provider (deploy/README.md,
+            # "Single sign-on"); off until the issuer, client id and redirect URL
+            # are all in the Secret.
+            - name: FLINCH_WEB_OIDC_ISSUER
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_ISSUER, optional: true } }
+            - name: FLINCH_WEB_OIDC_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_CLIENT_ID, optional: true } }
+            - name: FLINCH_WEB_OIDC_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_CLIENT_SECRET, optional: true } }
+            - name: FLINCH_WEB_OIDC_REDIRECT_URL
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_REDIRECT_URL, optional: true } }
+            - name: FLINCH_WEB_OIDC_ALLOWED_EMAILS
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_ALLOWED_EMAILS, optional: true } }
+            - name: FLINCH_WEB_OIDC_ALLOWED_GROUPS
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_ALLOWED_GROUPS, optional: true } }
+            - name: FLINCH_WEB_OIDC_ALLOWED_SUBJECTS
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_ALLOWED_SUBJECTS, optional: true } }
+            - name: FLINCH_WEB_OIDC_GROUPS_CLAIM
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_GROUPS_CLAIM, optional: true } }
+            - name: FLINCH_WEB_OIDC_NAME
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_NAME, optional: true } }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -53,7 +80,12 @@ spec:
           ports: [{ containerPort: 7911 }]
           volumeMounts: [{ name: state, mountPath: /state }]
           readinessProbe: { httpGet: { path: /healthz, port: 7911 }, initialDelaySeconds: 3, periodSeconds: 10 }
-          resources: { requests: { cpu: 50m, memory: 24Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            # Search by meaning maps EmbeddingGemma 2's 542 MB of text weights
+            # on the first search and keeps them (about 550 MB resident after,
+            # 700 MB at peak); a query takes about 0.3 s of one core.
+            limits: { cpu: "1", memory: 1Gi }
       volumes: [{ name: state, persistentVolumeClaim: { claimName: flinch-state-rwx } }]
 ---
 apiVersion: v1

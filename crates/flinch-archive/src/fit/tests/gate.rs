@@ -7,7 +7,13 @@ use super::*;
 use crate::regret::HazardModel;
 
 fn household(items: Vec<FitItem>) -> Household {
-    Household { items, unreadable_rows: 0, plex_rows: 0, tautulli_rows: 0 }
+    Household {
+        items,
+        unreadable_rows: 0,
+        plex_rows: 0,
+        tautulli_rows: 0,
+        vectors: crate::embedding::VectorStore::from_vectors(Vec::new()),
+    }
 }
 
 /// A household that rewatches every title it played within the last month of

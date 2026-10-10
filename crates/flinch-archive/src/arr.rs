@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 mod dwell;
 pub mod history;
+pub mod instances;
 
 use dwell::days_on_disk;
 
@@ -78,10 +79,29 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// A language as the *arrs name it (`{"id": 1, "name": "English"}`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ArrLanguage {
+    #[serde(default)]
+    pub name: String,
+}
+
+/// The franchise Radarr files a movie under. Radarr 5 names it `title`;
+/// older releases named it `name`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ArrCollection {
+    #[serde(default, alias = "name")]
+    pub title: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArrMovie {
     pub id: u32,
+    /// The instance it was read from ([`crate::ids`]); empty for the default.
+    /// Set by the daemon: the *arr itself does not know its FLINCH name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub title: String,
     /// What the Radarr web UI routes by (`/movie/<slug>`); the numeric id is not.
     #[serde(default)]
@@ -111,6 +131,10 @@ pub struct ArrMovie {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
+    /// The quality profile it downloads to (`qualityProfileId`): what a
+    /// downgrade moves ([`crate::quality::act`]).
+    #[serde(default)]
+    pub quality_profile_id: Option<u32>,
     /// Carries the operator's keep tag (resolved by the daemon from tag
     /// labels): a hard guard, exactly like a favorite.
     #[serde(skip)]
@@ -119,6 +143,24 @@ pub struct ArrMovie {
     /// [`crate::presence`]); empty when there is none.
     #[serde(skip)]
     pub on_disk: Vec<crate::presence::Span>,
+    /// Content metadata for the taste text ([`crate::embedding::text`]):
+    /// optional and tolerant, an odd value reads as absent and never fails
+    /// the row.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub overview: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub genres: Vec<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub certification: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub studio: Option<String>,
+    /// Minutes.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub runtime: Option<u32>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub original_language: Option<ArrLanguage>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub collection: Option<ArrCollection>,
 }
 
 /// Sonarr 4.x nests per-season statistics under `statistics` (verified against
@@ -158,6 +200,9 @@ pub struct SeriesSeason {
 #[serde(rename_all = "camelCase")]
 pub struct ArrSeries {
     pub id: u32,
+    /// The instance it was read from (see [`ArrMovie::instance`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance: String,
     pub title: String,
     /// What the Sonarr web UI routes by (`/series/<slug>`); the numeric id is not.
     #[serde(default)]
@@ -190,9 +235,26 @@ pub struct ArrSeries {
     pub tags: Vec<u32>,
     #[serde(default)]
     pub monitored: Option<bool>,
+    /// The series' quality profile: Sonarr sets one per series, never per season.
+    #[serde(default)]
+    pub quality_profile_id: Option<u32>,
     /// Carries the operator's keep tag (see [`ArrMovie::keep`]).
     #[serde(skip)]
     pub keep: bool,
+    /// Content metadata for the taste text (see [`ArrMovie::overview`]).
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub overview: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub genres: Vec<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub certification: Option<String>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub network: Option<String>,
+    /// Minutes per episode.
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub runtime: Option<u32>,
+    #[serde(default, deserialize_with = "crate::embedding::text::tolerant")]
+    pub original_language: Option<ArrLanguage>,
 }
 
 /// A catalogue id the *arrs report as `0` or `""` when unknown is no id.
@@ -283,7 +345,7 @@ pub fn poster_url(images: &[ArrImage]) -> Option<String> {
 impl ArrMovie {
     /// The card id FLINCH keys every decision about this movie by.
     pub fn card_id(&self) -> String {
-        format!("radarr-{}", self.id)
+        crate::ids::movie_card_id(&self.instance, self.id)
     }
 
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
@@ -310,6 +372,7 @@ impl ArrMovie {
             season_index: None,
             episodes_total: None,
             episodes_watched: None,
+            episodes_on_disk: None,
             is_watched: None,
             movie_year: self.year,
             show_title: None,
@@ -320,7 +383,12 @@ impl ArrMovie {
 impl ArrSeries {
     /// The card id of one of this show's seasons.
     pub fn season_card_id(&self, season: u32) -> String {
-        format!("sonarr-{}-s{season}", self.id)
+        crate::ids::season_card_id(&self.instance, self.id, season)
+    }
+
+    /// The show's subject, which its seasons share ([`crate::embedding::subject_of`]).
+    pub fn subject(&self) -> String {
+        crate::ids::show_subject(&self.instance, self.id)
     }
 
     pub fn external_ids(&self) -> crate::ids::ExternalIds {
@@ -355,6 +423,9 @@ impl ArrSeries {
                 // reading as completed.
                 episodes_total: Some(stats.episode_file_count),
                 episodes_watched: None,
+                // Episode numbers need a per-series read; the daemon fills
+                // them for seasons whose plays could read as complete.
+                episodes_on_disk: None,
                 is_watched: None,
                 movie_year: None,
                 show_title: Some(self.title.clone()),

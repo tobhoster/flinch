@@ -36,6 +36,59 @@ pub struct RuntimeSettings {
     pub keep_tag: String,
     pub capacity: crate::capacity::CapacityConfig,
     pub planner: crate::plan::PlannerConfig,
+    /// The in-process EmbeddingGemma 2 encoder behind the taste feature;
+    /// off until the operator switches it on.
+    pub embedding: crate::embedding::EmbeddingConfig,
+    /// A Jellyfin or Emby server read for every user's watch state; off while
+    /// its URL is blank.
+    pub jellyfin: crate::jellyfin::JellyfinConfig,
+    /// Tracearr and Trakt play logs read as watch evidence
+    /// ([`crate::watch_sources`]); none by default.
+    pub watch_sources: Vec<crate::watch_sources::WatchSourceConfig>,
+    /// Viewers whose plays count as no play ([`crate::viewers`]); the
+    /// evidence's health stays as read. None by default.
+    pub ignore_viewers: Vec<String>,
+    /// Discord, ntfy, Apprise or webhook channels told about Leaving Soon,
+    /// deletions, persisting problems and the daily digest; none by default.
+    pub notify: crate::notify::NotifyConfig,
+    /// qBittorrent / Transmission clients read for seed goals and hardlinks
+    /// ([`crate::torrents`]); none by default.
+    pub torrents: crate::torrents::TorrentsConfig,
+    /// Operator rules ([`crate::rules`]): hard keeps and forced evictions,
+    /// never a change to regret. None by default.
+    pub rules: Vec<crate::rules::Rule>,
+    /// Acting on inflow advice ([`crate::inflow::act`]): unmonitor future
+    /// seasons and switch import lists off, only what the operator approved,
+    /// only while a disk is over its target. Off by default.
+    pub inflow_actions: crate::inflow::act::InflowActionsConfig,
+    /// Who deletes: Maintainerr (the default, so an existing install keeps
+    /// working) or FLINCH itself ([`crate::executor`]).
+    pub executor: crate::executor::Executor,
+    /// The native executor's window, delete mode and caps.
+    pub native: crate::executor::NativeConfig,
+    /// Acting on downgrade advice ([`crate::quality::act`]); off by default.
+    pub quality_actions: crate::quality::act::QualityActionsConfig,
+    /// Searching cutoff-unmet items by P(watch) ([`crate::quality::upgrade`]); off by default.
+    pub upgrade_search: crate::quality::upgrade::UpgradeSearchConfig,
+    /// Flagging items the *arrs keep downloading again ([`crate::quality::churn`]).
+    pub upgrade_guard: crate::quality::churn::UpgradeGuardConfig,
+    /// TRaSH-Guides quality sync ([`crate::trash`]): off, and preview-only
+    /// until the operator applies.
+    pub trash: crate::trash::TrashConfig,
+    /// TMDB watch providers as a re-acquire discount
+    /// ([`crate::signals::streaming`]); off by default.
+    pub streaming: crate::signals::streaming::StreamingConfig,
+    /// Duplicate copies ([`crate::dupes`]): finding and acting both off by default.
+    pub dupes: crate::dupes::DupesConfig,
+    /// Household self-service: no-login keep and remove links, removal
+    /// requests the admin approves ([`crate::requests`]); off by default.
+    pub household: crate::requests::HouseholdConfig,
+    /// Moving items to an archive root instead of deleting them
+    /// ([`crate::archive`]); off by default.
+    pub archive: crate::archive::ArchiveConfig,
+    /// Radarr and Sonarr instances beyond the default one of each
+    /// ([`crate::arr::instances`]); none by default. Keys come from the env.
+    pub instances: Vec<crate::arr::instances::InstanceConfig>,
 }
 
 impl Default for RuntimeSettings {
@@ -54,6 +107,25 @@ impl Default for RuntimeSettings {
             keep_tag: "flinch-keep".to_string(),
             capacity: crate::capacity::CapacityConfig::default(),
             planner: crate::plan::PlannerConfig::default(),
+            embedding: crate::embedding::EmbeddingConfig::default(),
+            jellyfin: crate::jellyfin::JellyfinConfig::default(),
+            watch_sources: Vec::new(),
+            ignore_viewers: Vec::new(),
+            notify: crate::notify::NotifyConfig::default(),
+            torrents: crate::torrents::TorrentsConfig::default(),
+            rules: Vec::new(),
+            inflow_actions: crate::inflow::act::InflowActionsConfig::default(),
+            executor: crate::executor::Executor::default(),
+            native: crate::executor::NativeConfig::default(),
+            quality_actions: crate::quality::act::QualityActionsConfig::default(),
+            upgrade_search: crate::quality::upgrade::UpgradeSearchConfig::default(),
+            upgrade_guard: crate::quality::churn::UpgradeGuardConfig::default(),
+            trash: crate::trash::TrashConfig::default(),
+            streaming: crate::signals::streaming::StreamingConfig::default(),
+            dupes: crate::dupes::DupesConfig::default(),
+            household: crate::requests::HouseholdConfig::default(),
+            archive: crate::archive::ArchiveConfig::default(),
+            instances: Vec::new(),
         }
     }
 }
@@ -83,7 +155,25 @@ impl RuntimeSettings {
             return Err(SettingsError::Invalid("grace runs (grace_runs) must be between 1 and 20"));
         }
         self.capacity.validate().map_err(|error| SettingsError::Invalid(error.0))?;
-        self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))
+        self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.embedding.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        crate::rules::validate(&self.rules)?;
+        crate::viewers::validate(&self.ignore_viewers).map_err(|error| SettingsError::Invalid(error.0))?;
+        self.inflow_actions.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.dupes.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.native.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.upgrade_search.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.jellyfin.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        crate::watch_sources::validate(&self.watch_sources).map_err(|error| SettingsError::Invalid(error.0))?;
+        self.notify.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.household.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.quality_actions.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.upgrade_guard.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.torrents.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.trash.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.archive.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        crate::arr::instances::validate(&self.instances).map_err(|error| SettingsError::Invalid(error.0))?;
+        self.streaming.validate().map_err(|error| SettingsError::Invalid(error.0))
     }
 }
 
@@ -100,6 +190,9 @@ pub enum SettingsError {
     /// field and its range in plain words: the UI shows it as it is.
     #[error("settings invalid: {0}")]
     Invalid(&'static str),
+    /// A rule outside the bounds the rules editor allows; names the rule.
+    #[error("settings invalid: {0}")]
+    Rule(#[from] crate::rules::InvalidRule),
 }
 
 /// A file that parses but fails [`RuntimeSettings::validate`] is refused like
@@ -166,6 +259,9 @@ mod tests {
     #[case::target_above_emergency(|s: &mut RuntimeSettings| s.capacity.target_utilization = 0.96)]
     #[case::zero_quantum(|s: &mut RuntimeSettings| s.planner.quantum_mb = 0)]
     #[case::negative_weight(|s: &mut RuntimeSettings| { s.planner.user_weights.insert("ann".into(), -1.0); })]
+    #[case::embedding_dimensions_not_a_matryoshka_size(|s: &mut RuntimeSettings| s.embedding.dimensions = 300)]
+    #[case::no_leaving_soon_window(|s: &mut RuntimeSettings| s.native.leaving_soon_days = 0)]
+    #[case::no_deletes_per_run(|s: &mut RuntimeSettings| s.native.max_deletes_per_run = 0)]
     fn a_value_the_settings_page_would_refuse_is_invalid(#[case] break_it: fn(&mut RuntimeSettings)) {
         let mut settings = live();
         break_it(&mut settings);

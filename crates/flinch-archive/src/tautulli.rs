@@ -13,6 +13,7 @@
 //! [`absence_by_target`], because it is the one claim that can delete something.
 
 use crate::card::LibraryKind;
+use crate::plex::season::EpisodePlays;
 use crate::plex::{Resolution, RowKey, WatchTarget};
 use crate::watch::{EvidenceHealth, WatchEntry, WatchSource};
 use serde::{Deserialize, Serialize};
@@ -325,7 +326,8 @@ pub fn absence_by_target(
 /// Every stream counts toward recency. Progress counts finished episodes (or a
 /// finished movie) fully and a stream that stopped early as half an episode, so
 /// an item only ever streamed partially reads as partially played — touched,
-/// never "never played" and never "complete".
+/// never "never played" and never "complete". A season completes only when
+/// every episode still on disk was finished (see [`crate::plex::season`]).
 pub fn plays_by_target(targets: &[WatchTarget], resolution: &Resolution, rows: &[TautulliRow]) -> HashMap<String, WatchEntry> {
     let keyed: Vec<(RowKey, &TautulliRow)> =
         rows.iter().filter(|row| row.epoch().is_some()).filter_map(|row| Some((row.key()?, row))).collect();
@@ -344,7 +346,7 @@ pub fn plays_by_target(targets: &[WatchTarget], resolution: &Resolution, rows: &
                     streams.iter().map(|row| row.fraction()).fold(0.01f32, f32::max).min(0.99)
                 }
             }
-            LibraryKind::Season => season_progress(&streams, target.episode_files.or(target.episodes_total)),
+            LibraryKind::Season => season_plays(&streams).progress(target),
         };
         let entry = WatchEntry {
             id: target.id.clone(),
@@ -357,17 +359,16 @@ pub fn plays_by_target(targets: &[WatchTarget], resolution: &Resolution, rows: &
     out
 }
 
-fn season_progress(streams: &[&TautulliRow], total: Option<u32>) -> f32 {
-    let Some(total) = total.filter(|total| *total > 0) else { return 0.5 };
-    let finished: HashSet<&str> = streams.iter().filter(|row| row.is_watch()).map(|row| row.media_index.as_str()).collect();
-    let started: HashSet<&str> = streams.iter().map(|row| row.media_index.as_str()).collect();
-    let partial_only = started.difference(&finished).count() as f32;
-    let progress = (finished.len() as f32 + 0.5 * partial_only) / total as f32;
-    if finished.len() as u32 >= total {
-        1.0
-    } else {
-        progress.clamp(0.01, 0.99)
+/// The distinct episodes a season's streams touched: a finished stream
+/// finishes its episode, any other starts it. [`EpisodePlays::progress`]
+/// counts them against the episodes still on disk, so streams of episodes
+/// deleted since never complete the ones left.
+fn season_plays(streams: &[&TautulliRow]) -> EpisodePlays {
+    let mut episodes = EpisodePlays::default();
+    for row in streams {
+        episodes.record(row.media_index.trim().parse().ok(), row.is_watch());
     }
+    episodes
 }
 
 #[cfg(test)]

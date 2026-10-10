@@ -26,6 +26,7 @@ fn target(id: &str, kind: LibraryKind, title: &str, year: u32, season: Option<u3
         season_index: season,
         episodes_total: season.map(|_| 2),
         episode_files: season.map(|_| 2),
+        episodes_on_disk: season.map(|_| vec![1, 2]),
         external,
         added_epoch: Some(1_700_000_000),
         on_disk: true,

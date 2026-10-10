@@ -25,7 +25,8 @@ pub(crate) fn state_with(tmp: &Path, auth: auth::Auth) -> AppState {
         r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#,
     )
     .unwrap();
-    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth) }
+    let search = Arc::new(search::Search::new());
+    AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth), search, links: None }
 }
 
 /// A request with these headers, as `(name, value)` pairs.
@@ -179,6 +180,35 @@ async fn an_out_of_range_setting_is_refused_and_nothing_is_written() {
     assert!(refusal["error"].is_string());
     assert_eq!(fs::read(st.dir.join("settings.json")).unwrap(), before);
     fs::remove_dir_all(&tmp).ok();
+}
+
+/// An instance names the env var holding its key, never the key; an inflow
+/// approval may name a show of a named Sonarr.
+#[rstest]
+#[case::an_instance_and_its_show(json_instance("RADARR_4K_API_KEY"), r#"["sonarr@anime-7"]"#, true)]
+#[case::a_key_where_the_env_var_goes(json_instance("0123456789abcdef0123456789abcdef"), "[]", false)]
+#[case::a_movie_is_not_a_show(json_instance("RADARR_4K_API_KEY"), r#"["radarr@4k-7"]"#, false)]
+#[case::an_unnamed_instance_id(json_instance("RADARR_4K_API_KEY"), r#"["sonarr@-7"]"#, false)]
+#[tokio::test]
+async fn instances_and_their_shows_are_checked_on_save(#[case] instance: String, #[case] approved: &str, #[case] saved: bool) {
+    let tmp = scratch("instances");
+    let st = state(&tmp, Some(TOKEN));
+    let body = format!(r#"{{"instances": [{instance}], "inflow_actions": {{"approved": {approved}}}}}"#);
+    let res = send(&st, put_settings(body)).await;
+    let stored = read_settings(&st.dir.join("settings.json")).ok();
+    fs::remove_dir_all(&tmp).ok();
+    let status = res.status();
+    let answer = body_of(res).await;
+    assert_eq!(status == StatusCode::OK, saved, "{answer}");
+    if saved {
+        let stored = stored.expect("saved settings");
+        assert_eq!(stored.instances[0].name, "4k");
+        assert_eq!(stored.inflow_actions.approved, ["sonarr@anime-7"]);
+    }
+}
+
+fn json_instance(key_env: &str) -> String {
+    format!(r#"{{"app": "radarr", "name": "4k", "url": "http://radarr-4k:7878", "key_env": "{key_env}"}}"#)
 }
 
 #[tokio::test]

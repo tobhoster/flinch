@@ -1,0 +1,22 @@
+[
+ {
+  "id": -1,
+  "name": "Any"
+ },
+ {
+  "id": -2,
+  "name": "Original"
+ },
+ {
+  "id": 0,
+  "name": "Unknown"
+ },
+ {
+  "id": 1,
+  "name": "English"
+ },
+ {
+  "id": 4,
+  "name": "German"
+ }
+]

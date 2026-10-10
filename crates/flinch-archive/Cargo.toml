@@ -14,9 +14,20 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+candle-core = { workspace = true }
+tokenizers = { workspace = true }
+image = { workspace = true }
 good_lp = { workspace = true }
 # statvfs on the library shares, for mounts the *arrs do not report.
 libc = "0.2"
+# The household's no-login links (requests/link.rs): HMAC-SHA256 and its
+# constant-time check from ring, the token's encoding from base64. Both are
+# already in the tree (rustls, flinch-web's sign-in); nothing new is fetched.
+ring = "0.17"
+base64 = "0.22"
+# Profilarr Compliant Databases (trash/pcd) ship as SQL ops replayed into
+# SQLite; an in-memory database with ATTACH disabled reads them.
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 
 [dev-dependencies]
 rstest = { workspace = true }

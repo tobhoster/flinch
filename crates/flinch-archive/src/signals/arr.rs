@@ -83,28 +83,28 @@ struct QueueRecord {
     download_id: Option<String>,
 }
 
-/// The imports in an app's `history/since` rows, one per file. A record that
-/// names no item of the app, no date or no size is skipped.
-pub fn parse_imports(app: App, records: Vec<serde_json::Value>) -> Vec<Import> {
+/// The imports in an instance's `history/since` rows, one per file. A record
+/// that names no item of the app, no date or no size is skipped.
+pub fn parse_imports(app: App, instance: &str, records: Vec<serde_json::Value>) -> Vec<Import> {
     rows::<ImportRecord>(records)
         .filter_map(|record| {
             let item = item_ref(app, record.movie_id, record.series_id, record.episode.map(|episode| episode.season_number))?;
             let epoch = presence::parse_utc(&record.date)?;
             let bytes = record.data.size.trim().parse().ok()?;
-            Some(Import { app, item, epoch, bytes })
+            Some(Import { app, instance: instance.to_string(), item, epoch, bytes })
         })
         .collect()
 }
 
-/// The downloads in an app's queue rows, one per download, with the bytes
-/// still to come.
-pub fn parse_queue(app: App, records: Vec<serde_json::Value>) -> Vec<Queued> {
+/// The downloads in an instance's queue rows, one per download, with the
+/// bytes still to come.
+pub fn parse_queue(app: App, instance: &str, records: Vec<serde_json::Value>) -> Vec<Queued> {
     let queued = rows::<QueueRecord>(records).filter_map(|record| {
         let season = record.season_number.or_else(|| record.episode.map(|episode| episode.season_number));
         let item = item_ref(app, record.movie_id, record.series_id, season)?;
         // A float-to-int `as` saturates: negative reads as 0.
         let bytes_left = record.sizeleft.unwrap_or(0.0).floor() as u64;
-        Some((download_key(record.download_id, record.id), Queued { app, item, bytes_left }))
+        Some((download_key(record.download_id, record.id), Queued { app, instance: instance.to_string(), item, bytes_left }))
     });
     by_download(queued)
 }
@@ -147,14 +147,19 @@ fn by_download(entries: impl Iterator<Item = (String, Queued)>) -> Vec<Queued> {
     kept
 }
 
-/// The import cache (`arr-imports.json`): each app's last read of the window,
-/// kept independently so one app's outage never discards the other's read.
+/// The import cache (`arr-imports.json`): each instance's last read of the
+/// window, kept independently so one instance's outage never discards
+/// another's read. The default instances keep the slots they always had, so
+/// an older cache reads on.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ImportCache {
     #[serde(default)]
     pub radarr: Option<ImportRead>,
     #[serde(default)]
     pub sonarr: Option<ImportRead>,
+    /// Every other instance's read, by [`crate::ids::instance_key`].
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub extra: std::collections::BTreeMap<String, ImportRead>,
 }
 
 /// One read of an app's imports.
@@ -166,29 +171,39 @@ pub struct ImportRead {
 }
 
 impl ImportCache {
-    pub fn slot(&mut self, app: App) -> &mut Option<ImportRead> {
-        match app {
-            App::Radarr => &mut self.radarr,
-            App::Sonarr => &mut self.sonarr,
+    /// The instance's cached read.
+    pub fn read(&self, app: App, instance: &str) -> Option<&ImportRead> {
+        match (app, instance.is_empty()) {
+            (App::Radarr, true) => self.radarr.as_ref(),
+            (App::Sonarr, true) => self.sonarr.as_ref(),
+            (_, false) => self.extra.get(&crate::ids::instance_key(app, instance)),
         }
     }
 
-    /// Whether the app's cached read still serves at `now`. A read dated in
-    /// the future (a clock step back) does not.
-    pub fn is_fresh(&self, app: App, now: u64) -> bool {
-        let read = match app {
-            App::Radarr => &self.radarr,
-            App::Sonarr => &self.sonarr,
-        };
-        read.as_ref().is_some_and(|read| read.read_at <= now && now - read.read_at < IMPORT_REFRESH_SECS)
+    /// Replace the instance's cached read.
+    pub fn store(&mut self, app: App, instance: &str, read: ImportRead) {
+        match (app, instance.is_empty()) {
+            (App::Radarr, true) => self.radarr = Some(read),
+            (App::Sonarr, true) => self.sonarr = Some(read),
+            (_, false) => {
+                self.extra.insert(crate::ids::instance_key(app, instance), read);
+            }
+        }
     }
 
-    /// Both apps' cached imports inside the window ending at `now`.
+    /// Whether the instance's cached read still serves at `now`. A read dated
+    /// in the future (a clock step back) does not.
+    pub fn is_fresh(&self, app: App, instance: &str, now: u64) -> bool {
+        self.read(app, instance).is_some_and(|read| read.read_at <= now && now - read.read_at < IMPORT_REFRESH_SECS)
+    }
+
+    /// Every instance's cached imports inside the window ending at `now`.
     pub fn imports(&self, now: u64) -> Vec<Import> {
         let since = now.saturating_sub(IMPORT_WINDOW_SECS);
-        [&self.radarr, &self.sonarr]
+        [self.radarr.as_ref(), self.sonarr.as_ref()]
             .into_iter()
             .flatten()
+            .chain(self.extra.values())
             .flat_map(|read| &read.imports)
             .filter(|import| import.epoch >= since)
             .cloned()

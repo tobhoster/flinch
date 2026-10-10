@@ -7,6 +7,7 @@
 //! open at `now` would read as "not played" and teach the model that recent
 //! items are cold.
 
+use super::plays::Viewer;
 use super::FitItem;
 use crate::presence;
 use crate::regret::{PlayHistory, WatchFeatures};
@@ -34,6 +35,9 @@ pub struct Example {
     pub features: WatchFeatures,
     /// 1.0 = played during the horizon after the cut.
     pub label: f32,
+    /// Who played it during the horizon, as far as the sources name viewers;
+    /// per-viewer taste ([`crate::taste`]) reads it.
+    pub played_by: Vec<Viewer>,
 }
 
 /// Build the panel: every cut date × every item that was on disk at that cut.
@@ -53,15 +57,27 @@ pub fn build_dataset(items: &[FitItem], spec: &PanelSpec<'_>) -> Vec<Example> {
                 item: &item_plays,
                 audience: &audience,
                 episodes_total: item.episodes_total,
+                episodes_on_disk: item.episodes_on_disk.as_deref(),
                 last_watched_days: None,
                 added_days_ago: (cut - arrival) as f32 / DAY_SECS as f32,
+                // The panel knows plays only; a manual "mark as watched"
+                // leaves no dated trace to ask as of a cut.
+                marked_complete: false,
             };
+            let mut played_by: Vec<Viewer> = Vec::new();
+            let in_horizon = item.plays.iter().filter(|play| play.epoch >= cut && play.epoch < cut + horizon);
+            for viewer in in_horizon.filter_map(|play| play.viewer.as_ref()) {
+                if !played_by.contains(viewer) {
+                    played_by.push(viewer.clone());
+                }
+            }
             examples.push(Example {
                 item_id: item.id.clone(),
                 cut_days: *days,
                 cut_unix: cut,
                 features: WatchFeatures::read(&history, cut),
                 label: if item.played_between(cut, cut + horizon) { 1.0 } else { 0.0 },
+                played_by,
             });
         }
     }

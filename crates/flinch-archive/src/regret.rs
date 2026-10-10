@@ -7,19 +7,23 @@
 //! - **P(watch)** comes from an exponential hazard, `λ = λ₀·exp(βᵀx)`, so
 //!   `P = 1 − exp(−λ·H)`. Features: days since the last play (right-censored to
 //!   days on disk when never played), lifetime finished viewings, plays of the
-//!   same show in the last 14 days, and an annual cycle (`cos` of the days since
-//!   the last play over a year, for the film played every December). Anyone
+//!   same show in the last 14 days, an annual cycle (`cos` of the days since
+//!   the last play over a year, for the film played every December), whether
+//!   everyone who played it finished it, and — for a title nobody played — how
+//!   readily the household plays titles like it ([`crate::taste`]). Anyone
 //!   partway through it raises P to at least 0.95.
 //! - **C_reacq** is how hard it is to get back: bigger files, few seeders and
-//!   usenet copies past retention cost more.
+//!   usenet copies past retention cost more; a title streaming on a service
+//!   the household subscribes to costs less, never below the floor.
 //! - **A_household** is who still wants it: on someone's watchlist, or
 //!   requested by them, weighted per user.
 //!
 //! The hand-set priors follow this household's own record: finished titles are
 //! almost never replayed (110 finished in 200 days, none replayed more than a
-//! day later), so finishing earns nothing and the base rate is low. Watching
-//! the show right now is the strong signal, and partway is floored at 0.95.
-//! The daily fit ([`crate::fit`]) replaces them once the panel can.
+//! day later), so a finished title is cold however recently it ended, and the
+//! base rate is low. Watching the show right now is the strong signal, and
+//! partway is floored at 0.95. Taste starts at zero weight: it moves nothing
+//! until the daily fit ([`crate::fit`]) gives it one that beats the priors.
 
 use crate::fit::plays::{Play, Viewer};
 use std::collections::{HashMap, HashSet};
@@ -38,8 +42,15 @@ pub const PARTWAY: std::ops::RangeInclusive<f32> = 0.10..=0.90;
 pub const PARTWAY_FLOOR: f64 = 0.95;
 /// C_reacq never falls below this: a tiny file is cheap to replace, never free.
 pub const MIN_FRICTION: f64 = 0.1;
+/// The share of C_reacq above [`MIN_FRICTION`] a title keeps while it streams
+/// on a subscribed service: watchable without a download, though not owned.
+pub const STREAMING_SHARE: f64 = 0.25;
 
 /// The hazard's parameters. `λ₀` is per day.
+///
+/// No field defaults: a `hazard.json` or `fit.json` written for another
+/// feature set must fail to load (priors, then a refit), never run with a
+/// missing coefficient read as zero.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HazardModel {
     pub lambda0_per_day: f64,
@@ -51,11 +62,25 @@ pub struct HazardModel {
     pub beta_velocity: f64,
     /// Per unit of the annual cycle, −1..1.
     pub beta_cyclical: f64,
+    /// Everyone who played it finished it (see [`WatchFeatures::finished`]).
+    pub beta_finished: f64,
+    /// Per unit of [`WatchFeatures::taste`], a log-odds shift.
+    pub beta_taste: f64,
 }
 
 impl Default for HazardModel {
     fn default() -> Self {
-        Self { lambda0_per_day: 0.004, beta_recency: -0.5, beta_scrobbles: 0.0, beta_velocity: 0.7, beta_cyclical: 0.3 }
+        Self {
+            lambda0_per_day: 0.004,
+            beta_recency: -0.5,
+            beta_scrobbles: 0.0,
+            beta_velocity: 0.7,
+            beta_cyclical: 0.3,
+            // A movie finished two days ago reads ~4%, not the ~37% its
+            // fresh play alone would give it: finishing ends the demand.
+            beta_finished: -2.5,
+            beta_taste: 0.0,
+        }
     }
 }
 
@@ -75,13 +100,22 @@ pub struct WatchFeatures {
     pub annual_cyclical_offset: f64,
     /// An active viewer is partway through it.
     pub partway: bool,
+    /// Everyone who played it got to the end — the movie, or every episode of
+    /// the season still on disk — and nobody's latest play stopped short.
+    /// Also set when the media server marks it watched and no play says
+    /// otherwise (a manual "mark as watched" writes no play).
+    pub finished: bool,
+    /// For a never-played title: how much more (or less) readily the household
+    /// plays titles like it than titles at large, in log-odds. 0 = no evidence.
+    pub taste: f64,
 }
 
-/// How many parameters the hazard has: `ln λ₀` and the four β.
-pub const PARAMS: usize = 5;
+/// How many parameters the hazard has: `ln λ₀` and the six β.
+pub const PARAMS: usize = 7;
 
 impl WatchFeatures {
-    /// The hazard's design row: `[1, ln(1+days), ln(1+viewings), ln(1+show plays), cycle]`,
+    /// The hazard's design row:
+    /// `[1, ln(1+days), ln(1+viewings), ln(1+show plays), cycle, finished, taste]`,
     /// so `ln λ = params · design`. The fitter and the planner both read λ through it.
     pub fn design(&self) -> [f64; PARAMS] {
         let ln1p = |value: f64| value.max(0.0).ln_1p();
@@ -91,19 +125,39 @@ impl WatchFeatures {
             ln1p(self.lifetime_scrobbles),
             ln1p(f64::from(self.active_series_velocity)),
             self.annual_cyclical_offset,
+            f64::from(u8::from(self.finished)),
+            self.taste,
         ]
+    }
+
+    /// These features with the household's taste for the title. Taste speaks
+    /// only for a title nobody played: once plays exist they say more about
+    /// this household than resemblance to other titles does.
+    pub fn with_taste(self, taste: Option<f64>) -> Self {
+        match taste.filter(|value| value.is_finite()) {
+            Some(taste) if self.never_played => Self { taste, ..self },
+            _ => self,
+        }
     }
 }
 
 impl HazardModel {
-    /// `[ln λ₀, β_recency, β_scrobbles, β_velocity, β_cyclical]`.
+    /// `[ln λ₀, β_recency, β_scrobbles, β_velocity, β_cyclical, β_finished, β_taste]`.
     pub fn params(&self) -> [f64; PARAMS] {
-        [self.lambda0_per_day.ln(), self.beta_recency, self.beta_scrobbles, self.beta_velocity, self.beta_cyclical]
+        [
+            self.lambda0_per_day.ln(),
+            self.beta_recency,
+            self.beta_scrobbles,
+            self.beta_velocity,
+            self.beta_cyclical,
+            self.beta_finished,
+            self.beta_taste,
+        ]
     }
 
     pub fn from_params(params: [f64; PARAMS]) -> Self {
-        let [ln_lambda0, beta_recency, beta_scrobbles, beta_velocity, beta_cyclical] = params;
-        Self { lambda0_per_day: ln_lambda0.exp(), beta_recency, beta_scrobbles, beta_velocity, beta_cyclical }
+        let [ln_lambda0, beta_recency, beta_scrobbles, beta_velocity, beta_cyclical, beta_finished, beta_taste] = params;
+        Self { lambda0_per_day: ln_lambda0.exp(), beta_recency, beta_scrobbles, beta_velocity, beta_cyclical, beta_finished, beta_taste }
     }
 
     /// `ln λ`: the linear predictor.
@@ -138,10 +192,42 @@ pub struct PlayHistory<'a> {
     pub audience: &'a [&'a Play],
     /// Episodes in the season; `None` for a movie.
     pub episodes_total: Option<u32>,
+    /// The season's episode numbers that have a file, ascending; `None` when
+    /// unknown (then every finished episode counts, as plays cannot tell a
+    /// deleted episode from one on disk).
+    pub episodes_on_disk: Option<&'a [u32]>,
     /// Days since the last play from the merged watch state, which also
     /// knows plays the logs do not.
     pub last_watched_days: Option<f32>,
     pub added_days_ago: f32,
+    /// The merged watch state counts it as fully watched.
+    pub marked_complete: bool,
+}
+
+impl PlayHistory<'_> {
+    /// A finished play of an episode still on disk (any play of a movie).
+    fn counts(&self, play: &Play) -> bool {
+        play.complete()
+            && match (self.episodes_on_disk, play.episode) {
+                (Some(on_disk), Some(episode)) => on_disk.binary_search(&episode).is_ok(),
+                _ => true,
+            }
+    }
+
+    /// Distinct episodes on disk these plays finished.
+    fn episodes_finished(&self, plays: &[&Play]) -> usize {
+        plays.iter().filter(|play| self.counts(play)).filter_map(|play| play.episode).collect::<HashSet<u32>>().len()
+    }
+
+    /// Plays up to `now` per viewer; plays with no viewer are one anonymous
+    /// household viewer.
+    fn by_viewer(&self, now: u64) -> HashMap<Option<&Viewer>, Vec<&Play>> {
+        let mut by_viewer: HashMap<Option<&Viewer>, Vec<&Play>> = HashMap::new();
+        for play in self.item.iter().filter(|play| play.epoch <= now) {
+            by_viewer.entry(play.viewer.as_ref()).or_default().push(play);
+        }
+        by_viewer
+    }
 }
 
 impl WatchFeatures {
@@ -150,7 +236,7 @@ impl WatchFeatures {
         let from_log = last_play.map(|epoch| (now - epoch) as f64 / DAY_SECS as f64);
         let watched = history.last_watched_days.map(f64::from).or(from_log);
         let days_since_last_play = watched.unwrap_or(f64::from(history.added_days_ago)).max(0.0);
-        let finished = history.item.iter().filter(|play| play.complete()).count() as f64;
+        let finished = history.item.iter().filter(|play| play.epoch <= now && history.counts(play)).count() as f64;
         let lifetime_scrobbles = match history.episodes_total {
             Some(episodes) => finished / f64::from(episodes.max(1)),
             None => finished,
@@ -158,26 +244,41 @@ impl WatchFeatures {
         let since = now.saturating_sub(VELOCITY_DAYS * DAY_SECS);
         let active_series_velocity = history.audience.iter().filter(|play| play.epoch >= since && play.epoch <= now).count() as u32;
         let annual_cyclical_offset = if watched.is_some() { (std::f64::consts::TAU * days_since_last_play / 365.25).cos() } else { 0.0 };
+        let by_viewer = history.by_viewer(now);
+        let partway = partway(history, &by_viewer, now);
         Self {
             days_since_last_play,
             never_played: watched.is_none(),
             lifetime_scrobbles,
             active_series_velocity,
             annual_cyclical_offset,
-            partway: partway(history, now),
+            partway,
+            finished: !partway && finished_by_all(history, &by_viewer),
+            taste: 0.0,
         }
     }
+}
+
+/// Nobody's latest play stopped short, and either every viewer got through
+/// all of it or the media server marks it watched. A viewer who stopped
+/// halfway, however long ago, may come back: that is not finished.
+fn finished_by_all(history: &PlayHistory, by_viewer: &HashMap<Option<&Viewer>, Vec<&Play>>) -> bool {
+    if by_viewer.is_empty() {
+        return history.marked_complete;
+    }
+    let latest_complete = by_viewer.values().all(|plays| plays.iter().max_by_key(|play| play.epoch).is_some_and(|play| play.complete()));
+    let everyone_through = by_viewer.values().all(|plays| match history.episodes_total {
+        None => true,
+        Some(episodes) => history.episodes_finished(plays) >= episodes.max(1) as usize,
+    });
+    latest_complete && (everyone_through || history.marked_complete)
 }
 
 /// Some active viewer is between [`PARTWAY`] through the item: for a movie,
 /// their latest play stopped there; for a season, that share of its episodes
 /// is finished. Plays with no viewer count as one anonymous household viewer.
-fn partway(history: &PlayHistory, now: u64) -> bool {
+fn partway(history: &PlayHistory, by_viewer: &HashMap<Option<&Viewer>, Vec<&Play>>, now: u64) -> bool {
     let active_since = now.saturating_sub(ACTIVE_VIEWER_DAYS * DAY_SECS);
-    let mut by_viewer: HashMap<Option<&Viewer>, Vec<&Play>> = HashMap::new();
-    for play in history.item.iter().filter(|play| play.epoch <= now) {
-        by_viewer.entry(play.viewer.as_ref()).or_default().push(play);
-    }
     by_viewer.values().any(|plays| {
         let Some(latest) = plays.iter().max_by_key(|play| play.epoch) else { return false };
         if latest.epoch < active_since {
@@ -185,10 +286,7 @@ fn partway(history: &PlayHistory, now: u64) -> bool {
         }
         let progress = match history.episodes_total {
             None => latest.fraction,
-            Some(episodes) => {
-                let finished: HashSet<u32> = plays.iter().filter(|play| play.complete()).filter_map(|play| play.episode).collect();
-                finished.len() as f32 / episodes.max(1) as f32
-            }
+            Some(episodes) => history.episodes_finished(plays) as f32 / episodes.max(1) as f32,
         };
         PARTWAY.contains(&progress)
     })
@@ -202,17 +300,27 @@ pub struct Reacquisition {
     pub seeders: Option<u32>,
     /// No usenet copy is within the servers' retention.
     pub usenet_out_of_retention: bool,
+    /// It streams, in the operator's region, on a service the household
+    /// subscribes to ([`crate::signals::streaming`]); `false` when unknown.
+    pub streams: bool,
 }
 
 impl Reacquisition {
     /// `1 + 0.3·log₁₀(S / 1 GB) + 2 / max(seeders, 1) + 5·[out of retention]`,
     /// at least [`MIN_FRICTION`]. Unknown seeders add nothing: missing evidence
-    /// never makes an item look harder to replace than it is.
+    /// never makes an item look harder to replace than it is. A title that
+    /// streams keeps only [`STREAMING_SHARE`] of its friction above the floor:
+    /// cheaper to lose, never free.
     pub fn friction(&self) -> f64 {
         let size = 0.3 * (self.size_bytes.max(1) as f64 / 1e9).log10();
         let seeders = self.seeders.map_or(0.0, |seeders| 2.0 / f64::from(seeders.max(1)));
         let retention = if self.usenet_out_of_retention { 5.0 } else { 0.0 };
-        (1.0 + size + seeders + retention).max(MIN_FRICTION)
+        let friction = (1.0 + size + seeders + retention).max(MIN_FRICTION);
+        if self.streams {
+            MIN_FRICTION + STREAMING_SHARE * (friction - MIN_FRICTION)
+        } else {
+            friction
+        }
     }
 }
 
@@ -250,16 +358,24 @@ impl Regret {
     }
 }
 
-/// The reason a selected item is cheap to lose, in a few words.
-pub fn describe(features: &WatchFeatures, regret: &Regret) -> String {
+/// The reason a selected item is cheap to lose, in a few words; `like` is the
+/// taste note naming the titles it resembles ([`crate::taste::Likeness::note`]).
+pub fn describe(features: &WatchFeatures, regret: &Regret, like: Option<&str>) -> String {
     let age = months_or_days(features.days_since_last_play);
-    let history = if features.never_played { format!("Never played, {age} on disk") } else { format!("Watched {age} ago") };
+    let history = if features.never_played {
+        format!("Never played, {age} on disk")
+    } else if features.finished {
+        format!("Finished {age} ago")
+    } else {
+        format!("Watched {age} ago")
+    };
     let viewings = match features.lifetime_scrobbles {
         n if n < 0.5 => String::new(),
         n if n < 1.5 => " · 1 viewing".to_string(),
         n => format!(" · {} viewings", n.round()),
     };
-    format!("{history}{viewings} · P(watch) {:.0}% · regret {:.2}", regret.p_watch * 100.0, regret.value)
+    let like = like.map(|note| format!(" · {note}")).unwrap_or_default();
+    format!("{history}{viewings} · P(watch) {:.0}% · regret {:.2}{like}", regret.p_watch * 100.0, regret.value)
 }
 
 fn months_or_days(days: f64) -> String {

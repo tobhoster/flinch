@@ -174,14 +174,18 @@
    "beta_recency": -0.62,
    "beta_scrobbles": 0.41,
    "beta_velocity": 0.83,
-   "beta_cyclical": 0.37
+   "beta_cyclical": 0.37,
+   "beta_finished": -2.81,
+   "beta_taste": 0.64
   },
   "priors": {
    "lambda0_per_day": 0.004,
    "beta_recency": -0.5,
    "beta_scrobbles": 0.0,
    "beta_velocity": 0.7,
-   "beta_cyclical": 0.3
+   "beta_cyclical": 0.3,
+   "beta_finished": -2.5,
+   "beta_taste": 0.0
   }
  },
  "outside_deletions": [

@@ -26,13 +26,34 @@
 //! target volume) is a fixed 0 in its chain, so everything its edges make
 //! depend on it is unselectable too: excluding season 5 of an unplayed show
 //! protects seasons 1-4 rather than evicting around it.
+//!
+//! Operator rules ([`crate::rules`]) add feasibility, never cost: a
+//! [`Force::Must`] unit is fixed to 1 whenever its volume has a target (and so
+//! is every prerequisite its chain gives it), and on a volume with
+//! [`Force::Prefer`] units no other unit is taken until all of them are
+//! (`x_other ≤ y_v ≤ x_preferred`). [`Force::Spare`] is the same switch the
+//! other way round: a spared unit is taken only once every other unit on its
+//! volume is (`x_spared ≤ z_v ≤ x_other`), so it goes only when nothing else
+//! there fills the target. The greedy pass ranks the same way: every must-go
+//! unit and its prerequisites first, then preferred ones, then the rest, then
+//! spared ones; it honours preference only as far as a chain's order allows.
+//!
+//! The archive tier ([`select_with_moves`], see `moves`) adds a second
+//! decision per movie or whole series: move it to an archive volume with room
+//! instead of evicting it (`x_i + m_g ≤ 1`), at a near-zero regret.
+
+mod greedy;
+mod moves;
 
 use good_lp::{constraint, highs, variable, Expression, ProblemVariables, Solution, SolverModel, Variable};
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, BinaryHeap, HashMap};
+use greedy::{greedy, release, tiers, Step};
+use moves::Usable;
+pub use moves::{MoveGroup, Moves, MOVE_REGRET_PER_TIB};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 /// Where a unit sits in its show's order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sequence {
     /// The show (or any ordering group). Units order only within one group.
     pub group: String,
@@ -58,6 +79,23 @@ pub struct Unit {
     /// Already handed over in an earlier cycle: preferred at equal cost, so a
     /// re-plan does not restart its Leaving Soon window.
     pub handed: bool,
+    /// What an operator rule asks: taken first, or taken whenever its volume
+    /// needs space. The caller never sets it on an excluded or protected unit.
+    pub force: Option<Force>,
+}
+
+/// What an operator rule asks of a unit ([`crate::rules`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Force {
+    /// Drawn on before any unit without a rule on its volume, only as far as
+    /// the target needs.
+    Prefer,
+    /// Selected whenever its volume has a target, past the target if need be.
+    Must,
+    /// Drawn on only once every other unit on its volume is taken: a soft
+    /// keep (a torrent below its desired ratio, [`crate::torrents`]).
+    Spare,
 }
 
 /// How the selection was made.
@@ -79,6 +117,9 @@ pub struct Selection {
     pub method: Method,
     /// Why HiGHS was not used, when it failed.
     pub solver_error: Option<String>,
+    /// Groups that move to their archive instead ([`Moves::groups`] indices,
+    /// ascending); none of their members is in `chosen`.
+    pub moved: Vec<usize>,
 }
 
 /// Each show's units as chains oriented "each member depends on the next":
@@ -141,6 +182,12 @@ pub fn quantize(bytes: u64, quantum: u64) -> u64 {
 /// instead of failing the whole program as infeasible. `emergency` skips
 /// HiGHS for the greedy pass.
 pub fn select(units: &[Unit], targets: &BTreeMap<String, u64>, quantum: u64, emergency: bool) -> Selection {
+    select_with_moves(units, targets, quantum, emergency, &Moves::default())
+}
+
+/// [`select`] with the archive tier: each group in `moves` may move to its
+/// archive instead of its members leaving (see [`moves`]).
+pub fn select_with_moves(units: &[Unit], targets: &BTreeMap<String, u64>, quantum: u64, emergency: bool, moves: &Moves) -> Selection {
     let (edges, open) = chains(units, targets);
     let need: BTreeMap<&str, u64> = targets
         .iter()
@@ -157,18 +204,22 @@ pub fn select(units: &[Unit], targets: &BTreeMap<String, u64>, quantum: u64, eme
         .filter(|(_, quanta)| *quanta > 0)
         .collect();
     if need.is_empty() {
-        return Selection { chosen: Vec::new(), method: if emergency { Method::Emergency } else { Method::Milp }, solver_error: None };
+        let method = if emergency { Method::Emergency } else { Method::Milp };
+        return Selection { chosen: Vec::new(), method, solver_error: None, moved: Vec::new() };
     }
+    let usable = moves::usable(units, &open, moves, quantum);
+    let fallback = |method, solver_error| {
+        let taken = moves::greedy_moves(units, &open, &need, quantum, &usable, moves);
+        let rest = moves::remainder(&open, &edges, &need, &usable, &taken);
+        let moved = taken.iter().map(|&index| usable[index].group).collect();
+        Selection { chosen: greedy(units, &rest.open, &rest.edges, &rest.need, quantum), method, solver_error, moved }
+    };
     if emergency {
-        return Selection { chosen: greedy(units, &open, &edges, &need, quantum), method: Method::Emergency, solver_error: None };
+        return fallback(Method::Emergency, None);
     }
-    match milp(units, &open, &edges, &need, quantum) {
-        Ok(chosen) => Selection { chosen, method: Method::Milp, solver_error: None },
-        Err(error) => Selection {
-            chosen: greedy(units, &open, &edges, &need, quantum),
-            method: Method::SolverFallback,
-            solver_error: Some(error.to_string()),
-        },
+    match milp(units, &open, &edges, &need, quantum, (&usable, moves)) {
+        Ok((chosen, moved)) => Selection { chosen, method: Method::Milp, solver_error: None, moved },
+        Err(error) => fallback(Method::SolverFallback, Some(error.to_string())),
     }
 }
 
@@ -190,128 +241,86 @@ fn milp(
     edges: &[(usize, usize)],
     need: &BTreeMap<&str, u64>,
     quantum: u64,
-) -> Result<Vec<usize>, good_lp::ResolutionError> {
+    (usable, moves): (&[Usable], &Moves),
+) -> Result<(Vec<usize>, Vec<usize>), good_lp::ResolutionError> {
     let mut problem = ProblemVariables::new();
     // Open units are exactly those on a volume with a target (see [`chains`]).
     let vars: HashMap<usize, Variable> =
         (0..units.len()).filter(|&index| open[index]).map(|index| (index, problem.add(variable().binary()))).collect();
-    let objective: Expression = vars.iter().map(|(&index, &x)| objective_weight(&units[index]) * x).sum();
-    let mut model = problem.minimise(objective).using(highs);
+    let m = moves::variables(&mut problem, usable);
+    let member_move = moves::by_member(usable, &m);
+    // Two switches per volume where rules rank units. Preferred (and must-go)
+    // units are taken before the first turns on, which every other unit
+    // needs; the mirror for spared units: every other unit is taken before
+    // the second turns on, which every spared unit needs. A move handles its
+    // members: it waits behind preferred units, and counts as taken for a
+    // spared one.
+    let mut switches: Vec<(Variable, Vec<Expression>, Vec<Expression>)> = Vec::new();
+    for volume in need.keys() {
+        let on: Vec<(usize, Variable)> =
+            vars.iter().filter(|(&index, _)| units[index].volume == *volume).map(|(&index, &x)| (index, x)).collect();
+        let split = |marked: fn(Option<Force>) -> bool| {
+            let (hit, rest): (Vec<_>, Vec<_>) = on.iter().copied().partition(|(index, _)| marked(units[*index].force));
+            (!hit.is_empty() && !rest.is_empty()).then_some((hit, rest))
+        };
+        let plain = |pairs: Vec<(usize, Variable)>| pairs.into_iter().map(|(_, x)| Expression::from(x)).collect::<Vec<_>>();
+        if let Some((preferred, rest)) = split(|force| matches!(force, Some(Force::Prefer | Force::Must))) {
+            let moved_here = usable.iter().zip(&m).filter(|(group, _)| group.volume == *volume).map(|(_, &mv)| Expression::from(mv));
+            let after = plain(rest).into_iter().chain(moved_here).collect();
+            switches.push((problem.add(variable().binary()), plain(preferred), after));
+        }
+        if let Some((spared, rest)) = split(|force| force == Some(Force::Spare)) {
+            let handled =
+                rest.into_iter().map(|(index, x)| member_move.get(&index).map_or_else(|| Expression::from(x), |&mv| x + mv)).collect();
+            switches.push((problem.add(variable().binary()), handled, plain(spared)));
+        }
+    }
+    let evictions: Expression = vars.iter().map(|(&index, &x)| objective_weight(&units[index]) * x).sum();
+    let copies: Expression = usable.iter().zip(&m).map(|(group, &mv)| group.cost * mv).sum();
+    let mut model = problem.minimise(evictions + copies).using(highs);
     model.set_verbose(false);
     model = model.set_time_limit(SOLVER_TIME_LIMIT_SECS);
     for (volume, quanta) in need {
-        let covered: Expression = vars
+        let evicted = vars
             .iter()
             .filter(|(&index, _)| units[index].volume == *volume)
-            .map(|(&index, &x)| quantize(units[index].size_bytes, quantum) as f64 * x)
-            .sum();
+            .map(|(&index, &x)| quantize(units[index].size_bytes, quantum) as f64 * x);
+        let moved = usable.iter().zip(&m).filter(|(group, _)| group.volume == *volume).map(|(group, &mv)| group.quanta as f64 * mv);
+        let covered: Expression = evicted.chain(moved).sum();
         model = model.with(constraint!(covered >= *quanta as f64));
     }
+    model = moves::constrain(model, &vars, usable, &m, moves, quantum);
     // Edges join open units only, so both ends are variables.
     for (dependent, prerequisite) in edges {
         if let (Some(&a), Some(&b)) = (vars.get(dependent), vars.get(prerequisite)) {
             model = model.with(constraint!(a <= b));
         }
     }
+    // Taking everything open meets every row, so these keep the program feasible.
+    for (&index, &x) in &vars {
+        if units[index].force == Some(Force::Must) {
+            model = model.with(constraint!(x >= 1));
+        }
+    }
+    for (switch, before, after) in switches {
+        for x in before {
+            model = model.with(constraint!(switch <= x));
+        }
+        for x in after {
+            model = model.with(constraint!(x <= switch));
+        }
+    }
     let solution = model.solve()?;
     let mut chosen: Vec<usize> = vars.iter().filter(|(_, &x)| solution.value(x) > 0.5).map(|(&index, _)| index).collect();
     chosen.sort_unstable();
-    Ok(chosen)
+    let mut moved: Vec<usize> = usable.iter().zip(&m).filter(|(_, &mv)| solution.value(mv) > 0.5).map(|(group, _)| group.group).collect();
+    moved.sort_unstable();
+    Ok((chosen, moved))
 }
 
 /// HiGHS gets this long. A 5,000-unit program with one row per volume solves
 /// in well under a second; the limit bounds a pathological one.
 const SOLVER_TIME_LIMIT_SECS: f64 = 30.0;
-
-/// Bytes per unit of regret, with ε so a zero-regret unit ranks first instead
-/// of dividing by zero.
-fn efficiency(unit: &Unit) -> f64 {
-    const EPSILON: f64 = 1e-9;
-    unit.size_bytes as f64 / (objective_weight(unit) + EPSILON)
-}
-
-struct Ready {
-    index: usize,
-    handed: bool,
-    efficiency: f64,
-}
-
-impl PartialEq for Ready {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-impl Eq for Ready {}
-impl PartialOrd for Ready {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Ready {
-    /// Max-heap order: handed first, then most bytes per regret, then the
-    /// lower index, so the pass is reproducible.
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.handed.cmp(&other.handed).then(self.efficiency.total_cmp(&other.efficiency)).then(other.index.cmp(&self.index))
-    }
-}
-
-/// What [`release`] does with the best ready unit.
-enum Step {
-    Take,
-    Skip,
-    Stop,
-}
-
-/// Walk `open` units in precedence order, best ready first: a unit is ready
-/// once its prerequisite was taken. Returns each taken unit with its
-/// prerequisite. O(N log N).
-fn release(units: &[Unit], open: &[bool], edges: &[(usize, usize)], mut step: impl FnMut(usize) -> Step) -> Vec<(usize, Option<usize>)> {
-    // Each unit has at most one prerequisite (chains), and unlocks at most one.
-    let mut blocked_by: HashMap<usize, usize> = HashMap::new();
-    let mut unlocks: HashMap<usize, usize> = HashMap::new();
-    for &(dependent, prerequisite) in edges {
-        blocked_by.insert(dependent, prerequisite);
-        unlocks.insert(prerequisite, dependent);
-    }
-    let ready = |index: usize| Ready { index, handed: units[index].handed, efficiency: efficiency(&units[index]) };
-    let mut heap: BinaryHeap<Ready> = (0..units.len()).filter(|index| open[*index] && !blocked_by.contains_key(index)).map(ready).collect();
-    let mut taken = Vec::new();
-    while let Some(Ready { index, .. }) = heap.pop() {
-        match step(index) {
-            Step::Stop => break,
-            Step::Skip => continue,
-            Step::Take => {}
-        }
-        taken.push((index, blocked_by.get(&index).copied()));
-        if let Some(&next) = unlocks.get(&index) {
-            heap.push(ready(next));
-        }
-    }
-    taken
-}
-
-/// Greedy cover: the best ready unit on a volume still short of its target.
-fn greedy(units: &[Unit], open: &[bool], edges: &[(usize, usize)], need: &BTreeMap<&str, u64>, quantum: u64) -> Vec<usize> {
-    let mut covered: BTreeMap<&str, u64> = BTreeMap::new();
-    let short =
-        |covered: &BTreeMap<&str, u64>, volume: &str| covered.get(volume).copied().unwrap_or(0) < need.get(volume).copied().unwrap_or(0);
-    let mut chosen: Vec<usize> = release(units, open, edges, |index| {
-        if need.keys().all(|volume| !short(&covered, volume)) {
-            return Step::Stop;
-        }
-        let volume = units[index].volume.as_str();
-        if !short(&covered, volume) {
-            return Step::Skip;
-        }
-        *covered.entry(volume).or_insert(0) += quantize(units[index].size_bytes, quantum);
-        Step::Take
-    })
-    .into_iter()
-    .map(|(index, _)| index)
-    .collect();
-    chosen.sort_unstable();
-    chosen
-}
 
 /// The chosen units in the order they should leave: prerequisites first, then
 /// most bytes per regret. Each comes with the chosen unit it must follow, so
@@ -322,7 +331,8 @@ pub fn release_order(units: &[Unit], chosen: &[usize]) -> Vec<(usize, Option<usi
         open[index] = true;
     }
     let edges = edges(units, &mut open);
-    release(units, &open, &edges, |_| Step::Take)
+    let tier = tiers(units, &open, &edges);
+    release(units, &open, &edges, &tier, |_| Step::Take)
 }
 
 /// Every precedence edge the selection breaks, as `(dependent, prerequisite)`

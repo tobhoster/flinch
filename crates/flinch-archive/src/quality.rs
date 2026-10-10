@@ -4,13 +4,24 @@
 //! - **Keep the original** when the household is likely to watch it, someone is
 //!   partway through, losing it costs a lot, or it would be hard to get back.
 //! - **Downgrade** a large file with moderate demand: the title stays, most of
-//!   its bytes come back.
+//!   its bytes come back. A very large file in a theme the household seldom
+//!   plays from ([`crate::themes`]) gets the same advice, unless it is pinned
+//!   or would be advised for eviction anyway.
 //! - **Eligible for eviction** when demand is low and it is easy to replace.
 //!
-//! The advice is published; FLINCH never changes a quality profile itself.
-//! Recyclarr owns what profiles are, and a move can trigger a re-download.
+//! Advice never feeds back into regret: the plan is the same with or without it.
+//!
+//! The advice is published. Only when the operator switches quality actions
+//! on does FLINCH act on downgrade advice ([`act`]); Recyclarr or the quality
+//! sync owns what profiles are. [`churn`] flags items the *arrs keep
+//! downloading again.
+
+pub mod act;
+pub mod churn;
+pub mod upgrade;
 
 use crate::regret::Regret;
+use crate::themes::ColdTheme;
 use serde::{Deserialize, Serialize};
 
 const GIB: f64 = (1u64 << 30) as f64;
@@ -27,6 +38,9 @@ pub const MAX_EVICT_FRICTION: f64 = 3.0;
 pub const DOWNGRADE_MIN_BYTES: u64 = 15 * (1 << 30);
 /// Share of a file a compact release is assumed to give back.
 pub const DOWNGRADE_SHARE: f64 = 0.80;
+/// Files above this size are worth a downgrade in a seldom-played theme;
+/// 2160p files are, whatever their size.
+pub const THEME_DOWNGRADE_MIN_BYTES: u64 = 25 * (1 << 30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,25 +67,47 @@ pub struct QualityAdvice {
     pub explanation: String,
 }
 
-/// Advice for one item of `size_bytes`; `partway` when an active viewer is
-/// partway through it.
-pub fn advise(regret: &Regret, partway: bool, size_bytes: u64) -> QualityAdvice {
+/// The item advice is asked about.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Item<'a> {
+    pub size_bytes: u64,
+    /// An active viewer is partway through it.
+    pub partway: bool,
+    /// A favorite or on a keep list.
+    pub pinned: bool,
+    /// Its file is 2160p.
+    pub uhd: bool,
+    /// Its theme, when the household seldom plays from it.
+    pub cold_theme: Option<&'a ColdTheme>,
+}
+
+/// Advice for one item; the first rule that matches wins.
+pub fn advise(regret: &Regret, item: &Item<'_>) -> QualityAdvice {
+    let size_bytes = item.size_bytes;
     let gib = size_bytes as f64 / GIB;
     let marginal_regret_per_gb = if gib > 0.0 { regret.value / gib } else { regret.value };
     let p = regret.p_watch * 100.0;
     let keep = |reason, explanation: String| (QualityAction::KeepOriginal { reason }, explanation);
-    let (action, explanation) = if partway {
+    let downgrade = |why: String| {
+        let freed = (size_bytes as f64 * DOWNGRADE_SHARE) as u64;
+        (
+            QualityAction::DowngradeQuality { estimated_reclaim_bytes: freed },
+            format!("{why}: a compact release frees about {:.0} GiB", freed as f64 / GIB),
+        )
+    };
+    let evictable = regret.p_watch < EVICT_P_WATCH && regret.friction <= MAX_EVICT_FRICTION;
+    let oversized = item.uhd || size_bytes > THEME_DOWNGRADE_MIN_BYTES;
+    let cold_theme = item.cold_theme.filter(|_| oversized && !item.pinned && !evictable);
+    let (action, explanation) = if item.partway {
         keep(KeepReason::ActiveProgress, "Someone is partway through it".to_string())
     } else if regret.p_watch >= KEEP_P_WATCH {
         keep(KeepReason::HighWatchLikelihood, format!("Likely watched soon: {p:.0}% P(watch)"))
     } else if regret.value >= PROTECT_REGRET {
         keep(KeepReason::HouseholdPriority, format!("Costly to lose: regret {:.2}", regret.value))
     } else if regret.p_watch >= EVICT_P_WATCH && size_bytes >= DOWNGRADE_MIN_BYTES {
-        let freed = (size_bytes as f64 * DOWNGRADE_SHARE) as u64;
-        (
-            QualityAction::DowngradeQuality { estimated_reclaim_bytes: freed },
-            format!("Moderate demand ({p:.0}% P(watch)): a compact release frees about {:.0} GiB", freed as f64 / GIB),
-        )
+        downgrade(format!("Moderate demand ({p:.0}% P(watch))"))
+    } else if let Some(theme) = cold_theme {
+        downgrade(format!("Theme \"{}\" is seldom played ({:.0}% of its titles in a year)", theme.name, theme.played_share * 100.0))
     } else if regret.friction > MAX_EVICT_FRICTION {
         keep(KeepReason::HighReacquisitionFriction, format!("Hard to get back: friction {:.1}", regret.friction))
     } else {

@@ -8,9 +8,30 @@ fn play(days_ago: u64, fraction: f32, episode: Option<u32>, viewer: &str) -> Pla
 }
 
 fn read(item: &[Play], audience: &[Play], episodes_total: Option<u32>, added_days_ago: f32) -> WatchFeatures {
+    read_marked(item, audience, (episodes_total, None), added_days_ago, false)
+}
+
+fn read_marked(
+    item: &[Play],
+    audience: &[Play],
+    (episodes_total, episodes_on_disk): (Option<u32>, Option<&[u32]>),
+    added_days_ago: f32,
+    marked_complete: bool,
+) -> WatchFeatures {
     let item: Vec<&Play> = item.iter().collect();
     let audience: Vec<&Play> = audience.iter().collect();
-    WatchFeatures::read(&PlayHistory { item: &item, audience: &audience, episodes_total, last_watched_days: None, added_days_ago }, NOW)
+    WatchFeatures::read(
+        &PlayHistory {
+            item: &item,
+            audience: &audience,
+            episodes_total,
+            episodes_on_disk,
+            last_watched_days: None,
+            added_days_ago,
+            marked_complete,
+        },
+        NOW,
+    )
 }
 
 fn cold(days: f64) -> WatchFeatures {
@@ -21,6 +42,8 @@ fn cold(days: f64) -> WatchFeatures {
         active_series_velocity: 0,
         annual_cyclical_offset: 0.0,
         partway: false,
+        finished: false,
+        taste: 0.0,
     }
 }
 
@@ -29,8 +52,56 @@ fn a_show_being_watched_is_likely_watched_and_a_finished_title_is_not() {
     let model = HazardModel::default();
     let binge = WatchFeatures { active_series_velocity: 10, ..cold(1.0) };
     assert!(model.p_watch(&binge) > 0.5, "{}", model.p_watch(&binge));
-    assert!(model.p_watch(&cold(1.0)) < 0.5, "finished yesterday is rarely replayed: {}", model.p_watch(&cold(1.0)));
+    let finished_yesterday = WatchFeatures { finished: true, active_series_velocity: 1, annual_cyclical_offset: 1.0, ..cold(1.0) };
+    assert!(model.p_watch(&finished_yesterday) < 0.05, "finished yesterday is rarely replayed: {}", model.p_watch(&finished_yesterday));
     assert!(model.p_watch(&cold(365.0)) < 0.05, "{}", model.p_watch(&cold(365.0)));
+}
+
+/// The household finishes a film and never goes back to it, so a title
+/// finished two days ago must be cheaper to lose than a download nobody has
+/// opened in six weeks — read from the plays, as the planner reads them.
+#[test]
+fn a_movie_just_finished_ranks_colder_than_one_nobody_opened() {
+    let model = HazardModel::default();
+    let finished = read(&[play(2, 1.0, None, "ann")], &[play(2, 1.0, None, "ann")], None, 400.0);
+    let unopened = read(&[], &[], None, 45.0);
+    assert!(finished.finished);
+    assert!(model.p_watch(&finished) < model.p_watch(&unopened), "{} vs {}", model.p_watch(&finished), model.p_watch(&unopened));
+}
+
+#[rstest]
+#[case::movie_finished(&[play(3, 1.0, None, "ann")], None, None, false, true)]
+#[case::rewatch_stopped_short(&[play(90, 1.0, None, "ann"), play(60, 0.4, None, "ann")], None, None, false, false)]
+#[case::one_viewer_left_it_halfway(&[play(3, 1.0, None, "ann"), play(200, 0.5, None, "bo")], None, None, false, false)]
+#[case::never_played_and_unmarked(&[], None, None, false, false)]
+#[case::marked_watched_without_a_play(&[], None, None, true, true)]
+#[case::marked_watched_but_the_last_play_stopped(&[play(3, 0.95, None, "ann"), play(1, 0.3, None, "ann")], None, None, true, false)]
+#[case::season_every_episode(&eps(1..=4), Some(4), None, false, true)]
+#[case::season_one_episode_missing(&eps(1..=3), Some(4), None, false, false)]
+#[case::season_deleted_episodes_do_not_count(&eps(1..=4), Some(4), Some(&[3_u32, 4, 5, 6][..]), false, false)]
+#[case::season_every_episode_left_on_disk(&eps(3..=6), Some(4), Some(&[3_u32, 4, 5, 6][..]), false, true)]
+fn finished_means_everyone_who_played_it_got_to_the_end(
+    #[case] plays: &[Play],
+    #[case] episodes: Option<u32>,
+    #[case] on_disk: Option<&[u32]>,
+    #[case] marked: bool,
+    #[case] expected: bool,
+) {
+    assert_eq!(read_marked(plays, &[], (episodes, on_disk), 400.0, marked).finished, expected);
+}
+
+fn eps(episodes: std::ops::RangeInclusive<u32>) -> Vec<Play> {
+    episodes.map(|episode| play(100, 1.0, Some(episode), "ann")).collect()
+}
+
+#[test]
+fn taste_speaks_only_for_a_title_nobody_played() {
+    let unplayed = read(&[], &[], None, 60.0);
+    assert_eq!(unplayed.with_taste(Some(-1.2)).taste, -1.2);
+    assert_eq!(unplayed.with_taste(Some(f64::NAN)).taste, 0.0, "a broken score is no evidence");
+    assert_eq!(cold(30.0).with_taste(Some(-1.2)).taste, 0.0);
+    let model = HazardModel { beta_taste: 1.0, ..HazardModel::default() };
+    assert!(model.p_watch(&unplayed.with_taste(Some(-1.0))) < model.p_watch(&unplayed));
 }
 
 #[test]
@@ -92,8 +163,18 @@ fn a_finished_season_counts_one_viewing_and_show_plays_set_the_velocity() {
 #[case::out_of_retention(1_000_000_000, Some(100), true, 6.02)]
 #[case::a_tiny_file_is_never_free(1, None, false, MIN_FRICTION)]
 fn friction_follows_size_seeders_and_retention(#[case] bytes: u64, #[case] seeders: Option<u32>, #[case] oor: bool, #[case] expected: f64) {
-    let friction = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: oor }.friction();
+    let friction = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: oor, streams: false }.friction();
     assert!((friction - expected).abs() < 1e-9, "{friction}");
+}
+
+#[rstest]
+#[case::lowered_toward_the_floor(1_000_000_000, Some(1), 0.1 + 0.25 * 2.9)]
+#[case::never_below_the_floor(1, None, MIN_FRICTION)]
+fn streaming_lowers_friction_toward_the_floor(#[case] bytes: u64, #[case] seeders: Option<u32>, #[case] expected: f64) {
+    let item = Reacquisition { size_bytes: bytes, seeders, usenet_out_of_retention: false, streams: true };
+    let friction = item.friction();
+    assert!((friction - expected).abs() < 1e-9, "{friction}");
+    assert!(friction >= MIN_FRICTION && friction <= Reacquisition { streams: false, ..item }.friction());
 }
 
 #[test]

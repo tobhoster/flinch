@@ -198,10 +198,10 @@ fn a_missing_title_or_any_invalid_namesake_makes_the_kind_misconfigured() {
 }
 
 #[rstest]
-#[case::delete(Route::Delete, "movie collection has no title: name it in Settings → Maintainerr collections")]
+#[case::delete(Route::Delete, "movie collection has no title: name it in Settings → Collections")]
 #[case::leaving_soon(
     Route::LeavingSoon,
-    "Leaving Soon movie collection has no title: name it in Settings → Maintainerr collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
+    "Leaving Soon movie collection has no title: name it in Settings → Collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
 )]
 fn a_blank_title_names_no_collection(#[case] route: Route, #[case] message: &str) {
     let blank = CollectionTitles { movie: " ".to_string(), leaving: String::new(), ..titles() };

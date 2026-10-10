@@ -9,6 +9,7 @@ use crate::fit::plays::Play;
 use crate::plan::knapsack::Sequence;
 use crate::regret::{self, Claim, HazardModel, PlayHistory, Reacquisition, Regret, WatchFeatures};
 use crate::signals::{MediaRef, Signals};
+use crate::taste::Reading;
 use crate::watch::{WatchEntry, COMPLETE};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -16,7 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub type Plays<'a> = (Vec<&'a Play>, Vec<&'a Play>);
 
 /// What the builder reads, all keyed by card id.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Library<'a> {
     pub cards: &'a [ArchiveCard],
     pub movies: &'a [ArrMovie],
@@ -30,40 +31,72 @@ pub struct Library<'a> {
     /// Cards already in a FLINCH collection.
     pub handed: &'a HashSet<String>,
     pub signals: &'a Signals,
+    /// Card id → the household's taste for it and the titles it rests on
+    /// ([`crate::taste`]); absent when no embedding or no outcome speaks for it.
+    pub taste: &'a HashMap<String, Reading>,
+    /// Card id → its theme, for cards in a theme the household seldom plays
+    /// from ([`crate::themes`]): quality advice only, never regret.
+    pub cold_themes: &'a HashMap<String, crate::themes::ColdTheme>,
     /// Why never-played items stay this run; `None` lets them compete.
     pub never_played: Option<Exclusion>,
+    /// Card id → why its torrents keep it ([`crate::torrents::map::holds`]).
+    pub seeding: &'a HashMap<String, crate::torrents::SeedHold>,
     pub now: u64,
 }
 
 pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> Vec<MediaCandidate> {
     let claims = claims(library, config);
     let none: Plays = (Vec::new(), Vec::new());
+    let titles = if library.taste.is_empty() { HashMap::new() } else { titles(library) };
+    let streaming = if library.signals.streams.is_empty() {
+        HashMap::new()
+    } else {
+        crate::signals::streaming::card_titles(library.movies, library.series)
+    };
+    let uhd: HashSet<String> = library
+        .movies
+        .iter()
+        .filter(|movie| movie.quality().is_some_and(|quality| quality.contains("2160p")))
+        .map(|movie| movie.card_id())
+        .collect();
     library
         .cards
         .iter()
         .map(|card| {
             let (item, audience) = library.plays.get(&card.id).unwrap_or(&none);
             let season = card.kind == LibraryKind::Season;
+            let watch = library.watch.get(&card.id);
             let features = WatchFeatures::read(
                 &PlayHistory {
                     item,
                     audience,
                     episodes_total: card.episodes_total.filter(|_| season),
+                    episodes_on_disk: card.episodes_on_disk.as_deref().filter(|_| season),
                     last_watched_days: card.last_watched_days,
                     added_days_ago: card.added_days_ago,
+                    marked_complete: watch.is_some_and(|entry| entry.progress >= COMPLETE),
                 },
                 library.now,
-            );
+            )
+            .with_taste(library.taste.get(&card.id).map(|reading| reading.taste));
+            // Taste sits only on a never-played title; name the titles it rests on.
+            let like = library
+                .taste
+                .get(&card.id)
+                .filter(|_| features.taste != 0.0)
+                .and_then(|reading| reading.like.as_ref())
+                .and_then(|like| like.note(|subject| titles.get(subject).copied()));
             let release = library.signals.releases.get(&card.id);
+            let stream = streaming.get(card.id.as_str()).and_then(|title| library.signals.streams.get(title));
             let friction = Reacquisition {
                 size_bytes: card.size_bytes,
                 seeders: release.and_then(|release| release.seeders),
                 usenet_out_of_retention: release.and_then(|release| release.usenet_out_of_retention).unwrap_or(false),
+                streams: stream.is_some(),
             }
             .friction();
             let household = regret::household(claims.get(card.id.as_str()).into_iter().flatten().copied());
             let regret = Regret::new(model.p_watch(&features), friction, household);
-            let watch = library.watch.get(&card.id);
             let played = card.last_watched_days.is_some() || watch.is_some_and(|entry| entry.progress > 0.0);
             let pin = if card.is_favorite {
                 Some(Pin::Favorite)
@@ -72,23 +105,29 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
             } else {
                 None
             };
-            let exclusion = pin.map(Exclusion::Pinned).or_else(|| {
-                if !library.in_plex.contains(&card.id) {
-                    Some(Exclusion::NotInPlex)
-                } else if watch.is_none() {
-                    Some(Exclusion::NoWatchEvidence)
-                } else if !played {
-                    library.never_played
-                } else {
-                    None
-                }
-            });
+            let exclusion = pin
+                .map(Exclusion::Pinned)
+                .or_else(|| {
+                    if !library.in_plex.contains(&card.id) {
+                        Some(Exclusion::NotInPlex)
+                    } else if watch.is_none() {
+                        Some(Exclusion::NoWatchEvidence)
+                    } else if !played {
+                        library.never_played.clone()
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| library.seeding.get(&card.id).copied().map(Exclusion::Seeding));
             MediaCandidate {
                 id: card.id.clone(),
                 title: card.title.clone(),
                 size_bytes: card.size_bytes,
                 volume: library.located.get(&card.id).cloned(),
-                reason: regret::describe(&features, &regret),
+                reason: match stream {
+                    Some(stream) => format!("{} · {}", regret::describe(&features, &regret, like.as_deref()), stream.note()),
+                    None => regret::describe(&features, &regret, like.as_deref()),
+                },
                 regret,
                 age_days: card.added_days_ago,
                 exclusion,
@@ -96,8 +135,18 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                 handed: library.handed.contains(&card.id),
                 announce: watch.is_none_or(|entry| entry.progress < COMPLETE),
                 protect: pin.is_some() || features.partway,
-                quality: crate::quality::advise(&regret, features.partway, card.size_bytes),
+                quality: crate::quality::advise(
+                    &regret,
+                    &crate::quality::Item {
+                        size_bytes: card.size_bytes,
+                        partway: features.partway,
+                        pinned: pin.is_some(),
+                        uhd: uhd.contains(&card.id),
+                        cold_theme: library.cold_themes.get(&card.id),
+                    },
+                ),
                 eviction_safety: crate::quality::eviction_safety(&regret),
+                force: None,
             }
         })
         .collect()
@@ -138,16 +187,33 @@ pub fn offline(
         in_plex: &in_plex,
         handed: &HashSet::new(),
         signals: &Signals::default(),
+        taste: &HashMap::new(),
+        cold_themes: &HashMap::new(),
         never_played,
+        seeding: &HashMap::new(),
         now,
     };
     build(&library, config, &HazardModel::default())
 }
 
-/// A season's place in its show: the show is the card id before `-s<n>`.
+/// A season's place in its show: the group is the show's subject (its
+/// instance and series id), so two instances' shows never share one.
 fn sequence(card: &ArchiveCard, played: bool) -> Option<Sequence> {
-    let (show, _) = card.id.rsplit_once("-s")?;
-    Some(Sequence { group: show.to_string(), index: card.season_index?, played })
+    let item = crate::ids::ArrRef::card(&card.id).filter(|item| item.season.is_some())?;
+    Some(Sequence { group: item.subject().id_text(), index: card.season_index?, played })
+}
+
+/// Subject ([`crate::embedding::subject_of`]) → title, for naming taste
+/// neighbours: the *arr's title, else the card's (a season's show title).
+fn titles<'a>(library: &Library<'a>) -> HashMap<String, &'a str> {
+    let mut titles: HashMap<String, &'a str> = library
+        .cards
+        .iter()
+        .map(|card| (crate::embedding::subject_of(&card.id).to_string(), card.show_title.as_deref().unwrap_or(&card.title)))
+        .collect();
+    titles.extend(library.movies.iter().map(|movie| (movie.card_id(), movie.title.as_str())));
+    titles.extend(library.series.iter().map(|series| (series.subject(), series.title.as_str())));
+    titles
 }
 
 /// Per card, each Seerr user's strongest claim: watchlisted, requested, or
@@ -178,7 +244,7 @@ fn claims<'a>(library: &Library<'a>, config: &PlannerConfig) -> HashMap<&'a str,
 
 /// The cards a Seerr media item names: a movie by TMDB id; a show's seasons
 /// by TVDB or TMDB id, limited to `seasons` when any are listed.
-fn cards_of<'a>(library: &Library<'a>, known: &HashSet<&'a str>, media: &MediaRef, seasons: &[u32]) -> Vec<&'a str> {
+pub(crate) fn cards_of<'a>(library: &Library<'a>, known: &HashSet<&'a str>, media: &MediaRef, seasons: &[u32]) -> Vec<&'a str> {
     let wanted = |id: String| known.get(id.as_str()).copied();
     match media {
         MediaRef::Movie { tmdb } => library

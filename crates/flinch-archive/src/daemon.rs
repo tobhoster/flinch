@@ -5,7 +5,7 @@
 
 use crate::capacity::VolumeForecast;
 use crate::card::ArchiveCard;
-use crate::plan::{generate_eviction_plan, EvictionPlan, MediaCandidate, PlanError, PlannerConfig};
+use crate::plan::{generate_plan, ArchiveDestination, EvictionPlan, MediaCandidate, PlanError, PlannerConfig};
 use crate::watch;
 use std::collections::BTreeSet;
 
@@ -24,13 +24,15 @@ pub struct ReconcileOutput {
     pub scanned: usize,
 }
 
-/// Plan one cycle over `candidates` (see [`crate::plan::candidates`]).
+/// Plan one cycle over `candidates` (see [`crate::plan::candidates`]); each
+/// `archive` destination lets its app's items move there instead of leaving.
 pub fn reconcile(
     candidates: &[MediaCandidate],
     forecasts: &[VolumeForecast],
     config: &PlannerConfig,
+    archive: &[ArchiveDestination],
 ) -> Result<ReconcileOutput, PlanError> {
-    let plan = generate_eviction_plan(candidates, forecasts, config)?;
+    let plan = generate_plan(candidates, forecasts, config, archive)?;
     let deleted_ids: Vec<String> = plan.items.iter().map(|item| item.id.clone()).collect();
     // Someone partway through raises regret but does not exclude: when the
     // plan still takes it, the eviction wins over the protection.

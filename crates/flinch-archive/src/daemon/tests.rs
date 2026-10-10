@@ -19,8 +19,9 @@ fn candidate(id: &str, regret: f64) -> MediaCandidate {
         handed: false,
         announce: false,
         protect: false,
-        quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), false, 0),
+        quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), &crate::quality::Item::default()),
         eviction_safety: 0.0,
+        force: None,
     }
 }
 
@@ -47,7 +48,7 @@ fn an_eviction_outranks_a_partway_protection_and_only_unfinished_items_are_annou
     let partway_taken = MediaCandidate { protect: true, announce: true, ..candidate("partway-taken", 0.1) };
     let partway_kept = MediaCandidate { protect: true, ..candidate("partway-kept", 9.0) };
     let finished = candidate("finished", 0.2);
-    let report = reconcile(&[pinned, partway_taken, partway_kept, finished], &needs(20), &Default::default()).expect("plans");
+    let report = reconcile(&[pinned, partway_taken, partway_kept, finished], &needs(20), &Default::default(), &[]).expect("plans");
 
     let mut deleted = report.deleted_ids.clone();
     deleted.sort();
@@ -91,6 +92,32 @@ fn the_status_names_the_never_played_hold_for_the_ui(#[case] hold: Option<NeverP
     assert_eq!(status["never_played_hold"].to_string(), published);
     let read: StatusSnapshot = serde_json::from_value(status).expect("round trip");
     assert_eq!(read.never_played_hold, hold);
+}
+
+#[test]
+fn the_status_lists_each_arr_instance_without_its_key() {
+    let old: StatusSnapshot = serde_json::from_str(
+        r#"{"scanned":4,"delete_candidates":0,"kept":4,"reclaimed_bytes":0,"protections_added":0,
+            "protections_skipped_repeat":0,"dry_run":true,"ran_at_unix":1}"#,
+    )
+    .expect("a status file from before instances");
+    assert!(old.arr_instances.is_empty());
+
+    let four_k = crate::arr::instances::Connection {
+        app: crate::capacity::App::Radarr,
+        name: "4k".into(),
+        base: "http://radarr-4k:7878".into(),
+        key: "secret-api-key".into(),
+        archive_root: String::new(),
+        compact_profile: String::new(),
+        public_url: "https://radarr4k.example.com".into(),
+    };
+    let status = StatusSnapshot { arr_instances: vec![four_k.view()], ..old };
+    let published = serde_json::to_string(&status).expect("serializable");
+    assert!(!published.contains("secret-api-key"), "{published}");
+    let read: StatusSnapshot = serde_json::from_str(&published).expect("round trip");
+    assert_eq!(read.arr_instances[0].name, "4k");
+    assert_eq!(read.arr_instances[0].public_url, "https://radarr4k.example.com");
 }
 
 /// The run (by index) at which one steady candidate first becomes eligible.
