@@ -39,6 +39,8 @@ pub struct RuntimeSettings {
     /// The in-process EmbeddingGemma 2 encoder behind the taste feature;
     /// off until the operator switches it on.
     pub embedding: crate::embedding::EmbeddingConfig,
+    /// Taste's recency weighting ([`crate::taste::decay`]); off by default.
+    pub taste: crate::taste::TasteConfig,
     /// A Jellyfin or Emby server read for every user's watch state; off while
     /// its URL is blank.
     pub jellyfin: crate::jellyfin::JellyfinConfig,
@@ -108,6 +110,7 @@ impl Default for RuntimeSettings {
             capacity: crate::capacity::CapacityConfig::default(),
             planner: crate::plan::PlannerConfig::default(),
             embedding: crate::embedding::EmbeddingConfig::default(),
+            taste: crate::taste::TasteConfig::default(),
             jellyfin: crate::jellyfin::JellyfinConfig::default(),
             watch_sources: Vec::new(),
             ignore_viewers: Vec::new(),
@@ -157,6 +160,7 @@ impl RuntimeSettings {
         self.capacity.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.embedding.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.taste.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         crate::rules::validate(&self.rules)?;
         crate::viewers::validate(&self.ignore_viewers).map_err(|error| SettingsError::Invalid(error.0))?;
         self.inflow_actions.validate().map_err(|error| SettingsError::Invalid(error.0))?;
@@ -260,6 +264,9 @@ mod tests {
     #[case::zero_quantum(|s: &mut RuntimeSettings| s.planner.quantum_mb = 0)]
     #[case::negative_weight(|s: &mut RuntimeSettings| { s.planner.user_weights.insert("ann".into(), -1.0); })]
     #[case::embedding_dimensions_not_a_matryoshka_size(|s: &mut RuntimeSettings| s.embedding.dimensions = 300)]
+    #[case::taste_half_life_under_a_week(|s: &mut RuntimeSettings| s.taste.half_life_days = 3.0)]
+    #[case::taste_half_life_not_finite(|s: &mut RuntimeSettings| s.taste.half_life_days = f64::NAN)]
+    #[case::bert_model_with_posters(|s: &mut RuntimeSettings| { s.embedding.model = crate::embedding::EmbeddingModel::MiniLm; s.embedding.posters = true; })]
     #[case::no_leaving_soon_window(|s: &mut RuntimeSettings| s.native.leaving_soon_days = 0)]
     #[case::no_deletes_per_run(|s: &mut RuntimeSettings| s.native.max_deletes_per_run = 0)]
     fn a_value_the_settings_page_would_refuse_is_invalid(#[case] break_it: fn(&mut RuntimeSettings)) {

@@ -478,7 +478,8 @@ movie's and show's catalogue description, made by
 [EmbeddingGemma 2](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
 inside `flinch-arrd` itself: a pure-Rust port of its text encoder on
 [candle](https://github.com/huggingface/candle), on the CPU, with no model
-server to run. Off, FLINCH runs as before.
+server to run. Two smaller encoders fit a tighter memory budget (see
+*Models* below). Off, FLINCH runs as before.
 
 The description is built from content metadata only: title, year, genres,
 certification, runtime, original language, studio or network, series type,
@@ -491,9 +492,32 @@ Switch it on in Settings > Taste embeddings:
 | Field | Default | Notes |
 | --- | --- | --- |
 | Embed titles | off | embed new and changed titles each cycle |
-| Dimensions | 256 | 128, 256, 512 or 768: how much of the 768-d vector is kept (Matryoshka truncation); changing it embeds every title again |
+| Model | EmbeddingGemma 2 | `embeddinggemma-2`, `bge-small-en-v1.5` or `all-minilm-l6-v2`; switching embeds every title again |
+| Dimensions | 256 | EmbeddingGemma 2 only: 128, 256, 512 or 768, how much of the 768-d vector is kept (Matryoshka truncation); changing it embeds every title again. The other models always keep their 384 and ignore it |
 | Daily budget | 500 | at most this many titles (1–20000) embedded per UTC day, on-disk titles first |
-| Posters | off | describe each title by its poster too (see below); switching it on or off embeds every title again |
+| Posters | off | EmbeddingGemma 2 only: describe each title by its poster too (see below); switching it on or off embeds every title again |
+| Taste half-life | 0 (off) | `taste.half_life_days`, 7–3650: an outcome counts half after this many days (see [Taste](../docs/how-it-works.md#taste-embeddinggemma-2)); applied at the next daily refit |
+
+- **Models.** Pick by memory:
+
+  | Model | Weights | Vector | Resident while embedding | Peak while loading | 16 texts × 256 tokens |
+  | --- | --- | --- | --- | --- | --- |
+  | EmbeddingGemma 2 (`google/embeddinggemma-2`, Apache 2.0) | ~580 MB | 128–768 | ~650 MB peak (below) | — | not measured (5 texts ≈ 3 s, below) |
+  | bge-small (`BAAI/bge-small-en-v1.5`, MIT) | ~130 MB | 384 | ~200 MB | ~270 MB | ~3.2 s |
+  | MiniLM (`sentence-transformers/all-MiniLM-L6-v2`, Apache 2.0) | ~90 MB | 384 | ~110 MB | ~190 MB | ~1.6 s |
+
+  Measured on the 20-thread test machine. While a small model loads, its
+  memory-mapped file (clean page cache the kernel can drop) and the float32
+  copy candle makes of it are both resident; the mapping is released once
+  loaded. So only MiniLM stays under 150 MB while embedding; bge-small needs
+  about 200 MB. EmbeddingGemma 2 describes titles best. The two BERT
+  encoders run on candle's BERT port with float32 weights, four texts per
+  forward pass, each text cut to 256 tokens (a long overview loses its end);
+  bge uses CLS pooling, MiniLM mean pooling, as their sentence-transformers
+  configs say. Their first cycle downloads `config.json`, `tokenizer.json`
+  and `model.safetensors` of a pinned revision into
+  `/state/models/<model>-<revision>/` (offline: copy those three there).
+  Search uses whichever model the vectors were made with.
 
 - **Weights.** The first cycle with embedding on downloads the pinned
   revision of `google/embeddinggemma-2` (Apache 2.0, no token needed) from
@@ -958,6 +982,7 @@ file reads as "nothing yet".
 | `dupes-acted.json` | duplicate copies removed (or tried) in the last 30 days | a failed removal may be tried once more; the kept copy is checked first every time |
 | `restore/<item id>` | an undo the UI queued, until the daemon takes it | nothing; press Restore again |
 | `models/embeddinggemma-2-<revision>/` | EmbeddingGemma 2's tokenizer and text weights (about 580 MB), downloaded the first time embedding runs; with Posters on also `vision.safetensors` (335 MB) and `processor_config.json` | downloaded again the next time embedding runs |
+| `models/bge-small-en-v1.5-<revision>/`, `models/all-minilm-l6-v2-<revision>/` | the chosen small model's `config.json`, `tokenizer.json` and `model.safetensors` (about 130 / 90 MB) | downloaded again the next time embedding runs |
 
 `protected.json` and `scheduled.json` record only the exclusions and
 collection members FLINCH created and verified by reading them back, so runs

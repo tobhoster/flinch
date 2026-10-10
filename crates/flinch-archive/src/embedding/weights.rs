@@ -1,18 +1,23 @@
-//! Getting EmbeddingGemma 2's weights onto the state volume, once.
+//! Getting the embedding model's weights onto the state volume, once.
 //!
-//! The published checkpoint is one 1.5 GB safetensors file holding the text,
-//! vision and audio towers. FLINCH reads its header and asks for exactly the
-//! byte ranges of the towers it runs, writing a safetensors file of its own
-//! per tower: the text tensors (one 542 MB block) always, the vision tower and
-//! its projection into the text model (335 MB in two blocks) only when posters
-//! are switched on. The audio tower is never fetched. The revision is pinned:
-//! the byte offsets, the tokenizer and every cached vector belong to it, and a
-//! new revision is a deliberate change here, not a silent drift upstream.
+//! EmbeddingGemma 2's published checkpoint is one 1.5 GB safetensors file
+//! holding the text, vision and audio towers. FLINCH reads its header and asks
+//! for exactly the byte ranges of the towers it runs, writing a safetensors
+//! file of its own per tower: the text tensors (one 542 MB block) always, the
+//! vision tower and its projection into the text model (335 MB in two blocks)
+//! only when posters are switched on. The audio tower is never fetched.
 //!
-//! Nothing secret is sent (the model is Apache 2.0 and ungated), so unlike
-//! every other client FLINCH has, this one follows Hugging Face's redirects to
-//! its file CDN.
+//! The small BERT encoders ship as three files each (`config.json`,
+//! `tokenizer.json`, a 90–130 MB float32 `model.safetensors`), fetched whole.
+//!
+//! Every revision is pinned: the byte offsets, the tokenizer and every cached
+//! vector belong to it, and a new revision is a deliberate change here, not a
+//! silent drift upstream. Nothing secret is sent (the models are Apache 2.0 or
+//! MIT and ungated), so unlike every other client FLINCH has, this one follows
+//! Hugging Face's redirects to its file CDN.
 
+use super::bert::Pooling;
+use super::EmbeddingModel;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -26,15 +31,51 @@ pub const VISION_TENSORS: &[&str] = &["vision_tower.", "embed_vision."];
 /// A header larger than this is not a safetensors header.
 const MAX_HEADER: u64 = 64 << 20;
 
-/// `google/embeddinggemma-2@914f7f89`: what the vector cache is keyed by.
-pub fn model_id() -> String {
-    format!("{REPO}@{}", &REVISION[..8])
+/// One pinned BERT sentence encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BertCheckpoint {
+    pub repo: &'static str,
+    pub revision: &'static str,
+    /// The directory name under `models/`, before the short revision.
+    pub name: &'static str,
+    /// The sentence-transformers pooling its `1_Pooling/config.json` names.
+    pub pooling: Pooling,
+}
+
+pub const BGE_SMALL: BertCheckpoint = BertCheckpoint {
+    repo: "BAAI/bge-small-en-v1.5",
+    revision: "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+    name: "bge-small-en-v1.5",
+    pooling: Pooling::Cls,
+};
+
+pub const MINILM: BertCheckpoint = BertCheckpoint {
+    repo: "sentence-transformers/all-MiniLM-L6-v2",
+    revision: "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    name: "all-minilm-l6-v2",
+    pooling: Pooling::Mean,
+};
+
+/// The pinned checkpoint of a BERT model; `None` for EmbeddingGemma 2.
+pub fn bert_checkpoint(model: EmbeddingModel) -> Option<BertCheckpoint> {
+    match model {
+        EmbeddingModel::Gemma => None,
+        EmbeddingModel::BgeSmall => Some(BGE_SMALL),
+        EmbeddingModel::MiniLm => Some(MINILM),
+    }
+}
+
+/// `google/embeddinggemma-2@914f7f89`, `BAAI/bge-small-en-v1.5@5c38ec7c`:
+/// what the vector cache is keyed by, so switching models re-embeds.
+pub fn model_id(model: EmbeddingModel) -> String {
+    let (repo, revision) = bert_checkpoint(model).map_or((REPO, REVISION), |checkpoint| (checkpoint.repo, checkpoint.revision));
+    format!("{repo}@{}", &revision[..8])
 }
 
 /// The cache key of text-and-poster vectors: their own space, so switching
 /// posters on or off re-embeds every title instead of mixing the two.
 pub fn poster_model_id() -> String {
-    format!("{}+posters", model_id())
+    format!("{}+posters", model_id(EmbeddingModel::Gemma))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,9 +135,9 @@ impl ModelFiles {
 
     /// Download whatever of the text model is missing.
     pub async fn fetch(&self) -> Result<(), FetchError> {
-        let http = self.client()?;
+        let http = client(&self.dir)?;
         if !self.tokenizer().is_file() {
-            let body = get(&http, "tokenizer.json", None).await?.bytes().await?;
+            let body = get(&http, REPO, REVISION, "tokenizer.json", None).await?.bytes().await?;
             crate::persist::replace(&self.tokenizer(), &body)?;
         }
         if !self.weights().is_file() {
@@ -108,9 +149,9 @@ impl ModelFiles {
     /// Download whatever of the text model and the vision tower is missing.
     pub async fn fetch_vision(&self) -> Result<(), FetchError> {
         self.fetch().await?;
-        let http = self.client()?;
+        let http = client(&self.dir)?;
         if !self.processor_config().is_file() {
-            let body = get(&http, "processor_config.json", None).await?.bytes().await?;
+            let body = get(&http, REPO, REVISION, "processor_config.json", None).await?.bytes().await?;
             crate::persist::replace(&self.processor_config(), &body)?;
         }
         if !self.vision_weights().is_file() {
@@ -119,24 +160,15 @@ impl ModelFiles {
         Ok(())
     }
 
-    fn client(&self) -> Result<reqwest::Client, FetchError> {
-        std::fs::create_dir_all(&self.dir)?;
-        Ok(reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(60 * 60))
-            .build()?)
-    }
-
     /// Write the tensors under `prefixes` to `target`: their header, then each
     /// of their byte ranges of the checkpoint in order.
     async fn fetch_tensors(&self, http: &reqwest::Client, prefixes: &[&str], target: &Path) -> Result<(), FetchError> {
-        let length = get(http, "model.safetensors", Some((0, 7))).await?.bytes().await?;
+        let length = get(http, REPO, REVISION, "model.safetensors", Some((0, 7))).await?.bytes().await?;
         let length = u64::from_le_bytes(length.as_ref().try_into().map_err(|_| FetchError::Header("no length prefix".into()))?);
         if length > MAX_HEADER {
             return Err(FetchError::Header(format!("{length}-byte header")));
         }
-        let header = get(http, "model.safetensors", Some((8, 7 + length))).await?.bytes().await?;
+        let header = get(http, REPO, REVISION, "model.safetensors", Some((8, 7 + length))).await?.bytes().await?;
         let subset = subset(&header, prefixes)?;
 
         let mut temp_name = target.as_os_str().to_owned();
@@ -147,7 +179,7 @@ impl ModelFiles {
         file.write_all(&subset.header)?;
         let data = 8 + length;
         for &(start, end) in &subset.ranges {
-            let mut response = get(http, "model.safetensors", Some((data + start, data + end - 1))).await?;
+            let mut response = get(http, REPO, REVISION, "model.safetensors", Some((data + start, data + end - 1))).await?;
             let mut written = 0u64;
             while let Some(chunk) = response.chunk().await? {
                 file.write_all(&chunk)?;
@@ -163,9 +195,75 @@ impl ModelFiles {
     }
 }
 
-/// GET one file of the pinned revision, optionally a byte range (inclusive).
-async fn get(http: &reqwest::Client, file: &'static str, range: Option<(u64, u64)>) -> Result<reqwest::Response, FetchError> {
-    let mut request = http.get(format!("https://huggingface.co/{REPO}/resolve/{REVISION}/{file}"));
+/// Where one BERT checkpoint's three files live.
+#[derive(Debug, Clone)]
+pub struct BertFiles {
+    dir: PathBuf,
+    checkpoint: BertCheckpoint,
+}
+
+impl BertFiles {
+    /// `state/models/<name>-<sha8>/`.
+    pub fn in_state(state_dir: &Path, checkpoint: BertCheckpoint) -> Self {
+        let dir = state_dir.join("models").join(format!("{}-{}", checkpoint.name, &checkpoint.revision[..8]));
+        Self { dir, checkpoint }
+    }
+
+    /// The directory holding `config.json`, `tokenizer.json` and `model.safetensors`.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Every file is in place (each is renamed into place only when whole).
+    pub fn present(&self) -> bool {
+        BERT_FILES.iter().all(|file| self.dir.join(file).is_file())
+    }
+
+    /// Download whichever of the three files is missing, each streamed to a
+    /// temporary file and renamed into place once whole.
+    pub async fn fetch(&self) -> Result<(), FetchError> {
+        let http = client(&self.dir)?;
+        for file in BERT_FILES {
+            let target = self.dir.join(file);
+            if target.is_file() {
+                continue;
+            }
+            let mut response = get(&http, self.checkpoint.repo, self.checkpoint.revision, file, None).await?;
+            let temp = self.dir.join(format!("{file}.part"));
+            let mut out = std::fs::File::create(&temp)?;
+            while let Some(chunk) = response.chunk().await? {
+                out.write_all(&chunk)?;
+            }
+            out.sync_all()?;
+            std::fs::rename(&temp, &target)?;
+        }
+        Ok(())
+    }
+}
+
+/// What a BERT encoder is opened from.
+const BERT_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
+
+/// The download client: redirect-limited, generous for a large file, and
+/// sending nothing but the URL.
+fn client(dir: &Path) -> Result<reqwest::Client, FetchError> {
+    std::fs::create_dir_all(dir)?;
+    Ok(reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60 * 60))
+        .build()?)
+}
+
+/// GET one file of a pinned revision, optionally a byte range (inclusive).
+async fn get(
+    http: &reqwest::Client,
+    repo: &str,
+    revision: &str,
+    file: &'static str,
+    range: Option<(u64, u64)>,
+) -> Result<reqwest::Response, FetchError> {
+    let mut request = http.get(format!("https://huggingface.co/{repo}/resolve/{revision}/{file}"));
     if let Some((first, last)) = range {
         request = request.header(reqwest::header::RANGE, format!("bytes={first}-{last}"));
     }

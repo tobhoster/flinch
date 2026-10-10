@@ -19,10 +19,10 @@ fn vectors(with_show: bool) -> VectorStore {
 
 fn record() -> Record {
     let mut record = Record::default();
-    for (subject, played) in [("radarr-1", 1), ("radarr-2", 1), ("radarr-3", 0), ("radarr-4", 0), ("radarr-5", 0)] {
-        let outcome = Outcomes { played, total: 1 };
+    for (subject, played) in [("radarr-1", 1.0), ("radarr-2", 1.0), ("radarr-3", 0.0), ("radarr-4", 0.0), ("radarr-5", 0.0)] {
+        let outcome = Outcomes { played, total: 1.0 };
         record.household.overall.played += outcome.played;
-        record.household.overall.total += 1;
+        record.household.overall.total += 1.0;
         record.household.subjects.insert(subject.to_string(), outcome);
     }
     record
@@ -139,5 +139,5 @@ fn a_request_that_streams_on_a_service_you_have_is_named(#[case] streaming_tmdb:
 fn the_household_record_counts_a_show_once_played_if_any_season_was() {
     let cards = [season(1, Some(3.0), None), season(2, None, None)];
     let record = household_record(&cards, 0);
-    assert_eq!(record.household.overall, Outcomes { played: 1, total: 1 });
+    assert_eq!(record.household.overall, Outcomes { played: 1.0, total: 1.0 });
 }

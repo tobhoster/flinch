@@ -42,8 +42,10 @@ pub struct Household {
     pub unreadable_rows: usize,
     pub plex_rows: usize,
     pub tautulli_rows: usize,
-    /// Every title's EmbeddingGemma vector the daemon has cached.
+    /// Every title's embedding vector the daemon has cached.
     pub vectors: crate::embedding::VectorStore,
+    /// Taste's recency weighting, from `settings.json` (off when unreadable).
+    pub taste_decay: crate::taste::Decay,
 }
 
 /// What the fitter reads out of an `items.json` row; only the fields it needs.
@@ -116,7 +118,9 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
         })
         .collect();
     let vectors = crate::embedding::VectorStore::read(state_dir)?;
-    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors })
+    let taste_decay =
+        crate::daemon::read_settings(&state_dir.join("settings.json")).map(|settings| settings.taste.decay()).unwrap_or_default();
+    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors, taste_decay })
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.
