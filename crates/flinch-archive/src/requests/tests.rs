@@ -115,7 +115,7 @@ fn a_link_is_the_same_all_day_and_ends_a_day_after_the_leave_date() {
     assert!(expiry(Some(NOW + 400 * DAY), NOW, 14) <= NOW + 91 * DAY, "never past the cap");
     let signer = Signer { secret: &secret(), ui_url: "https://flinch.example/", days: 14, now: NOW };
     let made = signer.link("radarr-7", Action::Keep, None, "household").expect("a link");
-    assert!(made.starts_with("https://flinch.example/r/"), "{made}");
+    assert!(made.starts_with("https://flinch.example/r/"), "the link lives under /r/ on the UI's address");
     assert_eq!(made, Signer { now: NOW + 60, ..signer }.link("radarr-7", Action::Keep, None, "household").expect("a link"));
     assert_eq!(url("", "t"), None, "no address, no link");
 }

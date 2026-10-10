@@ -1,0 +1,8 @@
+# dtolnay/rust-toolchain publishes no version tags (its refs are branches such
+# as `master`), so a hash pin cannot carry a matching version comment. The pin
+# itself is what zizmor's unpinned-uses audit protects; Dependabot moves it.
+rules:
+  ref-version-mismatch:
+    ignore:
+      - ci.yml:28
+      - security.yml:65
