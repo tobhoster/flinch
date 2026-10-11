@@ -92,9 +92,9 @@ pub fn household_record(cards: &[ArchiveCard], now: u64) -> Record {
     }
     let mut record = Record { as_of: now, ..Record::default() };
     for (subject, played) in played {
-        let one = Outcomes { played: u32::from(played), total: 1 };
+        let one = Outcomes { played: if played { 1.0 } else { 0.0 }, total: 1.0 };
         record.household.overall.played += one.played;
-        record.household.overall.total += 1;
+        record.household.overall.total += 1.0;
         record.household.subjects.insert(subject.to_string(), one);
     }
     record

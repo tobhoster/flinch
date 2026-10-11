@@ -1,19 +1,21 @@
 //! Semantic search: the library ranked by how well each title's description
 //! matches a free-text query ("heist film set in Paris", "cosy baking show").
 //!
-//! The daemon keeps one EmbeddingGemma 2 vector per movie or show in
-//! `embeddings.json` (see `flinch_archive::embedding`). A search embeds the
-//! query with the same model, on the weights the daemon already downloaded
-//! to the state volume, cuts it to the store's Matryoshka length and scores
-//! every items.json row by cosine; a season scores as its show.
+//! The daemon keeps one vector per movie or show in `embeddings.json` (see
+//! `flinch_archive::embedding`), made by the operator's chosen model. A search
+//! embeds the query with the model the store names, on the weights the daemon
+//! already downloaded to the state volume, cuts it to the store's length and
+//! scores every items.json row by cosine; a season scores as its show.
 //!
-//! The query carries EmbeddingGemma 2's retrieval prompt (`task: search
-//! result`) although the cached descriptions carry the classification one:
-//! on a hand-labelled probe of short topical queries against
+//! The query carries the model's retrieval prompt
+//! (`EmbeddingModel::query_prompt`). For EmbeddingGemma 2 that is `task:
+//! search result` although the cached descriptions carry the classification
+//! one: on a hand-labelled probe of short topical queries against
 //! classification-prompt descriptions, the retrieval prompt put the intended
 //! title first every time and with wider margins, where the symmetric prompt
 //! confused "dinosaurs" with a nature documentary (docs/how-it-works.md, "The
-//! web UI", Search by meaning).
+//! web UI", Search by meaning). bge-small has its own query instruction;
+//! MiniLM was trained symmetric and takes the bare query.
 //!
 //! The encoder is opened on the first search and kept: its weights stay
 //! memory-mapped, so only the pages a query touches are resident and the
@@ -28,13 +30,11 @@ use crate::{refuse, AppState};
 use axum::extract::{Query, State as AxumState};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use flinch_archive::embedding::{self, model_id, poster_model_id, Encoder, ModelFiles, StoreError, VectorStore};
+use flinch_archive::embedding::{self, engine, model_id, poster_model_id, EmbeddingEngine, EmbeddingModel, StoreError, VectorStore};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
-/// EmbeddingGemma 2's prompt for a search query.
-pub(crate) const QUERY_PROMPT: &str = "task: search result | query: ";
 /// The longest query accepted, in characters: a search is a phrase, and the
 /// encoder's cost grows with every token.
 pub(crate) const MAX_QUERY_CHARS: usize = 200;
@@ -42,25 +42,28 @@ const DEFAULT_LIMIT: usize = 50;
 /// Most hits one search returns.
 pub(crate) const MAX_LIMIT: usize = 1_000;
 
-/// Turns one prompted query into a 768-d unit vector: the model, or a test's
+/// Turns one prompted query into a unit vector: the model, or a test's
 /// stand-in that needs no weights.
 pub(crate) trait QueryEncoder: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>, String>;
 }
 
-impl QueryEncoder for Encoder {
+/// A downloaded model as a query encoder.
+struct Engine(Box<dyn EmbeddingEngine>);
+
+impl QueryEncoder for Engine {
     fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
-        let mut vectors = Encoder::embed(self, &[text]).map_err(|error| error.to_string())?;
+        let mut vectors = self.0.embed(&[text]).map_err(|error| error.to_string())?;
         vectors.pop().ok_or_else(|| "the embedding model returned no vector".to_string())
     }
 }
 
-/// Opens the encoder for a state directory.
-pub(crate) type Loader = dyn Fn(&Path) -> Result<Arc<dyn QueryEncoder>, SearchError> + Send + Sync;
+/// Opens a model's encoder for a state directory.
+pub(crate) type Loader = dyn Fn(&Path, EmbeddingModel) -> Result<Arc<dyn QueryEncoder>, SearchError> + Send + Sync;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SearchError {
-    #[error("search needs the EmbeddingGemma 2 weights, which are not downloaded yet: switch on Embed titles in Settings and the daemon fetches them on its next run")]
+    #[error("search needs the embedding model's weights, which are not downloaded yet: switch on Embed titles in Settings and the daemon fetches them on its next run")]
     NoModel,
     #[error("search needs title vectors and there are none yet: switch on Embed titles in Settings and let the daemon embed the library")]
     NoVectors,
@@ -83,10 +86,11 @@ impl SearchError {
     }
 }
 
-/// The encoder once opened, the vectors as last read, and the one-query gate.
+/// The encoder once opened (with the model it is), the vectors as last read,
+/// and the one-query gate.
 pub(crate) struct Search {
     load: Box<Loader>,
-    encoder: Mutex<Option<Arc<dyn QueryEncoder>>>,
+    encoder: Mutex<Option<(EmbeddingModel, Arc<dyn QueryEncoder>)>>,
     vectors: Mutex<Option<(Stamp, Arc<VectorStore>)>>,
     running: Arc<tokio::sync::Semaphore>,
 }
@@ -129,13 +133,19 @@ impl Search {
         if store.is_empty() {
             return Err(SearchError::NoVectors);
         }
-        // Text-and-poster vectors come from the same model's shared text and
-        // image space, so a text query compares with them as with text-only ones.
-        let (found, wanted) = (store.model(), model_id());
-        if !(found.is_empty() || found == wanted || found == poster_model_id()) {
-            return Err(SearchError::OtherModel { found: found.to_string(), wanted });
-        }
-        let raw = self.encoder(dir)?.embed(&format!("{QUERY_PROMPT}{}", ask.query)).map_err(SearchError::Model)?;
+        // The store names its model; the query is embedded by that one.
+        // Text-and-poster vectors come from Gemma's shared text and image
+        // space, so a text query compares with them as with text-only ones.
+        let found = store.model();
+        let model = if found.is_empty() || found == poster_model_id() {
+            Some(EmbeddingModel::Gemma)
+        } else {
+            EmbeddingModel::ALL.into_iter().find(|model| model_id(*model) == found)
+        };
+        let Some(model) = model else {
+            return Err(SearchError::OtherModel { found: found.to_string(), wanted: known_models() });
+        };
+        let raw = self.encoder(dir, model)?.embed(&format!("{}{}", model.query_prompt(), ask.query)).map_err(SearchError::Model)?;
         let query = embedding::truncate(&raw, store.dimensions() as usize)
             .ok_or_else(|| SearchError::Model(format!("a {}-d query vector cannot be cut to {}", raw.len(), store.dimensions())))?;
         Ok(rank(items, &store, &query, ask.limit))
@@ -159,26 +169,35 @@ impl Search {
         Ok(store)
     }
 
-    /// The encoder, opened on first use. A failure is not kept: the weights
-    /// may arrive with the daemon's next run.
-    fn encoder(&self, dir: &Path) -> Result<Arc<dyn QueryEncoder>, SearchError> {
+    /// The encoder of `model`, opened on first use and again when the store
+    /// moves to another model. A failure is not kept: the weights may arrive
+    /// with the daemon's next run.
+    fn encoder(&self, dir: &Path, model: EmbeddingModel) -> Result<Arc<dyn QueryEncoder>, SearchError> {
         let mut cached = self.encoder.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(encoder) = cached.as_ref() {
-            return Ok(Arc::clone(encoder));
+        if let Some((open, encoder)) = cached.as_ref() {
+            if *open == model {
+                return Ok(Arc::clone(encoder));
+            }
         }
-        let encoder = (self.load)(dir)?;
-        *cached = Some(Arc::clone(&encoder));
+        // Drop the old model's mapping before opening the new one.
+        *cached = None;
+        let encoder = (self.load)(dir, model)?;
+        *cached = Some((model, Arc::clone(&encoder)));
         Ok(encoder)
     }
 }
 
-fn open_model(dir: &Path) -> Result<Arc<dyn QueryEncoder>, SearchError> {
-    let files = ModelFiles::in_state(dir);
-    if !files.present() {
+/// Every model this build can search with, for the mismatch message.
+fn known_models() -> String {
+    EmbeddingModel::ALL.into_iter().map(model_id).collect::<Vec<_>>().join(" or ")
+}
+
+fn open_model(dir: &Path, model: EmbeddingModel) -> Result<Arc<dyn QueryEncoder>, SearchError> {
+    if !engine::present(model, dir) {
         return Err(SearchError::NoModel);
     }
-    let encoder = Encoder::open(&files).map_err(|error| SearchError::Model(error.to_string()))?;
-    Ok(Arc::new(encoder))
+    let engine = engine::open(model, dir).map_err(|error| SearchError::Model(error.to_string()))?;
+    Ok(Arc::new(Engine(engine)))
 }
 
 /// The items.json fields a hit reports; the rest of a row stays unread.

@@ -22,6 +22,14 @@ const inRange = (lo, hi) => ({ ok: (v) => v >= lo && v <= hi });
 
 /** The Matryoshka sizes EmbeddingGemma 2 keeps meaningful. */
 const DIMENSIONS = [128, 256, 512, 768];
+const GEMMA = 'embeddinggemma-2';
+/** The encoders the daemon can run, with what each costs. */
+const EMBEDDING_MODELS = [
+  [GEMMA, 'EmbeddingGemma 2 — best quality, ~580 MB weights, ~650 MB peak'],
+  ['bge-small-en-v1.5', 'bge-small — ~130 MB'],
+  ['all-minilm-l6-v2', 'MiniLM — ~90 MB'],
+];
+const halfLifeOk = (v) => v === 0 || (v >= 7 && v <= 3650);
 
 /**
  * Every numeric field as `[group, key, label, spec]`; `group` null is top
@@ -43,6 +51,7 @@ const NUMERIC = [
   ['planner', 'grace_period_days', 'Grace period (0–3650 days)', inRange(0, 3650)],
   ['embedding', 'dimensions', 'Embedding dimensions', { ok: (v) => DIMENSIONS.includes(v) }],
   ['embedding', 'daily_budget', 'Embedding budget (1–20000 titles)', inRange(1, 20000)],
+  ['taste', 'half_life_days', 'Taste half-life (0, or 7–3650 days)', { ok: halfLifeOk }],
   ['notify', 'digest_hour_utc', 'Digest hour (0–23 UTC)', inRange(0, 23)],
   ['notify', 'max_per_hour', 'Notifications per hour (1–120)', inRange(1, 120)],
   ['quality_actions', 'max_per_day', 'Quality moves per day (1–50)', inRange(1, 50)],
@@ -77,6 +86,7 @@ function archiveSummary(archive) {
 /** Settings as the form shows them: scaled numbers, user weights as editable rows. */
 function toForm(settings) {
   const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner }, embedding: { ...settings.embedding }, notify: { ...settings.notify } };
+  form.taste = { half_life_days: 0, ...settings.taste };
   form.dupes = { ...settings.dupes };
   form.archive = { ...settings.archive };
   form.household = { ...settings.household };
@@ -116,6 +126,7 @@ const parse = (raw) => (typeof raw === 'string' && raw.trim() === '' ? NaN : Num
  */
 function toPayload(form) {
   const payload = { ...form, capacity: { ...form.capacity }, planner: { ...form.planner }, embedding: { ...form.embedding }, notify: { ...form.notify } };
+  payload.taste = { ...form.taste };
   payload.dupes = { ...form.dupes };
   payload.household = { ...form.household };
   Object.assign(payload, { quality_actions: { ...form.quality_actions }, upgrade_search: { ...form.upgrade_search }, upgrade_guard: { ...form.upgrade_guard }, native: { ...form.native } });
@@ -203,6 +214,12 @@ export default function Settings({ status }) {
   const valueOf = (event) => (event.target.type === 'checkbox' ? event.target.checked : event.target.value);
   const set = (key) => (event) => update({ ...form, [key]: valueOf(event) });
   const setIn = (group, key) => (event) => update({ ...form, [group]: { ...form[group], [key]: valueOf(event) } });
+  const gemma = (form.embedding.model || GEMMA) === GEMMA;
+  // Posters are EmbeddingGemma 2's alone: another model switches them off.
+  const setModel = (event) => {
+    const model = event.target.value;
+    update({ ...form, embedding: { ...form.embedding, model, posters: model === GEMMA && !!form.embedding.posters } });
+  };
   const setHousehold = (key) => (event) => update({ ...form, notify: { ...form.notify, household: { ...form.notify.household, [key]: valueOf(event) } } });
   const setPcd = (key) => (event) => update({ ...form, trash: { ...form.trash, pcd: { ...form.trash.pcd, [key]: valueOf(event) } } });
   const weights = form.planner.user_weights;
@@ -452,25 +469,38 @@ export default function Settings({ status }) {
 
         <Section title="Taste embeddings">
           <Row label="Embed titles" htmlFor="embedding.enabled"
-            help="EmbeddingGemma 2 runs inside the daemon on its CPU. The first run downloads its text weights (about 580 MB) to the state volume. Off keeps the vectors already made.">
+            help="The chosen model runs inside the daemon on its CPU. The first run downloads its weights to the state volume. Off keeps the vectors already made.">
             <Toggle id="embedding.enabled" checked={!!form.embedding.enabled} onChange={setIn('embedding', 'enabled')}>
               Embed new and changed titles
             </Toggle>
           </Row>
-          <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept from the model's 768. Smaller is lighter, coarser; changing it embeds every title again.">
-            <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
+          <Row label="Model" htmlFor="embedding.model"
+            help="EmbeddingGemma 2 describes titles best. bge-small (~200 MB resident) and MiniLM (~110 MB) suit a small host, at some cost in nuance. Switching embeds every title again.">
+            <select id="embedding.model" value={form.embedding.model || GEMMA} onChange={setModel}
               className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
-              {DIMENSIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+              {EMBEDDING_MODELS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
             </select>
           </Row>
+          {gemma && (
+            <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept from the model's 768. Smaller is lighter, coarser; changing it embeds every title again.">
+              <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
+                className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+                {DIMENSIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </Row>
+          )}
           <Row label="Daily budget" htmlFor="embedding.daily_budget" help="Most titles embedded per day (UTC), at most two minutes of CPU per run; a large library fills in over several days.">
             <NumberField {...numIn('embedding', 'daily_budget', { min: 1, max: 20000, step: 50 })} unit="titles" />
           </Row>
           <Row label="Posters" htmlFor="embedding.posters"
-            help="Describe each title by its poster too, through the model's vision tower: about 335 MB more weights, and several seconds of CPU per title. Posters come from the TMDB/TheTVDB address Radarr and Sonarr list, fetched without any credential. Switching it on or off embeds every title again.">
-            <Toggle id="embedding.posters" checked={!!form.embedding.posters} onChange={setIn('embedding', 'posters')}>
+            help="EmbeddingGemma 2 only. Describe each title by its poster too, through the model's vision tower: about 335 MB more weights, and several seconds of CPU per title. Posters come from the TMDB/TheTVDB address Radarr and Sonarr list, fetched without any credential. Switching it on or off embeds every title again.">
+            <Toggle id="embedding.posters" checked={!!form.embedding.posters} onChange={setIn('embedding', 'posters')} disabled={!gemma}>
               Include the poster in each title's vector
             </Toggle>
+          </Row>
+          <Row label="Taste half-life" htmlFor="taste.half_life_days"
+            help="Weigh what the household played recently above what it played long ago: an outcome counts half after this many days. 0 counts every outcome alike. The next daily fit uses it.">
+            <NumberField {...numIn('taste', 'half_life_days', { min: 0, max: 3650, step: 30 })} unit="days" />
           </Row>
         </Section>
 
@@ -792,9 +822,9 @@ const TextField = (props) => (
   <input className="input min-h-[40px] w-full sm:min-h-0 sm:w-72" {...props} />
 );
 
-const Toggle = ({ id, checked, onChange, children }) => (
-  <label htmlFor={id} className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 sm:min-h-0">
-    <input id={id} type="checkbox" checked={checked} onChange={onChange} />
+const Toggle = ({ id, checked, onChange, disabled = false, children }) => (
+  <label htmlFor={id} className={`inline-flex min-h-[40px] items-center gap-2 sm:min-h-0 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+    <input id={id} type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
     <span>{children}</span>
   </label>
 );

@@ -44,6 +44,8 @@ pub enum ModelError {
     Tensor(#[from] candle_core::Error),
     #[error("embedding tokenizer: {0}")]
     Tokenizer(String),
+    #[error("embedding model config: {0}")]
+    Config(String),
     #[error("embedding model weights hold {name} as {found}, not bfloat16")]
     Dtype { name: String, found: String },
     #[error("embedding image processor: {0}")]

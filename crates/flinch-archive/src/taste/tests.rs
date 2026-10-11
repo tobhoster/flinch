@@ -1,5 +1,6 @@
 use super::*;
 use crate::regret::{PlayHistory, WatchFeatures};
+use rstest::rstest;
 
 const DAY: u64 = 86_400;
 const HORIZON: u64 = 90 * DAY;
@@ -8,6 +9,8 @@ const NOW: u64 = 1_800_000_000;
 const OLD: u64 = NOW - 400 * DAY;
 const ANN: Viewer = Viewer::PlexAccount(1);
 const BO: Viewer = Viewer::PlexAccount(2);
+/// Recency weighting off: every outcome counts 1.
+const OFF: Decay = Decay::OFF;
 
 /// Unit vectors on two axes: comedies point one way, horror the other.
 fn store(entries: &[(&str, [f32; 2])]) -> VectorStore {
@@ -110,7 +113,7 @@ fn taste_of(record: &Record, vectors: &VectorStore, subject: &str) -> f64 {
 #[test]
 fn a_title_like_the_ones_played_reads_warm_and_one_like_the_ones_left_reads_cold() {
     let vectors = vectors();
-    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
+    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW, OFF);
     let comedy = taste_of(&record, &vectors, "radarr-10");
     let horror = taste_of(&record, &vectors, "radarr-11");
     assert!(comedy > 0.0, "{comedy}");
@@ -121,7 +124,7 @@ fn a_title_like_the_ones_played_reads_warm_and_one_like_the_ones_left_reads_cold
 fn a_viewer_who_plays_comedies_makes_a_comedy_warm_where_the_household_reads_cold() {
     let (dataset, vectors) = two_viewers();
     let both = activity(&[(ANN, &[OLD - DAY, NOW - DAY]), (BO, &[OLD - DAY, NOW - DAY])]);
-    let record = Record::as_of(&dataset, &both, HORIZON, NOW);
+    let record = Record::as_of(&dataset, &both, HORIZON, NOW, OFF);
     let household_only = Record { viewers: BTreeMap::new(), ..record.clone() };
     let household = taste_of(&household_only, &vectors, "radarr-10");
     assert!(household < 0.0, "household-wide, comedies sit unplayed: {household}");
@@ -133,7 +136,7 @@ fn a_viewer_who_plays_comedies_makes_a_comedy_warm_where_the_household_reads_col
 fn a_viewer_with_no_play_in_the_last_year_does_not_speak() {
     let (dataset, vectors) = two_viewers();
     let ann_gone = activity(&[(ANN, &[OLD - DAY]), (BO, &[OLD - DAY, NOW - DAY])]);
-    let record = Record::as_of(&dataset, &ann_gone, HORIZON, NOW);
+    let record = Record::as_of(&dataset, &ann_gone, HORIZON, NOW, OFF);
     assert!(!record.viewers.contains_key(&viewer_key(&ANN)), "{:?}", record.viewers.keys().collect::<Vec<_>>());
     let taste = taste_of(&record, &vectors, "radarr-10");
     assert!(taste < 0.0, "only Bo, who leaves comedies, is here: {taste}");
@@ -145,12 +148,14 @@ fn a_viewer_with_too_few_titles_of_their_own_does_not_speak() {
     // Ann's fifth comedy was never hers: four titles point nowhere yet.
     dataset[4].played_by.clear();
     let both = activity(&[(ANN, &[OLD - DAY, NOW - DAY]), (BO, &[OLD - DAY, NOW - DAY])]);
-    let record = Record::as_of(&dataset, &both, HORIZON, NOW);
+    let record = Record::as_of(&dataset, &both, HORIZON, NOW, OFF);
     assert_eq!(record.viewers.keys().collect::<Vec<_>>(), [&viewer_key(&BO)]);
 }
 
-#[test]
-fn a_row_never_hears_an_outcome_that_closed_after_its_cut() {
+#[rstest]
+#[case::counts(OFF)]
+#[case::recency_weighted(Decay::half_life_days(30.0))]
+fn a_row_never_hears_an_outcome_that_closed_after_its_cut(#[case] decay: Decay) {
     let vectors = vectors();
     let early = NOW - 300 * DAY;
     let seen = activity(&[(ANN, &[early - 200 * DAY, early - DAY])]);
@@ -158,21 +163,35 @@ fn a_row_never_hears_an_outcome_that_closed_after_its_cut() {
     // to the household and to the viewer who played them alike.
     let mut dataset =
         vec![played_by("radarr-1", early - 60 * DAY, ANN), played_by("radarr-2", early - 60 * DAY, ANN), row("radarr-10", early, false)];
-    fill(&mut dataset, &vectors, &seen, HORIZON);
+    fill(&mut dataset, &vectors, &seen, HORIZON, decay);
     assert_eq!(dataset[2].features.taste, 0.0);
 
     let closed = early - 120 * DAY;
     let mut later =
         vec![row("radarr-1", closed, true), row("radarr-2", closed, true), row("radarr-3", closed, false), row("radarr-10", early, false)];
-    fill(&mut later, &vectors, &Activity::default(), HORIZON);
+    fill(&mut later, &vectors, &Activity::default(), HORIZON, decay);
     assert!(later[3].features.taste > 0.0, "closed by the cut: {}", later[3].features.taste);
+}
+
+#[rstest]
+#[case::off(OFF, 1.0)]
+#[case::half_life_30_days(Decay::half_life_days(30.0), (-60.0 * std::f64::consts::LN_2 / 30.0).exp())]
+#[case::half_life_a_year(Decay::half_life_days(365.0), 0.5f64.powf(60.0 / 365.0))]
+fn an_outcome_60_days_older_weighs_its_decay_relative_to_a_fresh_one(#[case] decay: Decay, #[case] relative: f64) {
+    let fresh = NOW - HORIZON;
+    let dataset = [row("radarr-1", fresh, true), row("radarr-2", fresh - 60 * DAY, true)];
+    let record = Record::as_of(&dataset, &Activity::default(), HORIZON, NOW, decay);
+    let weight = |subject: &str| record.household.subjects[subject].total;
+    assert!((weight("radarr-1") - 1.0).abs() < 1e-12, "closed at as_of, weight 1: {}", weight("radarr-1"));
+    assert!((weight("radarr-2") / weight("radarr-1") - relative).abs() < 1e-12, "{} vs {relative}", weight("radarr-2"));
+    assert_eq!(record.household.subjects["radarr-2"].played, weight("radarr-2"), "a played outcome weighs the same played as counted");
 }
 
 #[test]
 fn a_season_is_never_judged_by_its_own_show() {
     let vectors = vectors();
     // Only the show's own first season, played, is close to it.
-    let record = Record::as_of(&[row("sonarr-9-s1", OLD, true), row("radarr-1", OLD, false)], &Activity::default(), HORIZON, NOW);
+    let record = Record::as_of(&[row("sonarr-9-s1", OLD, true), row("radarr-1", OLD, false)], &Activity::default(), HORIZON, NOW, OFF);
     let taste = for_cards(&[card("sonarr-9-s2", None)], &vectors, &record);
     assert!(taste.get("sonarr-9-s2").is_some_and(|taste| *taste <= 0.0), "{taste:?}");
 }
@@ -180,7 +199,7 @@ fn a_season_is_never_judged_by_its_own_show() {
 #[test]
 fn only_titles_nobody_played_are_asked_and_seasons_share_their_show() {
     let vectors = vectors();
-    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
+    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW, OFF);
     let cards = [
         card("radarr-10", None),
         card("radarr-11", Some(3.0)),
@@ -200,14 +219,14 @@ fn played_rows_keep_their_taste_at_zero() {
     let vectors = vectors();
     let mut dataset = household();
     dataset.push(Example { features: features(false), ..row("radarr-10", NOW - 100 * DAY, false) });
-    fill(&mut dataset, &vectors, &Activity::default(), HORIZON);
+    fill(&mut dataset, &vectors, &Activity::default(), HORIZON, OFF);
     assert_eq!(dataset[5].features.taste, 0.0);
 }
 
 #[test]
 fn a_reading_names_the_nearest_titles_that_went_its_way() {
     let vectors = vectors();
-    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
+    let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW, OFF);
     let readings = read_cards(&[card("radarr-10", None), card("radarr-11", None)], &vectors, &record);
     let title = |subject: &str| match subject {
         "radarr-1" => Some("Hot Fuzz"),

@@ -8,12 +8,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BEARER: (&str, &str) = ("authorization", "Bearer s3cret");
 
-/// Maps a query to a fixed direction by its first word, and insists on the prompt.
-struct Stub;
+/// Maps a query to a fixed direction by its first word, and insists on the
+/// prompt of the model it was opened as.
+struct Stub(EmbeddingModel);
 
 impl QueryEncoder for Stub {
     fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
-        let query = text.strip_prefix(QUERY_PROMPT).ok_or_else(|| format!("unprompted query {text:?}"))?;
+        let query = text.strip_prefix(self.0.query_prompt()).ok_or_else(|| format!("unprompted query {text:?}"))?;
         Ok(match query.split_whitespace().next() {
             Some("space") => vec![1.0, 0.0, 0.0, 0.0],
             Some("romance") => vec![0.0, 1.0, 0.0, 0.0],
@@ -23,9 +24,9 @@ impl QueryEncoder for Stub {
 }
 
 fn stub_loader(loads: Arc<AtomicUsize>) -> Box<Loader> {
-    Box::new(move |_| {
+    Box::new(move |_, model| {
         loads.fetch_add(1, Ordering::Relaxed);
-        Ok(Arc::new(Stub))
+        Ok(Arc::new(Stub(model)))
     })
 }
 
@@ -172,13 +173,34 @@ async fn text_and_poster_vectors_are_searched_like_text_ones() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+#[rstest]
+#[case::bge(EmbeddingModel::BgeSmall)]
+#[case::minilm(EmbeddingModel::MiniLm)]
+#[tokio::test]
+async fn the_query_is_embedded_by_the_stores_model_with_its_prompt(#[case] model: EmbeddingModel) {
+    // Only the store's model opens; any other is a failure the search reports.
+    let search = Search::with_loader(Box::new(move |_, opened| match opened == model {
+        true => Ok(Arc::new(Stub(opened)) as Arc<dyn QueryEncoder>),
+        false => Err(SearchError::Model(format!("opened {opened:?}"))),
+    }));
+    let (tmp, st) = library("bert", search);
+    let mut store = VectorStore::default();
+    store.retarget(&embedding::model_id(model), 4, embedding::RECIPE_VERSION);
+    store.insert("radarr-1".to_string(), String::new(), vec![1.0, 0.0, 0.0, 0.0]).unwrap();
+    store.write(&st.dir).unwrap();
+    let res = send(&st, get("/api/search?q=space", &[BEARER])).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(ids(&json_of(res).await), ["radarr-1"]);
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
 #[tokio::test]
 async fn the_encoder_opens_once_and_a_failed_open_is_tried_again() {
     let loads = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&loads);
-    let search = Search::with_loader(Box::new(move |_| match counted.fetch_add(1, Ordering::Relaxed) {
+    let search = Search::with_loader(Box::new(move |_, model| match counted.fetch_add(1, Ordering::Relaxed) {
         0 => Err(SearchError::NoModel),
-        _ => Ok(Arc::new(Stub)),
+        _ => Ok(Arc::new(Stub(model))),
     }));
     let (tmp, st) = library("lazy", search);
     assert_eq!(send(&st, get("/api/search?q=space", &[BEARER])).await.status(), StatusCode::CONFLICT);

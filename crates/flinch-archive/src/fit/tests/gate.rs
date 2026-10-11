@@ -13,6 +13,7 @@ fn household(items: Vec<FitItem>) -> Household {
         plex_rows: 0,
         tautulli_rows: 0,
         vectors: crate::embedding::VectorStore::from_vectors(Vec::new()),
+        taste_decay: crate::taste::Decay::default(),
     }
 }
 

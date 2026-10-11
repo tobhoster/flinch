@@ -7,8 +7,11 @@
 //! nothing else of an *arr or Plex row reaches the text.
 //!
 //! The text is deterministic: lists are deduplicated and sorted, whitespace is
-//! collapsed, so its hash changes only when the description does.
+//! collapsed, so its hash changes only when the description does. It starts
+//! with the model's prompt ([`super::EmbeddingModel::text_prefix`]), which is
+//! hashed with it: another model's text is another text, and re-embedded.
 
+use super::EmbeddingModel;
 use crate::arr::{ArrMovie, ArrSeries};
 use crate::plex::{PlexMetadata, PlexTag};
 
@@ -23,8 +26,6 @@ pub const IMAGE_PLACEHOLDER: &str = "<|image|>";
 /// takes it.
 const POSTER_LINE: &str = "\nPoster: <|image|>";
 
-/// EmbeddingGemma 2's prompt for symmetric classification.
-const PREFIX: &str = "task: classification | query: ";
 /// The longest text sent, in characters. The overview comes last, so a long
 /// one is what gets cut; the model's context is far larger, this bounds cost.
 const MAX_CHARS: usize = 2_000;
@@ -44,9 +45,9 @@ pub fn poster_hash(text: &str, url: &str) -> String {
     text_hash(&format!("{text}\n{url}"))
 }
 
-/// The text of a Radarr movie, with its Plex row when Plex matched it.
-pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>) -> String {
-    let mut text = Text::new(&movie.title);
+/// The text of a Radarr movie for `model`, with its Plex row when Plex matched it.
+pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>, model: EmbeddingModel) -> String {
+    let mut text = Text::new(model, &movie.title);
     text.line("Year", movie.year.filter(|year| *year > 0).map(|year| year.to_string()));
     text.line("Kind", Some("movie".to_string()));
     text.list("Genres", movie.genres.iter().map(String::as_str).chain(tags(plex.map_or(&[][..], |row| &row.genres))), 8);
@@ -60,10 +61,10 @@ pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>) -> String {
     text.finish()
 }
 
-/// The text of a Sonarr series (every season shares it), with the show's Plex
-/// row when Plex matched one of its seasons.
-pub fn series_text(series: &ArrSeries, plex: Option<&PlexMetadata>) -> String {
-    let mut text = Text::new(&series.title);
+/// The text of a Sonarr series for `model` (every season shares it), with the
+/// show's Plex row when Plex matched one of its seasons.
+pub fn series_text(series: &ArrSeries, plex: Option<&PlexMetadata>, model: EmbeddingModel) -> String {
+    let mut text = Text::new(model, &series.title);
     text.line("Year", series.year.filter(|year| *year > 0).map(|year| year.to_string()));
     text.line("Kind", Some("series".to_string()));
     text.line("Series type", Some(series.series_type.clone()));
@@ -104,8 +105,8 @@ fn collapse(value: &str) -> String {
 struct Text(String);
 
 impl Text {
-    fn new(title: &str) -> Self {
-        Self(format!("{PREFIX}Title: {}", collapse(title)))
+    fn new(model: EmbeddingModel, title: &str) -> Self {
+        Self(format!("{}Title: {}", model.text_prefix(), collapse(title)))
     }
 
     fn line(&mut self, label: &str, value: Option<String>) {

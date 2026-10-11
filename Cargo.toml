@@ -25,6 +25,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # CPU), tokenizers for its SentencePiece-BPE vocabulary. fancy-regex keeps the
 # tokenizer pure Rust too (no Oniguruma or esaxx C/C++ builds).
 candle-core = "0.11"
+# The small BERT sentence encoders (bge-small, MiniLM) use candle's own BERT
+# port and its memory-mapped VarBuilder; no default features exist to drop.
+candle-nn = { version = "0.11", default-features = false }
+candle-transformers = { version = "0.11", default-features = false }
 tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 # Poster decoding for the optional image half of EmbeddingGemma 2: pure-Rust
 # codecs for what TMDB and TheTVDB serve, nothing else.

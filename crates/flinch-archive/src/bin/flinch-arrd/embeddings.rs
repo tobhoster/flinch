@@ -1,9 +1,10 @@
 //! Keeping the taste vectors current: once a cycle, the movies and shows whose
-//! description has no vector yet are embedded in-process by EmbeddingGemma 2,
-//! on-disk titles first, within the operator's daily budget and a per-cycle
-//! time budget. With posters on, each description holds the title's poster
-//! too (see [`posters`]); those vectors are a space of their own, so turning
-//! posters on or off embeds every title again.
+//! description has no vector yet are embedded in-process by the configured
+//! encoder (EmbeddingGemma 2, bge-small or MiniLM), on-disk titles first,
+//! within the operator's daily budget and a per-cycle time budget. With
+//! posters on (Gemma only), each description holds the title's poster too
+//! (see [`posters`]); those vectors are a space of their own, so turning
+//! posters on or off — or switching models — embeds every title again.
 //!
 //! Nothing here fails the cycle. A download or model error leaves the cache as
 //! it was and says why in the status; switched off, the cached vectors are
@@ -14,7 +15,10 @@ mod posters;
 
 use super::state_dir;
 use flinch_archive::arr::{ArrMovie, ArrSeries};
-use flinch_archive::embedding::{self, EmbeddingConfig, EmbeddingStatus, Encoder, ImageTokens, ModelFiles, VectorStore, VisionEncoder};
+use flinch_archive::embedding::{
+    self, engine, EmbeddingConfig, EmbeddingEngine, EmbeddingModel, EmbeddingStatus, Encoder, ImageTokens, ModelFiles, VectorStore,
+    VisionEncoder,
+};
 use flinch_archive::ids::PlexIds;
 use flinch_archive::plex::PlexMetadata;
 use std::collections::HashMap;
@@ -59,7 +63,7 @@ struct Subject {
 
 /// Every subject of the library, on-disk titles first (they are what the
 /// planner scores), then by id so a budget-limited day is reproducible.
-fn subjects(library: &Library<'_>, with_posters: bool) -> Vec<Subject> {
+fn subjects(library: &Library<'_>, model: EmbeddingModel, with_posters: bool) -> Vec<Subject> {
     let plex_row = |card_id: &str| library.plex_ids.get(card_id).and_then(|ids| library.plex_content.get(&ids.rating_key));
     let describe = |id: String, text: String, poster: Option<String>, on_disk: bool| {
         let poster = poster.filter(|_| with_posters);
@@ -71,14 +75,14 @@ fn subjects(library: &Library<'_>, with_posters: bool) -> Vec<Subject> {
     };
     let movies = library.movies.iter().map(|movie| {
         let id = movie.card_id();
-        let text = embedding::movie_text(movie, plex_row(&id));
+        let text = embedding::movie_text(movie, plex_row(&id), model);
         describe(id, text, posters::poster_url(&movie.images), movie.has_file)
     });
     let shows = library.series.iter().map(|series| {
         // Any resolved season names the show's ratingKey.
         let plex = series.seasons.iter().find_map(|season| plex_row(&series.season_card_id(season.season_number)));
         let on_disk = series.seasons.iter().any(|season| season.statistics.episode_file_count > 0);
-        let text = embedding::series_text(series, plex);
+        let text = embedding::series_text(series, plex, model);
         describe(series.subject(), text, posters::poster_url(&series.images), on_disk)
     });
     let mut all: Vec<Subject> = movies.chain(shows).collect();
@@ -103,15 +107,16 @@ pub(super) async fn refresh(config: &EmbeddingConfig, library: Library<'_>, now:
         problem = Some(format!("{error}; the cache starts over"));
         VectorStore::default()
     });
-    let subjects = subjects(&library, config.posters);
+    let subjects = subjects(&library, config.model, config.posters);
     let (model, recipe) = if config.posters {
         (embedding::poster_model_id(), embedding::POSTER_RECIPE_VERSION)
     } else {
-        (embedding::model_id(), embedding::RECIPE_VERSION)
+        (embedding::model_id(config.model), embedding::RECIPE_VERSION)
     };
+    let dimensions = config.vector_dimensions();
     let mut embedded = 0usize;
     if config.enabled {
-        let mut changed = store.retarget(&model, config.dimensions, recipe);
+        let mut changed = store.retarget(&model, dimensions, recipe);
         if changed {
             println!("[flinch-arrd] embeddings: model, dimensions, recipe or posters changed; every title is embedded again");
         }
@@ -128,7 +133,7 @@ pub(super) async fn refresh(config: &EmbeddingConfig, library: Library<'_>, now:
             })
             .collect();
         if !pending.is_empty() {
-            let (vectors, failure) = encode(pending, config.dimensions as usize, config.posters).await;
+            let (vectors, failure) = encode(pending, config.model, dimensions as usize, config.posters).await;
             for (id, hash, vector) in vectors {
                 match store.insert(id, hash, vector) {
                     Ok(()) => embedded += 1,
@@ -148,7 +153,7 @@ pub(super) async fn refresh(config: &EmbeddingConfig, library: Library<'_>, now:
     let status = EmbeddingStatus {
         configured: config.enabled,
         model: if config.enabled { model } else { store.model().to_string() },
-        dimensions: if config.enabled { config.dimensions } else { store.dimensions() },
+        dimensions: if config.enabled { dimensions } else { store.dimensions() },
         subjects: subjects.len(),
         with_vector: subjects.iter().filter(|subject| store.vector(&subject.id).is_some()).count(),
         pending: subjects.iter().filter(|subject| !store.is_current(&subject.id, &subject.hash)).count(),
@@ -173,14 +178,21 @@ pub(super) async fn refresh(config: &EmbeddingConfig, library: Library<'_>, now:
 /// Fetch the model on first use, then embed `pending` in order until it is
 /// done or [`CYCLE_BUDGET`] runs out. Returns what was embedded, truncated to
 /// `dimensions`, and why it stopped early or left titles out, if it did.
-async fn encode(pending: Vec<Pending>, dimensions: usize, with_posters: bool) -> (Vec<(String, String, Vec<f32>)>, Option<String>) {
-    let files = ModelFiles::in_state(&state_dir());
+async fn encode(
+    pending: Vec<Pending>,
+    model: EmbeddingModel,
+    dimensions: usize,
+    with_posters: bool,
+) -> (Vec<(String, String, Vec<f32>)>, Option<String>) {
+    let dir = state_dir();
+    let files = ModelFiles::in_state(&dir);
+    let id = embedding::model_id(model);
     let fetched = if with_posters && !files.vision_present() {
-        println!("[flinch-arrd] embeddings: downloading the {} text and vision weights (about 580 + 335 MB, once)", embedding::model_id());
+        println!("[flinch-arrd] embeddings: downloading the {id} text and vision weights (about 580 + 335 MB, once)");
         files.fetch_vision().await
-    } else if !files.present() {
-        println!("[flinch-arrd] embeddings: downloading the {} text weights (about 580 MB, once)", embedding::model_id());
-        files.fetch().await
+    } else if !engine::present(model, &dir) {
+        println!("[flinch-arrd] embeddings: downloading the {id} weights (about {} MB, once)", model.download_mb());
+        engine::fetch(model, &dir).await
     } else {
         Ok(())
     };
@@ -191,28 +203,32 @@ async fn encode(pending: Vec<Pending>, dimensions: usize, with_posters: bool) ->
     let worker = tokio::task::spawn_blocking(move || {
         let started = Instant::now();
         let mut done = Vec::new();
-        let encoder = match Encoder::open(&files) {
+        // Posters are Gemma's (validation refuses them with another model):
+        // its concrete encoder takes images, the trait object does not.
+        let opened = if with_posters {
+            Encoder::open(&files).and_then(|encoder| Ok(Engine::Posters(Box::new(encoder), Box::new(VisionEncoder::open(&files)?))))
+        } else {
+            engine::open(model, &dir).map(Engine::Text)
+        };
+        let encoder = match opened {
             Ok(encoder) => encoder,
             Err(error) => return (done, Some(error.to_string())),
         };
-        let vision = match with_posters.then(|| VisionEncoder::open(&files)).transpose() {
-            Ok(vision) => vision,
-            Err(error) => return (done, Some(error.to_string())),
-        };
-        let mut posters = match vision.as_ref().map(|vision| posters::Posters::new(vision, runtime)).transpose() {
-            Ok(posters) => posters,
-            Err(error) => return (done, Some(format!("poster client: {error}"))),
+        let mut posters = match &encoder {
+            Engine::Posters(_, vision) => match posters::Posters::new(vision, runtime) {
+                Ok(posters) => Some(posters),
+                Err(error) => return (done, Some(format!("poster client: {error}"))),
+            },
+            Engine::Text(_) => None,
         };
         for batch in pending.chunks(if posters.is_some() { POSTER_BATCH } else { BATCH }) {
             if started.elapsed() >= CYCLE_BUDGET {
                 break;
             }
-            let embedded = match posters.as_mut() {
-                Some(posters) => embed_with_posters(&encoder, posters, batch),
-                None => {
-                    let texts: Vec<&str> = batch.iter().map(|subject| subject.text.as_str()).collect();
-                    encoder.embed(&texts).map(|vectors| batch.iter().zip(vectors).collect())
-                }
+            let embedded = match (&encoder, posters.as_mut()) {
+                (Engine::Posters(encoder, _), Some(posters)) => embed_with_posters(encoder, posters, batch),
+                (Engine::Posters(encoder, _), None) => text_batch(encoder.as_ref(), batch),
+                (Engine::Text(engine), _) => text_batch(engine.as_ref(), batch),
             };
             let embedded = match embedded {
                 Ok(embedded) => embedded,
@@ -229,6 +245,18 @@ async fn encode(pending: Vec<Pending>, dimensions: usize, with_posters: bool) ->
         (done, problem)
     });
     worker.await.unwrap_or_else(|error| (Vec::new(), Some(format!("the embedding worker stopped: {error}"))))
+}
+
+/// The encoder a cycle runs: Gemma with its vision tower, or any text engine.
+enum Engine {
+    Posters(Box<Encoder>, Box<VisionEncoder>),
+    Text(Box<dyn EmbeddingEngine>),
+}
+
+/// One batch of plain texts.
+fn text_batch<'p>(engine: &dyn EmbeddingEngine, batch: &'p [Pending]) -> Result<Vec<(&'p Pending, Vec<f32>)>, embedding::ModelError> {
+    let texts: Vec<&str> = batch.iter().map(|subject| subject.text.as_str()).collect();
+    engine.embed(&texts).map(|vectors| batch.iter().zip(vectors).collect())
 }
 
 /// One batch with posters; a title whose poster must wait for a later cycle

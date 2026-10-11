@@ -3,6 +3,8 @@ use crate::arr::{ArrCollection, ArrLanguage, ArrMovie, ArrSeries};
 use crate::plex::{PlexMetadata, PlexTag};
 use rstest::rstest;
 
+const GEMMA: EmbeddingModel = EmbeddingModel::Gemma;
+
 fn tags(names: &[&str]) -> Vec<PlexTag> {
     names.iter().map(|name| PlexTag { tag: name.to_string() }).collect()
 }
@@ -38,7 +40,7 @@ fn matrix_plex() -> PlexMetadata {
 
 #[test]
 fn what_the_household_did_never_reaches_the_text() {
-    let quiet = movie_text(&matrix(), Some(&matrix_plex()));
+    let quiet = movie_text(&matrix(), Some(&matrix_plex()), GEMMA);
     let mut movie = matrix();
     movie.added = Some("2024-01-01T00:00:00Z".into());
     movie.has_file = true;
@@ -51,13 +53,16 @@ fn what_the_household_did_never_reaches_the_text() {
     plex.last_viewed_at = Some(1_700_000_000);
     plex.viewed_at = Some(1_700_000_000);
     plex.account_id = Some(2);
-    assert_eq!(movie_text(&movie, Some(&plex)), quiet, "plays, dates, files and tags leave the text as it was");
+    assert_eq!(movie_text(&movie, Some(&plex), GEMMA), quiet, "plays, dates, files and tags leave the text as it was");
 }
 
-#[test]
-fn the_text_names_the_title_and_its_content_behind_the_classification_prompt() {
-    let text = movie_text(&matrix(), Some(&matrix_plex()));
-    assert!(text.starts_with("task: classification | query: Title: The Matrix\nYear: 1999\nKind: movie\n"), "{text}");
+#[rstest]
+#[case::gemma_classification_prompt(EmbeddingModel::Gemma, "task: classification | query: Title: The Matrix\n")]
+#[case::bge_no_prompt(EmbeddingModel::BgeSmall, "Title: The Matrix\n")]
+#[case::minilm_no_prompt(EmbeddingModel::MiniLm, "Title: The Matrix\n")]
+fn the_text_names_the_title_and_its_content_behind_the_models_prompt(#[case] model: EmbeddingModel, #[case] start: &str) {
+    let text = movie_text(&matrix(), Some(&matrix_plex()), model);
+    assert!(text.starts_with(&format!("{start}Year: 1999\nKind: movie\n")), "{text}");
     for part in [
         "Genres: Action, Sci-Fi, Science Fiction",
         "Collection: The Matrix Collection",
@@ -77,9 +82,15 @@ fn the_order_a_server_lists_things_in_never_changes_the_text() {
     let mut plex = matrix_plex();
     plex.roles.reverse();
     plex.directors.reverse();
-    let text = movie_text(&matrix(), Some(&matrix_plex()));
-    assert_eq!(movie_text(&shuffled, Some(&plex)), text);
-    assert_eq!(text_hash(&movie_text(&shuffled, Some(&plex))), text_hash(&text));
+    let text = movie_text(&matrix(), Some(&matrix_plex()), GEMMA);
+    assert_eq!(movie_text(&shuffled, Some(&plex), GEMMA), text);
+    assert_eq!(text_hash(&movie_text(&shuffled, Some(&plex), GEMMA)), text_hash(&text));
+}
+
+#[test]
+fn another_models_text_hashes_differently_so_switching_re_embeds() {
+    let hash = |model| text_hash(&movie_text(&matrix(), None, model));
+    assert_ne!(hash(EmbeddingModel::Gemma), hash(EmbeddingModel::MiniLm));
 }
 
 #[test]
@@ -91,7 +102,7 @@ fn the_arr_text_stands_alone_and_a_long_overview_is_cut() {
         overview: Some("word ".repeat(1_000)),
         ..Default::default()
     };
-    let text = series_text(&show, None);
+    let text = series_text(&show, None, GEMMA);
     assert!(text.contains("Kind: series\nSeries type: anime"), "{text}");
     assert_eq!(text.chars().count(), 2_000);
 }
@@ -116,6 +127,30 @@ fn seasons_share_their_shows_subject(#[case] card: &str, #[case] subject: &str) 
 #[case::zero_prefix(&[0.0, 0.0, 1.0], 2, None)]
 fn a_matryoshka_prefix_is_renormalised_or_refused(#[case] raw: &[f32], #[case] dimensions: usize, #[case] wanted: Option<Vec<f32>>) {
     assert_eq!(truncate(raw, dimensions), wanted);
+}
+
+fn config(model: EmbeddingModel, dimensions: u32, posters: bool) -> EmbeddingConfig {
+    EmbeddingConfig { model, dimensions, posters, ..EmbeddingConfig::default() }
+}
+
+#[rstest]
+#[case::gemma_matryoshka_size(config(EmbeddingModel::Gemma, 512, false), Ok(512))]
+#[case::gemma_with_posters(config(EmbeddingModel::Gemma, 256, true), Ok(256))]
+#[case::gemma_other_size(config(EmbeddingModel::Gemma, 384, false), Err(()))]
+#[case::bge_ignores_dimensions(config(EmbeddingModel::BgeSmall, 300, false), Ok(384))]
+#[case::minilm_ignores_dimensions(config(EmbeddingModel::MiniLm, 768, false), Ok(384))]
+#[case::bge_refuses_posters(config(EmbeddingModel::BgeSmall, 256, true), Err(()))]
+#[case::minilm_refuses_posters(config(EmbeddingModel::MiniLm, 256, true), Err(()))]
+fn each_model_validates_its_own_dimensions_and_posters(#[case] config: EmbeddingConfig, #[case] wanted: Result<u32, ()>) {
+    assert_eq!(config.validate().map(|()| config.vector_dimensions()).map_err(|_| ()), wanted);
+}
+
+#[rstest]
+#[case::gemma(EmbeddingModel::Gemma, "\"embeddinggemma-2\"")]
+#[case::bge(EmbeddingModel::BgeSmall, "\"bge-small-en-v1.5\"")]
+#[case::minilm(EmbeddingModel::MiniLm, "\"all-minilm-l6-v2\"")]
+fn the_model_is_named_in_settings_as_documented(#[case] model: EmbeddingModel, #[case] json: &str) {
+    assert_eq!(serde_json::from_str::<EmbeddingModel>(json).ok(), Some(model));
 }
 
 /// The published checkpoint's layout: the audio tower, the projections, the

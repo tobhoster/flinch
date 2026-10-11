@@ -121,7 +121,7 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
         kind,
         hazard: candidate::fit(kind, dataset),
         metrics,
-        outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now),
+        outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now, household.taste_decay),
     }
 }
 
@@ -168,7 +168,7 @@ pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, Refi
 pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel) {
     let cuts = default_cuts();
     let mut dataset = panel::build_dataset(&household.items, &PanelSpec { now, cuts_days: &cuts, horizon_days: HORIZON_DAYS });
-    crate::taste::fill(&mut dataset, &household.vectors, &activity(household), horizon_secs());
+    crate::taste::fill(&mut dataset, &household.vectors, &activity(household), horizon_secs(), household.taste_decay);
     let model = fit_model(household, &dataset, now, cuts.len());
     (dataset, model)
 }
