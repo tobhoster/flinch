@@ -158,10 +158,11 @@ flowchart LR
    nothing happens this cycle.
 3. **Regret.** Each item's regret is P(played within 90 days) × the cost to
    download it again × how much the household claims it.
-4. **Exclude.** Pinned items, items in their 30-day grace period, items no
-   media server can address, items with no watch evidence, items still
-   seeding and items your rules keep never compete. Items nobody played
-   compete only when you allow it.
+4. **Exclude.** Pinned items, anything someone is partway through, items in
+   their 30-day grace period (unless everyone who played that copy finished
+   it), items no media server can address, items with no watch evidence,
+   items still seeding and items your rules keep never compete. Items nobody
+   played compete only when you allow it.
 5. **Solve.** An exact solver picks the cheapest set that covers each disk's
    target (moving to an archive disk first when there is one), taking a show's
    seasons in order. At 95% full it switches to a fast greedy pick.

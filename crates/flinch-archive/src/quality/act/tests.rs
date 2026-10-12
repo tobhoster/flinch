@@ -30,6 +30,7 @@ fn advised(id: &str, gib: u64) -> MediaCandidate {
         },
         eviction_safety: 0.5,
         force: None,
+        finished_on_disk: false,
     }
 }
 

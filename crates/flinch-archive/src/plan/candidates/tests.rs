@@ -107,6 +107,23 @@ fn the_first_rule_that_applies_keeps_an_item_out() {
     assert!(built["radarr-4"].announce, "nobody finished it: announced first");
 }
 
+#[rstest::rstest]
+#[case::finished_after_it_arrived(Some(3.0), 10.0, 1.0, true)]
+#[case::finished_the_day_it_arrived(Some(10.0), 10.0, 1.0, true)]
+#[case::finished_before_this_copy_came_back(Some(25.0), 10.0, 1.0, false)]
+#[case::stopped_before_the_end(Some(3.0), 10.0, 0.5, false)]
+#[case::never_played(None, 10.0, 0.0, false)]
+fn only_a_copy_finished_since_it_arrived_counts_as_finished_on_disk(
+    #[case] last_watched_days: Option<f32>,
+    #[case] added_days_ago: f32,
+    #[case] progress: f32,
+    #[case] expected: bool,
+) {
+    let mut world = World::new(vec![ArchiveCard { last_watched_days, added_days_ago, ..movie_card(1) }]);
+    world.watch.extend([entry("radarr-1", progress)]);
+    assert_eq!(world.build(&PlannerConfig::default())["radarr-1"].finished_on_disk, expected);
+}
+
 #[test]
 fn a_torrent_hold_keeps_an_otherwise_eligible_item_and_a_pin_still_names_itself() {
     use crate::torrents::SeedHold;

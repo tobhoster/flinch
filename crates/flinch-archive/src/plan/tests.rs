@@ -21,6 +21,7 @@ fn candidate(id: &str, volume: &str, gib: u64, regret: f64) -> MediaCandidate {
         quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), &crate::quality::Item::default()),
         eviction_safety: 0.0,
         force: None,
+        finished_on_disk: false,
     }
 }
 
@@ -90,6 +91,15 @@ fn every_exclusion_keeps_its_item_whatever_its_regret() {
     assert_eq!(result.kept["young"], Kept::Excluded(Exclusion::Grace { days: 30 }));
     assert_eq!(result.kept["homeless"], Kept::Excluded(Exclusion::NoGovernedDisk));
     assert_eq!(result.kept["pinned"].to_string(), "Pinned: favorite");
+}
+
+#[test]
+fn a_title_finished_since_it_arrived_skips_the_grace_period_and_an_unfinished_one_waits() {
+    let finished = MediaCandidate { age_days: 3.0, finished_on_disk: true, ..candidate("finished", "tv", 10, 0.1) };
+    let unfinished = MediaCandidate { age_days: 3.0, ..candidate("unfinished", "tv", 10, 0.0) };
+    let result = plan(&[finished, unfinished], &[forecast("tv", 20, false)]);
+    assert_eq!(ids(&result), ["finished"]);
+    assert_eq!(result.kept["unfinished"], Kept::Excluded(Exclusion::Grace { days: 30 }));
 }
 
 #[test]
