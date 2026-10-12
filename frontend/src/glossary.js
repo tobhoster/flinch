@@ -45,7 +45,11 @@ export const GLOSSARY = {
   },
   grace_period: {
     term: 'Grace period',
-    body: 'Items newer than this many days are never picked.',
+    body: 'Items newer than this many days are never picked, unless everyone who played the copy on disk finished it: a re-downloaded copy of something finished earlier keeps its grace.',
+  },
+  partway: {
+    term: 'Someone is partway through',
+    body: 'Someone started it recently and has not finished. It never competes, and Maintainerr is told never to take it.',
   },
   grace_runs: {
     term: 'Grace runs',
@@ -200,7 +204,7 @@ export const GLOSSARY = {
 /** Card layout: heading, then the glossary keys in reading order. */
 export const GLOSSARY_SECTIONS = [
   ['Prediction', ['p_watch', 'regret', 'reacquisition', 'eviction_safety', 'advice', 'quality_actions', 'upgrade_search', 'upgrade_churn', 'trash_sync', 'format_score', 'model', 'themes', 'meaning_search', 'user_weights']],
-  ['Freeing space', ['projection', 'plan', 'eligible', 'pinned', 'rules', 'grace_period', 'grace_runs', 'never_played', 'dry_run', 'seeding', 'desired_ratio', 'streaming', 'inflow', 'inflow_actions', 'archive']],
+  ['Freeing space', ['projection', 'plan', 'eligible', 'pinned', 'partway', 'rules', 'grace_period', 'grace_runs', 'never_played', 'dry_run', 'seeding', 'desired_ratio', 'streaming', 'inflow', 'inflow_actions', 'archive']],
   ['Disks', ['pending', 'held', 'untracked', 'not_governed']],
   ['Evidence', ['evidence', 'evidence_complete', 'watch_sources', 'ignore_viewers']],
   ['Deleting', ['executor', 'maintainerr', 'leaving_soon', 'restore', 'dupes', 'unresolved', 'operator_keeps', 'released_gone', 'outside_deletions', 'notifications', 'household']],

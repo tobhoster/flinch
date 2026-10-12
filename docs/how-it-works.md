@@ -239,7 +239,12 @@ Every movie and season competes on regret alone, except:
 - **Pinned:** a favorite, a keep collection, the keep tag (`flinch-keep` by
   default) as a Radarr/Sonarr tag or a Plex label or collection, or your own
   Maintainerr exclusion.
-- **In its grace period:** on disk fewer than `planner.grace_period_days` (30).
+- **Someone is partway through it:** Maintainerr is told never to take it,
+  so it never competes either.
+- **In its grace period:** on disk fewer than `planner.grace_period_days` (30),
+  unless everyone who played this copy finished it: the grace period gives a
+  download time to be watched, and that has happened. A copy that came back
+  after the plays (an undo, a re-download) keeps its grace.
 - **Not matched in the media server:** nothing can warn about it or act on
   it: no Plex match (Maintainerr, or the native executor's Plex shelf), or no
   Jellyfin/Emby match when the native executor's shelf is on Jellyfin/Emby.

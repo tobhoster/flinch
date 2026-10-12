@@ -40,6 +40,9 @@ pub enum Exclusion {
     /// A favorite, or on a keep list (keep collection, keep tag, or the
     /// operator's own Maintainerr exclusion).
     Pinned(Pin),
+    /// Someone is partway through it: Maintainerr is told never to take it,
+    /// so planning it would count bytes that never leave.
+    Partway,
     /// On disk for fewer than the grace period's days.
     Grace {
         days: u32,
@@ -79,6 +82,7 @@ impl std::fmt::Display for Exclusion {
             Self::Pinned(Pin::Requested { until }) => {
                 write!(f, "Pinned: kept on request until {}", crate::notify::utc_date(until / 86_400))
             }
+            Self::Partway => f.write_str("Someone is partway through it"),
             Self::Grace { days } => write!(f, "In its {days}-day grace period"),
             Self::NotInPlex => f.write_str("Not matched in the media server"),
             Self::NoGovernedDisk => f.write_str("On no governed disk"),
@@ -104,8 +108,15 @@ pub struct MediaCandidate {
     /// Why losing it is cheap, for the manifest.
     pub reason: String,
     pub age_days: f32,
+    /// Everyone who played it finished, and the last play came after this
+    /// copy arrived: the grace period, which gives a new download time to be
+    /// watched, has done its job. A copy downloaded again after the plays
+    /// (an undo, a re-request) keeps its grace.
+    #[serde(default)]
+    pub finished_on_disk: bool,
     /// Set by the caller for every rule but the grace period, which the
-    /// planner applies from [`PlannerConfig::grace_period_days`].
+    /// planner applies from [`PlannerConfig::grace_period_days`] to items not
+    /// [`finished_on_disk`](Self::finished_on_disk).
     pub exclusion: Option<Exclusion>,
     /// Its place in its show; `None` for a movie.
     pub sequence: Option<Sequence>,
@@ -258,7 +269,8 @@ pub fn generate_plan(
     }
     let exclusion = |candidate: &MediaCandidate| {
         candidate.exclusion.clone().or_else(|| candidate.volume.is_none().then_some(Exclusion::NoGovernedDisk)).or_else(|| {
-            (candidate.age_days < config.grace_period_days as f32).then_some(Exclusion::Grace { days: config.grace_period_days })
+            (!candidate.finished_on_disk && candidate.age_days < config.grace_period_days as f32)
+                .then_some(Exclusion::Grace { days: config.grace_period_days })
         })
     };
     let units: Vec<Unit> = candidates

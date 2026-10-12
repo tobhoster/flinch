@@ -36,6 +36,7 @@ const KNOWN_SOURCES = new Set(SOURCES.flatMap(([, keys]) => keys));
  */
 const KEPT_GROUPS = [
   [/^Pinned/, 'Pinned', 'pinned'],
+  [/^Someone is partway/, 'Someone is partway through', 'partway'],
   [/grace period/, 'In grace period', 'grace_period'],
   [/^Not needed/, 'Eligible, not needed', 'eligible'],
   [/^Never played/, 'Never played', 'never_played'],

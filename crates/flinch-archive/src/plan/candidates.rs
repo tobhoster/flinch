@@ -107,6 +107,7 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
             };
             let exclusion = pin
                 .map(Exclusion::Pinned)
+                .or_else(|| features.partway.then_some(Exclusion::Partway))
                 .or_else(|| {
                     if !library.in_plex.contains(&card.id) {
                         Some(Exclusion::NotInPlex)
@@ -130,6 +131,9 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                 },
                 regret,
                 age_days: card.added_days_ago,
+                finished_on_disk: !features.partway
+                    && watch.is_some_and(|entry| entry.progress >= COMPLETE)
+                    && card.last_watched_days.is_some_and(|days| days <= card.added_days_ago),
                 exclusion,
                 sequence: season.then(|| sequence(card, played)).flatten(),
                 handed: library.handed.contains(&card.id),

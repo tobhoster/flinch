@@ -27,6 +27,7 @@ fn candidate(id: &str, gib: u64, p_watch: f64) -> MediaCandidate {
         quality: crate::quality::advise(&regret, &crate::quality::Item::default()),
         eviction_safety: 0.0,
         force: None,
+        finished_on_disk: false,
     }
 }
 

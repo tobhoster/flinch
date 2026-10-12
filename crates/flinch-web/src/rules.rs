@@ -78,6 +78,7 @@ mod tests {
             quality: flinch_archive::quality::advise(&regret, &flinch_archive::quality::Item::default()),
             eviction_safety: 0.0,
             force: None,
+            finished_on_disk: false,
         }
     }
 

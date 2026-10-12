@@ -29,6 +29,7 @@ fn movie(id: u32, p_watch: f64) -> MediaCandidate {
         },
         eviction_safety: 0.5,
         force: None,
+        finished_on_disk: false,
     }
 }
 

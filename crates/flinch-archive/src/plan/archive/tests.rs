@@ -24,6 +24,7 @@ fn candidate(id: &str, title: &str, volume: &str, gib: u64, regret: f64) -> Medi
         quality: crate::quality::advise(&Regret::new(regret, 1.0, 1.0), &crate::quality::Item::default()),
         eviction_safety: 0.0,
         force: None,
+        finished_on_disk: false,
     }
 }
 
