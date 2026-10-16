@@ -8,7 +8,16 @@ const GIB: u64 = 1 << 30;
 const Q: u64 = 100 * 1024 * 1024;
 
 fn unit(volume: &str, gib: u64, regret: f64) -> Unit {
-    Unit { size_bytes: gib * GIB, regret, volume: volume.to_string(), sequence: None, selectable: true, handed: false, force: None }
+    Unit {
+        size_bytes: gib * GIB,
+        regret,
+        volume: volume.to_string(),
+        sequence: None,
+        selectable: true,
+        finished: false,
+        handed: false,
+        force: None,
+    }
 }
 
 fn season(show: &str, index: u32, gib: u64, regret: f64) -> Unit {

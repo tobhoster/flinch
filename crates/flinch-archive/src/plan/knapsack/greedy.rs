@@ -46,11 +46,11 @@ impl Ord for Ready {
 }
 
 /// The tier of a must-go unit and of every prerequisite its chain gives it.
-const MUST: u8 = 3;
+const MUST: u8 = 4;
 
-/// Each unit's rank under the operator's rules: [`MUST`] for a must-go open
-/// unit and the open units it depends on, 2 for a preferred one, 0 for a
-/// spared one, else 1.
+/// Each unit's rank: [`MUST`] for a must-go open unit and the open units it
+/// depends on, 3 for a preferred one, 2 for a finished one, 0 for a spared
+/// one, else 1.
 pub(super) fn tiers(units: &[Unit], open: &[bool], edges: &[(usize, usize)]) -> Vec<u8> {
     let blocked_by: HashMap<usize, usize> = edges.iter().copied().collect();
     let mut tier: Vec<u8> = units
@@ -58,20 +58,29 @@ pub(super) fn tiers(units: &[Unit], open: &[bool], edges: &[(usize, usize)]) -> 
         .zip(open)
         .map(|(unit, &open)| match (open, unit.force) {
             (true, Some(Force::Must)) => MUST,
-            (true, Some(Force::Prefer)) => 2,
+            (true, Some(Force::Prefer)) => 3,
             (true, Some(Force::Spare)) => 0,
+            (true, None) if unit.finished => 2,
             _ => 1,
         })
         .collect();
     for index in 0..units.len() {
-        if tier[index] != MUST {
+        let floor = tier[index];
+        if floor <= 1 {
             continue;
         }
-        // A prerequisite already at MUST has its own chain walked.
+        let mut chain = Vec::new();
         let mut next = blocked_by.get(&index).copied();
-        while let Some(prerequisite) = next.filter(|&prerequisite| tier[prerequisite] != MUST) {
-            tier[prerequisite] = MUST;
+        while let Some(prerequisite) = next {
+            chain.push(prerequisite);
             next = blocked_by.get(&prerequisite).copied();
+        }
+        if floor < MUST && chain.iter().any(|&p| units[p].volume != units[index].volume && tier[p] < floor) {
+            tier[index] = 1;
+        } else {
+            for prerequisite in chain {
+                tier[prerequisite] = tier[prerequisite].max(floor);
+            }
         }
     }
     tier

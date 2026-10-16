@@ -281,6 +281,7 @@ pub fn generate_plan(
             volume: candidate.volume.clone().unwrap_or_default(),
             sequence: candidate.sequence.clone(),
             selectable: exclusion(candidate).is_none(),
+            finished: candidate.finished_on_disk,
             handed: candidate.handed,
             // A rule never forces a pinned or partway item, whoever set it.
             force: candidate.force.filter(|_| !candidate.protect),

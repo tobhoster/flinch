@@ -102,6 +102,21 @@ fn a_title_finished_since_it_arrived_skips_the_grace_period_and_an_unfinished_on
     assert_eq!(result.kept["unfinished"], Kept::Excluded(Exclusion::Grace { days: 30 }));
 }
 
+#[rstest::rstest]
+#[case::finished_covers_the_target(false, 2, vec!["done-a", "done-b"])]
+#[case::small_finished_movies_all_go_before_a_big_unwatched_one(false, 40, vec!["done-a", "done-b", "unwatched-big"])]
+#[case::emergency_greedy_also_takes_finished_first(true, 40, vec!["done-a", "done-b", "unwatched-big"])]
+fn finished_titles_always_leave_before_unwatched_ones(#[case] emergency: bool, #[case] target_gib: u64, #[case] expected: Vec<&str>) {
+    // Two 1 GiB finished films each have higher regret per GiB than a 39 GiB
+    // unwatched film, yet both finished films must go before any unwatched one.
+    let done_a = MediaCandidate { finished_on_disk: true, ..candidate("done-a", "movies", 1, 0.06) };
+    let done_b = MediaCandidate { finished_on_disk: true, ..candidate("done-b", "movies", 1, 0.08) };
+    let unwatched_big = candidate("unwatched-big", "movies", 39, 0.20);
+    let unwatched_dear = candidate("unwatched-dear", "movies", 39, 0.90);
+    let result = plan(&[unwatched_big, done_a, done_b, unwatched_dear], &[forecast("movies", target_gib, emergency)]);
+    assert_eq!(ids(&result), expected);
+}
+
 #[test]
 fn an_emergency_forecast_takes_the_greedy_path() {
     let library = [candidate("a", "movies", 10, 1.0)];

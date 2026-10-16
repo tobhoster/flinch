@@ -112,6 +112,8 @@ fn the_first_rule_that_applies_keeps_an_item_out() {
 #[case::finished_the_day_it_arrived(Some(10.0), 10.0, 1.0, true)]
 #[case::finished_before_this_copy_came_back(Some(25.0), 10.0, 1.0, false)]
 #[case::stopped_before_the_end(Some(3.0), 10.0, 0.5, false)]
+#[case::marked_watched_without_a_play_date(None, 10.0, 1.0, true)]
+#[case::reimported_and_now_past_grace(Some(45.0), 35.0, 1.0, true)]
 #[case::never_played(None, 10.0, 0.0, false)]
 fn only_a_copy_finished_since_it_arrived_counts_as_finished_on_disk(
     #[case] last_watched_days: Option<f32>,
@@ -150,17 +152,18 @@ fn seasons_join_their_show_in_order_and_movies_stand_alone() {
 }
 
 #[test]
-fn a_user_who_requested_and_watchlisted_a_season_claims_it_once_with_both() {
-    let mut world = World::new(vec![season_card(7, 1, Some(300.0)), season_card(7, 2, Some(300.0))]);
-    world.series = vec![show(7, 70, &[1, 2])];
+fn a_user_who_requested_and_watchlisted_a_season_claims_it_until_it_is_finished() {
+    let mut world = World::new(vec![season_card(7, 1, None), season_card(7, 2, None), season_card(7, 3, Some(300.0))]);
+    world.series = vec![show(7, 70, &[1, 2, 3])];
     let media = MediaRef::Show { tvdb: Some(70), tmdb: None };
-    world.signals.requests = vec![Request { media, seasons: vec![1], requester: "Ann".to_string(), requested_at: None }];
+    world.signals.requests = vec![Request { media, seasons: vec![1, 3], requester: "Ann".to_string(), requested_at: None }];
     world.signals.watchlists = vec![Watchlisted { media, user: "ann".to_string() }, Watchlisted { media, user: "Bo".to_string() }];
     let config = PlannerConfig { user_weights: BTreeMap::from([("ANN".to_string(), 2.0)]), ..PlannerConfig::default() };
     let built = world.build(&config);
     // Seerr names users case-insensitively too: "Ann" and "ann" are one user.
-    assert_eq!(built["sonarr-7-s1"].regret.household, 1.0 + 2.0 * 3.5, "requested season: watchlist + request");
-    assert_eq!(built["sonarr-7-s2"].regret.household, 1.0 + 2.0 * 2.0, "the request named season 1 only");
+    assert_eq!(built["sonarr-7-s1"].regret.household, 1.0 + 2.0 * 3.5, "unplayed requested season: watchlist + request");
+    assert_eq!(built["sonarr-7-s2"].regret.household, 1.0 + 2.0 * 2.0, "the request named seasons 1 and 3 only");
+    assert_eq!(built["sonarr-7-s3"].regret.household, 1.0 + 2.0 * 2.0, "finished: the fulfilled request no longer adds weight");
 }
 
 #[test]
