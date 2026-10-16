@@ -147,12 +147,17 @@ fn partway_needs_an_active_viewer_between_ten_and_ninety_percent(
 }
 
 #[test]
-fn a_finished_season_counts_one_viewing_and_show_plays_set_the_velocity() {
-    let season: Vec<Play> = (1..=8).map(|episode| play(20, 1.0, Some(episode), "ann")).collect();
+fn a_finished_season_clears_velocity_while_an_unplayed_season_keeps_it() {
+    let season: Vec<Play> = (1..=8).map(|episode| play(5, 1.0, Some(episode), "ann")).collect();
     let show = [play(1, 1.0, Some(1), "bo"), play(5, 1.0, Some(2), "bo"), play(30, 1.0, Some(3), "bo")];
-    let features = read(&season, &show, Some(8), 400.0);
-    assert_eq!(features.lifetime_scrobbles, 1.0);
-    assert_eq!(features.active_series_velocity, 2, "only the last 14 days");
+    let finished = read(&season, &show, Some(8), 400.0);
+    assert!(finished.finished);
+    assert_eq!(finished.lifetime_scrobbles, 1.0);
+    assert_eq!(finished.active_series_velocity, 0, "finishing a season ends its binge boost");
+    assert_eq!(finished.annual_cyclical_offset, 0.0);
+
+    let next_season = read(&[], &show, Some(8), 400.0);
+    assert_eq!(next_season.active_series_velocity, 2, "only the last 14 days");
 }
 
 #[rstest]

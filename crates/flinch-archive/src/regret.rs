@@ -241,11 +241,15 @@ impl WatchFeatures {
             Some(episodes) => finished / f64::from(episodes.max(1)),
             None => finished,
         };
-        let since = now.saturating_sub(VELOCITY_DAYS * DAY_SECS);
-        let active_series_velocity = history.audience.iter().filter(|play| play.epoch >= since && play.epoch <= now).count() as u32;
-        let annual_cyclical_offset = if watched.is_some() { (std::f64::consts::TAU * days_since_last_play / 365.25).cos() } else { 0.0 };
         let by_viewer = history.by_viewer(now);
         let partway = partway(history, &by_viewer, now);
+        let finished = !partway && finished_by_all(history, &by_viewer);
+        let since = now.saturating_sub(VELOCITY_DAYS * DAY_SECS);
+        // Plays that just finished an item do not mean it is about to be watched again.
+        let active_series_velocity =
+            if finished { 0 } else { history.audience.iter().filter(|play| play.epoch >= since && play.epoch <= now).count() as u32 };
+        let annual_cyclical_offset =
+            if watched.is_some() && !finished { (std::f64::consts::TAU * days_since_last_play / 365.25).cos() } else { 0.0 };
         Self {
             days_since_last_play,
             never_played: watched.is_none(),
@@ -253,7 +257,7 @@ impl WatchFeatures {
             active_series_velocity,
             annual_cyclical_offset,
             partway,
-            finished: !partway && finished_by_all(history, &by_viewer),
+            finished,
             taste: 0.0,
         }
     }

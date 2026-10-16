@@ -76,6 +76,9 @@ pub struct Unit {
     pub volume: String,
     pub sequence: Option<Sequence>,
     pub selectable: bool,
+    /// Everyone who played it finished it: drawn on before any unfinished
+    /// unit without a rule on its volume.
+    pub finished: bool,
     /// Already handed over in an earlier cycle: preferred at equal cost, so a
     /// re-plan does not restart its Leaving Soon window.
     pub handed: bool,
@@ -255,24 +258,28 @@ fn milp(
     // the second turns on, which every spared unit needs. A move handles its
     // members: it waits behind preferred units, and counts as taken for a
     // spared one.
+    let tier = tiers(units, open, edges);
     let mut switches: Vec<(Variable, Vec<Expression>, Vec<Expression>)> = Vec::new();
     for volume in need.keys() {
         let on: Vec<(usize, Variable)> =
             vars.iter().filter(|(&index, _)| units[index].volume == *volume).map(|(&index, &x)| (index, x)).collect();
-        let split = |marked: fn(Option<Force>) -> bool| {
-            let (hit, rest): (Vec<_>, Vec<_>) = on.iter().copied().partition(|(index, _)| marked(units[*index].force));
+        let split = |min_tier: u8| {
+            let (hit, rest): (Vec<_>, Vec<_>) = on.iter().copied().partition(|(index, _)| tier[*index] >= min_tier);
             (!hit.is_empty() && !rest.is_empty()).then_some((hit, rest))
         };
         let plain = |pairs: Vec<(usize, Variable)>| pairs.into_iter().map(|(_, x)| Expression::from(x)).collect::<Vec<_>>();
-        if let Some((preferred, rest)) = split(|force| matches!(force, Some(Force::Prefer | Force::Must))) {
+        let handled = |pairs: Vec<(usize, Variable)>| {
+            pairs.into_iter().map(|(i, x)| member_move.get(&i).map_or_else(|| Expression::from(x), |&mv| x + mv)).collect::<Vec<_>>()
+        };
+        if let Some((preferred, rest)) = split(3) {
             let moved_here = usable.iter().zip(&m).filter(|(group, _)| group.volume == *volume).map(|(_, &mv)| Expression::from(mv));
-            let after = plain(rest).into_iter().chain(moved_here).collect();
-            switches.push((problem.add(variable().binary()), plain(preferred), after));
+            switches.push((problem.add(variable().binary()), plain(preferred), plain(rest).into_iter().chain(moved_here).collect()));
         }
-        if let Some((spared, rest)) = split(|force| force == Some(Force::Spare)) {
-            let handled =
-                rest.into_iter().map(|(index, x)| member_move.get(&index).map_or_else(|| Expression::from(x), |&mv| x + mv)).collect();
-            switches.push((problem.add(variable().binary()), handled, plain(spared)));
+        if let Some((finished, rest)) = split(2) {
+            switches.push((problem.add(variable().binary()), handled(finished), plain(rest)));
+        }
+        if let Some((regular, spared)) = split(1) {
+            switches.push((problem.add(variable().binary()), handled(regular), plain(spared)));
         }
     }
     let evictions: Expression = vars.iter().map(|(&index, &x)| objective_weight(&units[index]) * x).sum();

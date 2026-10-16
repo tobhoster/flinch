@@ -164,8 +164,9 @@ flowchart LR
    items still seeding and items your rules keep never compete. Items nobody
    played compete only when you allow it.
 5. **Solve.** An exact solver picks the cheapest set that covers each disk's
-   target (moving to an archive disk first when there is one), taking a show's
-   seasons in order. At 95% full it switches to a fast greedy pick.
+   target (moving to an archive disk first when there is one), taking finished
+   titles before unwatched ones and a show's seasons in order. At 95% full it
+   switches to a fast greedy pick.
 6. **Act.** The plan goes to `eviction-plan.json` every cycle. With dry run
    off, unwatched items go to Leaving Soon and leave after its window;
    finished ones leave at once. The native executor or Maintainerr does the

@@ -360,7 +360,8 @@ solves it exactly. In an emergency, or if HiGHS fails, a greedy pass takes the
 most bytes per unit of regret first, under the same order. The status names
 the method: `milp`, `emergency` or `solver_fallback`. The greedy pass takes
 must-evict items (and the seasons they depend on) first, then preferred ones,
-then the rest; preference holds there only as far as season order allows.
+then finished ones, then the rest; preference holds there only as far as season
+order allows. On every disk, finished titles leave before unwatched ones.
 
 - **Season order.** Within a show, unplayed seasons leave from the last one
   back, so the start of a show nobody began goes last. Played seasons leave

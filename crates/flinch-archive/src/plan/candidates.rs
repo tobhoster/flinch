@@ -95,7 +95,13 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                 streams: stream.is_some(),
             }
             .friction();
-            let household = regret::household(claims.get(card.id.as_str()).into_iter().flatten().copied());
+            let household = regret::household(
+                claims
+                    .get(card.id.as_str())
+                    .into_iter()
+                    .flatten()
+                    .map(|claim| Claim { requested: claim.requested && !features.finished, ..*claim }),
+            );
             let regret = Regret::new(model.p_watch(&features), friction, household);
             let played = card.last_watched_days.is_some() || watch.is_some_and(|entry| entry.progress > 0.0);
             let pin = if card.is_favorite {
@@ -131,9 +137,9 @@ pub fn build(library: &Library, config: &PlannerConfig, model: &HazardModel) -> 
                 },
                 regret,
                 age_days: card.added_days_ago,
-                finished_on_disk: !features.partway
-                    && watch.is_some_and(|entry| entry.progress >= COMPLETE)
-                    && card.last_watched_days.is_some_and(|days| days <= card.added_days_ago),
+                finished_on_disk: features.finished
+                    && (card.added_days_ago >= config.grace_period_days as f32
+                        || card.last_watched_days.is_none_or(|days| days <= card.added_days_ago)),
                 exclusion,
                 sequence: season.then(|| sequence(card, played)).flatten(),
                 handed: library.handed.contains(&card.id),
