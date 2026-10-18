@@ -122,7 +122,7 @@ async fn trash_grabs_evictions_and_native_state_from_before_instances_read_as_th
     let disk = |instance: &str, total_bytes: u64, recycle| AppDisks {
         app: App::Radarr,
         instance: instance.into(),
-        diskspace: vec![Volume { path: "/data".into(), total_bytes, free_bytes: 50_000 }],
+        diskspace: vec![Volume { path: "/data".into(), total_bytes, free_bytes: 50_000, device: None }],
         root_folders: vec![RootFolder { path: "/data/movies".into(), free_bytes: None }],
         recycle,
     };

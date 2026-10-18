@@ -7,7 +7,7 @@ const GB: u64 = 1_000_000_000;
 const DAY: u64 = 86_400;
 
 fn vol(path: &str, total_gb: u64, used_gb: u64) -> Volume {
-    Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB }
+    Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB, device: None }
 }
 
 /// The daemon without a library prefix: nothing is probed.
@@ -219,7 +219,7 @@ fn attribution_is_per_instance_because_each_is_its_own_container() {
 #[test]
 fn a_share_mounted_at_different_paths_is_one_filesystem() {
     // Radarr sees the share at /movies, Sonarr at /tv, sampled seconds apart.
-    let sonarr_view = Volume { path: "/tv".to_string(), total_bytes: 8000 * GB, free_bytes: 997 * GB };
+    let sonarr_view = Volume { path: "/tv".to_string(), total_bytes: 8000 * GB, free_bytes: 997 * GB, device: None };
     let library = LibraryVolumes::build(
         &[disks(App::Radarr, vec![vol("/movies", 8000, 7000)], &["/movies"]), disks(App::Sonarr, vec![sonarr_view], &["/tv"])],
         no_probe,
@@ -310,6 +310,31 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Lioness/Season 1"), Some("/data/media/tv"));
     assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/anime/Frieren"), Some("/data"));
     assert_eq!(library.volume_of(App::Radarr, "", "/data/media/movies/Heat (1995)"), Some("/data"));
+}
+
+#[test]
+fn two_measured_shares_of_one_size_that_filled_alike_stay_two_disks() {
+    // Live shape: tv and tv-b are two 790 GiB shares, both near 93% full, free
+    // space 1.9 GiB apart: within the 0.5% that guesses one filesystem seen
+    // twice. Measured here, each has its own device, and that decides.
+    let probed = |path: &str, used_gb: u64, device: u64| Volume { device: Some(device), ..vol(path, 834, used_gb) };
+    // Sonarr lists only `/`; each root's own free space rules it out.
+    let root = |path: &str, free_gb: u64| RootFolder { path: path.into(), free_bytes: Some(free_gb * GB) };
+    let roots = [root("/data/media/tv", 56), root("/data/media/tv-b", 54)];
+    let sonarr = |probe: &dyn Fn(&str) -> Option<Volume>| {
+        let app = AppDisks { root_folders: roots.to_vec(), ..disks(App::Sonarr, vec![vol("/", 510, 57)], &[]) };
+        LibraryVolumes::build(&[app], probe)
+    };
+    let library = sonarr(&|path| Some(probed(path, if path.ends_with("tv-b") { 780 } else { 778 }, path.len() as u64)));
+    let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
+    assert_eq!(paths, ["/data/media/tv", "/data/media/tv-b"]);
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv-b/Reacher/Season 1"), Some("/data/media/tv-b"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Lioness/Season 3"), Some("/data/media/tv"));
+
+    // One share reached through two roots: one device, one disk, one goal.
+    let library = sonarr(&|path| Some(probed(path, 778, 7)));
+    assert_eq!(library.volumes.len(), 1);
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv-b/Reacher"), Some("/data/media/tv"));
 }
 
 #[test]

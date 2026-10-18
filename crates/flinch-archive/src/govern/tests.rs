@@ -50,7 +50,7 @@ fn show(id: u32, path: Option<&str>, seasons: &[u32]) -> ArrSeries {
 
 /// Radarr and Sonarr both see one 100 GB share at /media, `used_gb` full.
 fn library(used_gb: u64) -> LibraryVolumes {
-    let share = Volume { path: "/media".to_string(), total_bytes: 100 * GB, free_bytes: (100 - used_gb) * GB };
+    let share = Volume { path: "/media".to_string(), total_bytes: 100 * GB, free_bytes: (100 - used_gb) * GB, device: None };
     let root = |path: &str| vec![RootFolder { path: path.to_string(), free_bytes: None }];
     LibraryVolumes::build(
         &[

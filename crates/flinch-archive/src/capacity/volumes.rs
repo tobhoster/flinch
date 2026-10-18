@@ -7,12 +7,16 @@
 
 use serde::{Deserialize, Serialize};
 
-/// One mount as an *arr reports it.
+/// One mount as an *arr reports it, or as FLINCH measured it itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Volume {
     pub path: String,
     pub total_bytes: u64,
     pub free_bytes: u64,
+    /// The filesystem's identity (`st_dev`) where FLINCH measured it in its
+    /// own container; `None` for a mount an app reported, which says nothing
+    /// about identity.
+    pub device: Option<u64>,
 }
 
 impl Volume {
@@ -127,11 +131,17 @@ fn deepest_mount<'a>(path: &str, mounts: &'a [Volume]) -> Option<&'a Volume> {
 }
 
 /// Two mounts showing the same filesystem: a shared media share mounted at
-/// `/movies` in Radarr and `/tv` in Sonarr. Identical totals and free space
-/// within 0.5% (the two apps are sampled seconds apart). Merging errs safe:
-/// the unmerged mistake would double the eviction goal for one disk.
+/// `/movies` in Radarr and `/tv` in Sonarr. Measured here, both carry their
+/// device and that decides. Otherwise: identical totals and free space within
+/// 0.5% (the two apps are sampled seconds apart). Merging errs safe: the
+/// unmerged mistake would double the eviction goal for one disk. The guess
+/// cannot tell two same-size disks that filled alike, which is why a device,
+/// when both have one, overrides it.
 fn same_filesystem(a: &Volume, b: &Volume) -> bool {
-    a.total_bytes > 0 && a.total_bytes == b.total_bytes && a.free_bytes.abs_diff(b.free_bytes) <= a.total_bytes / 200
+    match (a.device, b.device) {
+        (Some(a), Some(b)) => a == b,
+        _ => a.total_bytes > 0 && a.total_bytes == b.total_bytes && a.free_bytes.abs_diff(b.free_bytes) <= a.total_bytes / 200,
+    }
 }
 
 /// The filesystems that host the libraries, and how to attribute an item to one.

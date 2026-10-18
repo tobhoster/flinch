@@ -22,7 +22,8 @@ fn library_prefix() -> Option<std::path::PathBuf> {
 }
 
 /// The filesystem under `root` as mounted here, measured with `statvfs`, for a
-/// root the app reports no mount for. `None` when it is not mounted here either.
+/// root the app reports no mount for, with its device so two shares of one
+/// size that filled alike stay two disks. `None` when it is not mounted here either.
 // The statvfs fields are u64 on this target and u32 on 32-bit ones: the cast
 // is a no-op here and a lossless widening there.
 #[allow(clippy::unnecessary_cast)]
@@ -39,7 +40,8 @@ fn probe(prefix: &std::path::Path, root: &str) -> Option<Volume> {
     // SAFETY: statvfs returned 0, so the buffer is initialised.
     let stat = unsafe { stat.assume_init() };
     let block = stat.f_frsize as u64;
-    Some(Volume { path: root.to_string(), total_bytes: stat.f_blocks as u64 * block, free_bytes: stat.f_bavail as u64 * block })
+    let device = std::fs::metadata(&local).ok().map(|meta| std::os::unix::fs::MetadataExt::dev(&meta));
+    Some(Volume { path: root.to_string(), total_bytes: stat.f_blocks as u64 * block, free_bytes: stat.f_bavail as u64 * block, device })
 }
 
 /// Forecast this cycle's volumes, crediting what recycle bins still hold and
