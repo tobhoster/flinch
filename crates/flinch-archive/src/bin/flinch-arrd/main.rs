@@ -21,6 +21,7 @@ mod dupes;
 mod embeddings;
 mod evidence;
 mod fetch;
+mod fleet;
 mod handoff;
 mod history;
 mod household;
@@ -157,6 +158,12 @@ async fn run(args: &Args) -> Result<()> {
 async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::daemon::RuntimeSettings, interval_s: u64) -> Result<()> {
     // Every *arr instance of this cycle: settings may add one without a restart.
     let args = &args.for_cycle(&settings.instances);
+    // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
+    let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let dry_run = settings.planner.dry_run || forced_dry;
+    // The fleet first: a stuck queue or a failing indexer is worth seeing
+    // most when the inventory read below fails the cycle.
+    let fleet_problems = fleet::run(http, args, settings, dry_run).await;
     // Quality profiles before anything else writes: an inventory outage must
     // not hold back an apply, and a library read sizes each change.
     let fetched = fetch_inventory(http, args, &settings.keep_tag).await;
@@ -189,9 +196,6 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     let library = embeddings::Library { movies: &movies, series: &series, plex_content: &plex_content, plex_ids: &plex_ids };
     let embeddings::Refresh { vectors, status: embedding } = embeddings::refresh(&settings.embedding, library, cycle_now).await;
 
-    // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
-    let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
-    let dry_run = settings.planner.dry_run || forced_dry;
     // Torrents still seeding or holding an item's bytes keep it this cycle.
     let torrent_goes = settings.executor == flinch_archive::executor::Executor::Native;
     let torrent_library = torrents::Library { movies: &movies, series: &series, downloads: &downloads, cards: &cards };
@@ -249,6 +253,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     }
 
     let mut signals = signals::gather(http, args, &cards, cycle_now).await;
+    signals.problems.extend(fleet_problems);
     let streaming_status = streaming::gather(http, &settings.streaming, (&movies, &series), cycle_now, &mut signals).await;
     for problem in &signals.problems {
         eprintln!("[flinch-arrd] signals: {problem}");

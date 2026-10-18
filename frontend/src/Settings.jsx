@@ -335,7 +335,8 @@ export default function Settings({ status }) {
             <TextField id="keep_tag" placeholder="flinch-keep" autoComplete="off" spellCheck={false} value={form.keep_tag} onChange={set('keep_tag')} />
           </Row>
           <Row label="Rules" term="rules" help="Hard keeps and forced evictions, never a change to regret; keep beats evict. Preview a change before saving it.">
-            <RulesEditor rules={form.rules || []} onChange={(rules) => update({ ...form, rules })} onPreviewed={setPreviewedRules} lastRun={status?.rules} />
+            <RulesEditor rules={form.rules || []} onChange={(rules) => update({ ...form, rules })} onPreviewed={setPreviewedRules} lastRun={status?.rules}
+              context={{ target: Number(form.capacity?.target_utilization) / 100, leavingSoonDays: form.executor === 'native' ? Number(form.native?.leaving_soon_days) : null }} />
           </Row>
           <Row label="Ignored viewers" htmlFor="ignore_viewers" term="ignore_viewers"
             help="Names whose plays count as no play: a guest, a kid's profile, your own test plays. Matched per source (Plex account, Tautulli user, Jellyfin/Emby user, Tracearr username, Trakt source name). Health stays as read, so an item only they played reads as never played only where the record is complete. Plex's own item state of the token's account cannot be split and still counts.">

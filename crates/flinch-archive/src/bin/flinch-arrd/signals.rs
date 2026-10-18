@@ -244,7 +244,7 @@ async fn sab_retention(http: &reqwest::Client, args: &Args, signals: &mut Signal
 }
 
 /// The trimmed base url and key, when both are set.
-fn configured<'a>(url: &'a str, key: &'a str) -> Option<(&'a str, &'a str)> {
+pub(super) fn configured<'a>(url: &'a str, key: &'a str) -> Option<(&'a str, &'a str)> {
     let url = url.trim().trim_end_matches('/');
     (!url.is_empty() && !key.is_empty()).then_some((url, key))
 }

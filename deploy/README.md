@@ -399,6 +399,40 @@ editor with `moveFiles: true` and read back at the new path. A dry run prints
 each move. See
 [The archive tier](../docs/how-it-works.md#the-archive-tier-move-instead-of-delete-off-by-default).
 
+### Fleet (Radarr, Sonarr, Prowlarr health)
+
+On by default (`settings.json` `fleet.enabled`); nothing new goes into the
+Secret (it uses `RADARR_API_KEY`/`SONARR_API_KEY` and, when set,
+`PROWLARR_URL`/`PROWLARR_API_KEY`; without Prowlarr the indexer list is
+empty). Each cycle, before anything else, the daemon reads every Radarr and
+Sonarr instance's version, health checks, disks and download queue, and
+Prowlarr's health and indexers, into `state/arr-fleet-status.json`
+(`GET /api/fleet`). A queue item is listed when the app flags it, with why:
+
+| Reason | Means | Removable |
+| --- | --- | --- |
+| `no_space` | "Not enough free space": it imports by itself once the library disk has room | never |
+| `unimportable` | missing or fake files (an executable), a sample only, "No files eligible", an unknown series or movie, a failed download or usenet repair ("not enough repair blocks") | yes |
+| `stalled_download` | still downloading, with no progress for `fleet.stalled_after_minutes` (120) | no |
+| `other` | flagged by the app for anything else | no |
+
+An indexer is failing while Prowlarr holds it in back-off (`disabledTill`
+set) or it failed in the last 6 hours.
+
+Two actions, each queued by the UI as a file under `state/fleet-requests/`
+and carried out at the top of the next cycle:
+`POST /api/fleet/queue/{instance}/{id}/remove` removes the item from its
+download client and blocklists the release
+(`DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=true`), and is
+refused for anything but an `unimportable` item, by the web and again by the
+daemon; `POST /api/fleet/indexer/{id}/test` runs Prowlarr's indexer test.
+`fleet.auto_remove_unimportable` (off) removes every unimportable item each
+cycle; `fleet.disable_failing_indexers_after_hours` (0, off) disables an
+indexer failing that long. A dry run prints each write and records it as
+`dry-run`; a request is taken once, so ask again after turning dry run off.
+The last 50 actions are kept in the status file. See
+[The *arr fleet](../docs/how-it-works.md#the-arr-fleet-health-stuck-queues-failing-indexers).
+
 ### Quality profiles (TRaSH sync)
 
 Optional, in Settings > Quality profiles (TRaSH), and off by default; nothing
@@ -981,6 +1015,9 @@ file reads as "nothing yet".
 | `dupes.json` | the duplicate copies you chose to keep in the UI, confirmed or not | your choices are gone; nothing is removed until you choose and confirm again |
 | `dupes-acted.json` | duplicate copies removed (or tried) in the last 30 days | a failed removal may be tried once more; the kept copy is checked first every time |
 | `restore/<item id>` | an undo the UI queued, until the daemon takes it | nothing; press Restore again |
+| `arr-fleet-status.json` | the last read of every Radarr, Sonarr and Prowlarr: health, disks, stuck queue items with their reason, indexers, and the last 50 fleet actions | read again next cycle; the action log starts over |
+| `fleet-queue.json` | each queue item's bytes left and when it last progressed | every download's stall clock starts over |
+| `fleet-requests/queue-remove.<instance>-<id>`, `fleet-requests/indexer-test.<id>` | a queue removal or indexer test the UI queued, until the daemon takes it | nothing; ask again |
 | `models/embeddinggemma-2-<revision>/` | EmbeddingGemma 2's tokenizer and text weights (about 580 MB), downloaded the first time embedding runs; with Posters on also `vision.safetensors` (335 MB) and `processor_config.json` | downloaded again the next time embedding runs |
 | `models/bge-small-en-v1.5-<revision>/`, `models/all-minilm-l6-v2-<revision>/` | the chosen small model's `config.json`, `tokenizer.json` and `model.safetensors` (about 130 / 90 MB) | downloaded again the next time embedding runs |
 

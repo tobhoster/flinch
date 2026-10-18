@@ -48,7 +48,10 @@ wrong thing:
 - **Per disk, never pooled.** Freeing the TV disk does not relieve a full movie
   disk; each item is attributed to its disk through its own app and path, and a
   share mounted at `/movies` in Radarr and `/tv` in Sonarr is recognised as one
-  filesystem, so its target is not counted twice.
+  filesystem, so its target is not counted twice. The apps report no identity,
+  so that is a guess from identical size and free space within 0.5%. Shares
+  FLINCH measures itself carry their device instead, which settles it: two
+  same-size disks that filled alike (tv and tv-b, both at 93%) stay two disks.
 - **The recycle bin is credited.** Radarr/Sonarr delete into a recycle bin on the
   same disk, so freed space shows up late. FLINCH keeps a ledger of what it
   handed over and takes those bytes off the projection until the bin's window
@@ -1281,6 +1284,61 @@ flinch-fit --state-dir /state --write    # and adopt it under the same gate
 
 `--now <unix seconds>` pins the panel's date to reproduce a report.
 
+## The *arr fleet: health, stuck queues, failing indexers
+
+`settings.json` `fleet` (on by default; `crates/flinch-archive/src/fleet.rs`,
+the daemon's `fleet.rs`). The first step of every cycle, before the inventory
+read that can fail it, reads each Radarr and Sonarr instance
+(`/api/v3/system/status`, `/health`, `/diskspace`, and every page of
+`/queue` with `includeSeries`/`includeMovie` and the unknown items) and, with
+`PROWLARR_URL`/`PROWLARR_API_KEY` set, Prowlarr (`/api/v1/system/status`,
+`/health`, `/indexer`, `/indexerstatus`, `/indexerstats`). It writes
+`arr-fleet-status.json` (`GET /api/fleet`); an app that does not answer is
+published `reachable: false` with the cause. Each fault becomes a problem
+sentence ("Sonarr: 10 queue item(s) wait for free space…", "Prowlarr indexer
+AniSource is failing") and so reaches the persisting-problem notifications.
+
+A queue record is listed when the app flags it (`trackedDownloadStatus`
+`warning`/`error`, `importBlocked`, `failedPending`, `failed`) or its download
+stalls, judged first match wins from its `statusMessages` and the client's
+`errorMessage`:
+
+1. **`no_space`**: any message says "Not enough free space". The import waits
+   for room and happens by itself once the disk has it, so this outranks
+   everything and is **never removable**, by request or automatically. The
+   cure is room on the library disk, which is the planner's job.
+2. **`unimportable`** (removable): a failed download (`failed`,
+   `failedPending`, the client's `failed`), a completed download the app
+   cannot place in its library, or a flagged one whose messages say no files
+   are eligible, an executable, a sample, missing files, unknown series or
+   movie, or a failed usenet repair ("not enough repair blocks").
+3. **`stalled_download`**: still downloading, with as many bytes left as
+   `fleet.stalled_after_minutes` (120) ago. `fleet-queue.json` remembers each
+   record's bytes left between cycles; not removable.
+4. **`other`**: flagged for anything else; not removable.
+
+An indexer is failing while Prowlarr's status sets `disabledTill` (a failure
+sets the back-off, a success clears it, so a set one means the last outcome
+was a failure) or its `mostRecentFailure` is under 6 hours old. Each indexer
+is joined with its stats: queries, grabs, failed queries, success rate
+(`null` before the first query) and average response time.
+
+Acting is the daemon's alone, since the keys live there. The UI queues a
+request as an empty file, as the undo queue does: `fleet-requests/
+queue-remove.<instance>-<id>` or `fleet-requests/indexer-test.<id>`. The next
+cycle reads the fleet, then takes each request once: a removal is sent
+(`DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=true`) only when
+that read still lists the item as removable, else it is recorded as refused;
+an indexer test sends Prowlarr's `POST /api/v1/indexer/test` with the
+indexer's own resource, and a failed test records Prowlarr's cause. With
+`fleet.auto_remove_unimportable` on, every removable item is removed each
+cycle; with `fleet.disable_failing_indexers_after_hours` above 0, an enabled
+indexer failing that long since its `initialFailure` is disabled
+(`PUT /api/v1/indexer/{id}`, `enable: false`, checked in the answer). In a dry
+run every write is printed (`[dry-run] would send …`) and recorded as
+`dry-run`; the request is still taken. The status keeps the last 50 actions,
+each with its time, kind, target and `done`, `dry-run` or `failed: …`.
+
 ## The web UI
 
 `flinch-web` serves a React UI next to a JSON API over the files the daemon
@@ -1317,6 +1375,41 @@ changes** posts the draft to `POST /api/rules/preview` and shows what would
 leave and stay, each rule's items and bytes, items kept for a missing fact
 and conflicts; a changed rule list saves only once previewed. Under the list,
 the last run's `status.json` `rules` block says what the saved rules did.
+
+**Visual rules workspace.** Settings → Rules → **Visual workspace** draws the
+same rule list as chains, one per rule: a trigger (the rule's name and
+switch; it reads *every plan* for a keep and *disk forecast over target* for
+prefer or must evict, which is when those act), its conditions (all must
+hold), and its action. An evict rule's chain also shows the safeguards no
+rule overrides and the route a picked item leaves by. Connections follow
+that order only: one way in and out of each node, no loops, nothing after
+the route. Deleting a node joins its neighbours. The canvas edits the list
+the form and YAML views edit and emits it only when every chain is
+complete; the layout is derived, so nothing but `rules` is saved, after a
+preview as before. There are no triggers or actions beyond the rule model:
+deletion versus Leaving Soon is the executor's route, and downgrades are
+quality actions.
+
+**Graph.** `GET /api/graph` joins what the daemon published (`items.json`,
+`plan-inputs.json` facts, `tautulli.json`, `operator-keeps.json`,
+`status.json`) into items, people, disks and safeguards with four relations:
+`WATCHED_BY` (a Tautulli stream on the item's own Plex rating keys, season
+key or episode GUIDs, never its title; ignored viewers left out),
+`REQUESTED_BY` (Seerr requests), `STAGED_ON` (its governed disk) and
+`BLOCKED_BY_TAG` (the *arr keep tag, your own keeps, or an exclusion FLINCH
+placed). The Graph tab lays it out by force: size is GiB on disk, colour is
+P(watch), a ring marks what the plan takes. Clicking a title shows its
+reason, quality advice, path, watchers, requesters and safeguards. Scores
+stay the model's: **Keep…** and **Prefer evicting…** draft a rule scoped to
+that title's id (`scope.ids`), preview it on the daemon's last inputs and
+save it on confirmation.
+
+**Fleet.** A strip under the tabs shows each app's state, version, queue and
+stuck count, failing indexers, and each governed disk's use; the Fleet tab
+has the health matrix, the stuck queue with each item's reason and the free
+space of the disk it imports to (**Remove + blocklist** only where the
+reason allows it), Prowlarr's indexers with a **Test** button, and the last
+fleet actions.
 
 **Quality profiles.** The tab lists the
 [TRaSH sync](#quality-profiles-the-trash-sync-off-by-default)'s preview per

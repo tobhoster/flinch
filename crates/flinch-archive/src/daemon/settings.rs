@@ -91,6 +91,9 @@ pub struct RuntimeSettings {
     /// Radarr and Sonarr instances beyond the default one of each
     /// ([`crate::arr::instances`]); none by default. Keys come from the env.
     pub instances: Vec<crate::arr::instances::InstanceConfig>,
+    /// Watching Radarr, Sonarr and Prowlarr: health, stuck queue items,
+    /// failing indexers ([`crate::fleet`]); every automatic action off.
+    pub fleet: crate::fleet::FleetConfig,
 }
 
 impl Default for RuntimeSettings {
@@ -129,6 +132,7 @@ impl Default for RuntimeSettings {
             household: crate::requests::HouseholdConfig::default(),
             archive: crate::archive::ArchiveConfig::default(),
             instances: Vec::new(),
+            fleet: crate::fleet::FleetConfig::default(),
         }
     }
 }
@@ -177,6 +181,7 @@ impl RuntimeSettings {
         self.trash.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.archive.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         crate::arr::instances::validate(&self.instances).map_err(|error| SettingsError::Invalid(error.0))?;
+        self.fleet.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.streaming.validate().map_err(|error| SettingsError::Invalid(error.0))
     }
 }
