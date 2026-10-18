@@ -60,6 +60,7 @@ fn library(used_gb: u64) -> LibraryVolumes {
                 diskspace: vec![share.clone()],
                 root_folders: root("/media/movies"),
                 recycle: RecycleBin::Disabled,
+                recycle_path: String::new(),
             },
             AppDisks {
                 app: App::Sonarr,
@@ -67,6 +68,7 @@ fn library(used_gb: u64) -> LibraryVolumes {
                 diskspace: vec![share],
                 root_folders: root("/media/tv"),
                 recycle: RecycleBin::Disabled,
+                recycle_path: String::new(),
             },
         ],
         no_probe,

@@ -32,7 +32,7 @@ pub use inflight::{
     Credit, Eviction, EvictionLedger, HandedOver, HeldEviction, Occupancy, HELD_CREDIT_SECS, SETTLE_GRACE_SECS, STALE_ON_DISK_SECS,
 };
 pub use status::{CapacityStatus, CycleCapacity, VolumeStatus};
-pub use volumes::{App, AppDisks, LibraryVolumes, RecycleBin, RootFolder, Volume};
+pub use volumes::{App, AppDisks, BinElsewhere, LibraryVolumes, RecycleBin, RootFolder, Volume};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -248,3 +248,5 @@ impl OnDisk {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod bin_tests;

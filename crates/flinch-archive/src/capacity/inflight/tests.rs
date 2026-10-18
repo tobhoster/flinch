@@ -6,13 +6,14 @@ use super::*;
 const GB: u64 = 1_000_000_000;
 const DAY: u64 = 86_400;
 
-fn three_days(_: &str) -> u64 {
+fn three_days(_: &str, _: &str) -> u64 {
     3 * DAY
 }
 
-fn no_bin(_: &str) -> u64 {
+fn no_bin(_: &str, _: &str) -> u64 {
     0
 }
+
 
 /// The one volume's reading, in GB.
 fn disk(used_gb: u64, library_gb: u64) -> BTreeMap<String, Occupancy> {
@@ -155,7 +156,7 @@ fn an_item_left_on_disk_for_months_stops_being_tracked() {
 
 #[test]
 fn a_bin_that_is_never_emptied_keeps_its_credit_through_its_whole_window() {
-    let never_emptied = |_: &str| STALE_ON_DISK_SECS;
+    let never_emptied = |_: &str, _: &str| STALE_ON_DISK_SECS;
     let mut ledger = EvictionLedger::default();
     hand(&mut ledger, "radarr-1", 10, 0);
     // Maintainerr deleted it ten days after the hand-over.

@@ -17,7 +17,7 @@ fn no_probe(_: &str) -> Option<Volume> {
 
 fn disks(app: App, diskspace: Vec<Volume>, roots: &[&str]) -> AppDisks {
     let root_folders = roots.iter().map(|path| RootFolder { path: path.to_string(), free_bytes: None }).collect();
-    AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled }
+    AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() }
 }
 
 /// Target 80%, 10-day window, no headroom: round numbers to reason about.
@@ -258,7 +258,7 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     // free space shows it lives elsewhere. Radarr's root agrees with `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
     let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
+        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() };
     let library = LibraryVolumes::build(
         &[
             app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
@@ -286,7 +286,7 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     // disks; anime sits on the share Radarr already reports as `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
     let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
+        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() };
     let probe = |path: &str| match path {
         "/data/media/tv" => Some(vol("/data/media/tv", 834, 780)),
         "/data/media/tv-b" => Some(vol("/data/media/tv-b", 834, 666)),
@@ -459,6 +459,6 @@ fn an_app_that_never_answered_holds_space_for_the_default_week() {
 fn each_instance_answers_for_its_own_recycle_bin() {
     let uhd = AppDisks { instance: "4k".into(), recycle: RecycleBin::Days(3), ..disks(App::Radarr, Vec::new(), &[]) };
     let library = LibraryVolumes::build(&[disks(App::Radarr, Vec::new(), &[]), uhd], no_probe);
-    assert_eq!((library.recycle_secs_of("radarr-1"), library.recycle_secs_of("radarr@4k-1")), (0, 3 * 86_400));
-    assert_eq!(library.recycle_secs_of("sonarr@anime-1-s1"), 7 * 86_400, "an instance that never answered: the default week");
+    assert_eq!((library.recycle_secs_of("radarr-1", "/data"), library.recycle_secs_of("radarr@4k-1", "/data")), (0, 3 * 86_400));
+    assert_eq!(library.recycle_secs_of("sonarr@anime-1-s1", "/data"), 7 * 86_400, "an instance that never answered: the default week");
 }

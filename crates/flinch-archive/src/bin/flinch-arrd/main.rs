@@ -258,7 +258,11 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     for problem in &signals.problems {
         eprintln!("[flinch-arrd] signals: {problem}");
     }
-    let (governance, mut ledger) = storage::govern(&disks, (&movies, &series), &cards, &signals, &settings.capacity, cycle_now);
+    let (governance, mut ledger, capacity_problems) =
+        storage::govern(&disks, (&movies, &series), &cards, &signals, &settings.capacity, cycle_now);
+    // A recycle bin on the wrong disk is the operator's to fix: it reaches the
+    // same persisting-problem notifications as the fleet's faults.
+    signals.problems.extend(capacity_problems);
 
     let plays: HashMap<String, candidates::Plays> = cards
         .iter()

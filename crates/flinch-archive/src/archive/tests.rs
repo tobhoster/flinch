@@ -61,6 +61,7 @@ fn only_a_root_on_a_measured_disk_becomes_a_destination() {
             RootFolder { path: "/archive/movies".into(), free_bytes: None },
         ],
         recycle: RecycleBin::Unknown,
+        recycle_path: String::new(),
     };
     let library = LibraryVolumes::build(&[radarr], |_| None);
     let forecasts = [VolumeForecast { volume: "/archive".into(), forecast: forecast(1_000, 500, 0) }];

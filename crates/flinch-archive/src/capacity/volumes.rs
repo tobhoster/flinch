@@ -53,6 +53,8 @@ pub struct AppDisks {
     pub root_folders: Vec<RootFolder>,
     /// How long a delete stays on disk in the app's recycle bin.
     pub recycle: RecycleBin,
+    /// The recycle bin's folder as the app sees it; empty when it has none.
+    pub recycle_path: String,
 }
 
 /// Where an app keeps its library, with the free space it measured there.
@@ -158,6 +160,38 @@ pub struct LibraryVolumes {
     pub unmatched_roots: Vec<(String, String)>,
     /// Each reporting instance's recycle bin; one that never answered is `Unknown`.
     recycle: Vec<(String, RecycleBin)>,
+    /// Where each instance's bin sits, by instance key, when it could be
+    /// measured: the bin folder and the filesystem under it.
+    bins: Vec<(String, String, Volume)>,
+}
+
+/// A recycle bin on another filesystem than the library it deletes from.
+/// Such a delete frees the library disk at once and fills the bin's disk for
+/// the bin's window instead, so it is credited as freed and reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinElsewhere {
+    /// The instance key (`sonarr`, `radarr@4k`).
+    pub owner: String,
+    pub bin: String,
+    /// The governed disk the bin is on, when it is one.
+    pub on: Option<String>,
+    /// The governed disks it deletes from.
+    pub from: Vec<String>,
+    pub bin_days: Option<u32>,
+}
+
+impl BinElsewhere {
+    /// One sentence for the log and the problem notifications.
+    pub fn describe(&self) -> String {
+        let on = self.on.as_deref().map_or_else(|| "another disk".to_string(), |disk| format!("disk {disk}"));
+        let held = self.bin_days.map_or_else(|| "until it is emptied".to_string(), |days| format!("for {days} days"));
+        format!(
+            "{}'s recycle bin {} is on {on}, not on {}: each delete moves its files there {held} instead of freeing space where it is short. Clear the recycle bin folder (Settings › Media Management) or give each disk its own",
+            self.owner,
+            self.bin,
+            self.from.join(", "),
+        )
+    }
 }
 
 impl LibraryVolumes {
@@ -173,6 +207,16 @@ impl LibraryVolumes {
         for disk in disks {
             let owner = crate::ids::instance_key(disk.app, &disk.instance);
             library.recycle.push((owner.clone(), disk.recycle));
+            if disk.recycle != RecycleBin::Disabled && !disk.recycle_path.trim().is_empty() {
+                // FLINCH's own mount answers with a device; a reported mount
+                // only counts when it is not the container's `/`, which holds
+                // every path and so proves nothing (Sonarr reports no NFS mount).
+                let measured = probe(&disk.recycle_path)
+                    .or_else(|| deepest_mount(&disk.recycle_path, &disk.diskspace).filter(|mount| !trim_separators(&mount.path).is_empty()).cloned());
+                if let Some(fs) = measured {
+                    library.bins.push((owner.clone(), disk.recycle_path.clone(), fs));
+                }
+            }
             for root in &disk.root_folders {
                 let reported = deepest_mount(&root.path, &disk.diskspace).filter(|mount| root.is_on(mount)).cloned();
                 let Some(mount) = reported.or_else(|| probe(&root.path).filter(|found| root.is_on(found))) else {
@@ -222,15 +266,57 @@ impl LibraryVolumes {
         self.recycle.iter().find(|(owner, _)| owns(owner, app, instance)).map_or(RecycleBin::Unknown, |(_, bin)| *bin)
     }
 
-    /// How long a delete of `card_id` may still occupy its volume: its
-    /// instance's bin ([`crate::ids::ArrRef`]); an id naming none is `Unknown`.
-    pub fn recycle_secs_of(&self, card_id: &str) -> u64 {
-        crate::ids::ArrRef::card(card_id).map_or(RecycleBin::Unknown, |item| self.recycle_bin(item.app, item.instance)).hold_secs()
+    /// How long a delete of `card_id` from `volume` may still occupy that
+    /// volume: its instance's bin window ([`crate::ids::ArrRef`]; an id naming
+    /// none is `Unknown`), or nothing when the bin is on another filesystem,
+    /// where the delete moves the files at once.
+    pub fn recycle_secs_of(&self, card_id: &str, volume: &str) -> u64 {
+        let Some(item) = crate::ids::ArrRef::card(card_id) else {
+            return RecycleBin::Unknown.hold_secs();
+        };
+        let owner = crate::ids::instance_key(item.app, item.instance);
+        if self.bin_elsewhere(&owner, volume) {
+            return 0;
+        }
+        self.recycle_bin(item.app, item.instance).hold_secs()
+    }
+
+    /// Whether `owner`'s bin is measured on a filesystem other than `volume`'s.
+    fn bin_elsewhere(&self, owner: &str, volume: &str) -> bool {
+        let Some((_, _, fs)) = self.bins.iter().find(|(known, _, _)| known == owner) else { return false };
+        self.volumes.iter().find(|known| known.path == volume).is_some_and(|disk| !same_filesystem(disk, fs))
     }
 
     /// The instance keys whose bin is never emptied.
     pub fn never_emptied(&self) -> impl Iterator<Item = &str> {
         self.recycle.iter().filter(|(_, bin)| *bin == RecycleBin::NeverEmptied).map(|(owner, _)| owner.as_str())
+    }
+
+    /// Each instance whose bin sits on another filesystem than some of the
+    /// governed disks it deletes from.
+    pub fn bins_elsewhere(&self) -> Vec<BinElsewhere> {
+        self.bins
+            .iter()
+            .filter_map(|(owner, bin, fs)| {
+                let mut from: Vec<String> = self
+                    .mounts
+                    .iter()
+                    .filter(|(known, _, key)| known == owner && self.bin_elsewhere(owner, key))
+                    .map(|(_, _, key)| key.clone())
+                    .collect();
+                from.sort();
+                from.dedup();
+                if from.is_empty() {
+                    return None;
+                }
+                let on = self.volumes.iter().find(|disk| same_filesystem(disk, fs)).map(|disk| disk.path.clone());
+                let bin_days = match self.recycle.iter().find(|(known, _)| known == owner).map(|(_, bin)| *bin) {
+                    Some(RecycleBin::Days(days)) => Some(days),
+                    _ => None,
+                };
+                Some(BinElsewhere { owner: owner.clone(), bin: bin.clone(), on, from, bin_days })
+            })
+            .collect()
     }
 }
 

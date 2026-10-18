@@ -52,11 +52,18 @@ wrong thing:
   so that is a guess from identical size and free space within 0.5%. Shares
   FLINCH measures itself carry their device instead, which settles it: two
   same-size disks that filled alike (tv and tv-b, both at 93%) stay two disks.
-- **The recycle bin is credited.** Radarr/Sonarr delete into a recycle bin on the
-  same disk, so freed space shows up late. FLINCH keeps a ledger of what it
+- **The recycle bin is credited, where it is.** Radarr/Sonarr delete into a
+  recycle bin, so freed space shows up late. FLINCH keeps a ledger of what it
   handed over and takes those bytes off the projection until the bin's window
   (read live from each app) passes and the disk shows them freed — otherwise
   every cycle in that window would evict a second batch for the same gap.
+  FLINCH also locates each bin the way it locates a root (its own mount
+  first, by device). A bin on another filesystem than the disk a delete
+  leaves holds nothing there: the delete moves the files at once, so it is
+  credited as freed immediately, and the bin's disk fills for the window
+  instead. That is reported as a problem naming the bin, its disk and the
+  disks it deletes from (seen live: Sonarr's bin on the movies share, so every
+  TV delete would have filled the movies disk for three days).
 - **Freed space is checked, not assumed.** After an eviction's recycle-bin
   window, FLINCH checks that the disk dropped by the item's size, and keeps
   crediting the bytes for a 2-day grace. If no drop shows by then, the eviction
