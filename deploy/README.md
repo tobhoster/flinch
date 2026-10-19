@@ -812,19 +812,21 @@ only for pinned items and items someone is partway through, so your other
 Maintainerr rule groups still act on everything else.
 
 1. Make the two delete collections, Movies (`Watched Movies Cleanup` by
-   default) and Seasons (`Watched Seasons Cleanup`), manual-membership
-   collections with a delete action. If they also keep their own rules,
-   Maintainerr will delete what those rules select regardless of FLINCH's
-   plan. A season collection needs "Unmonitor and delete existing episodes"
+   default) and Seasons (`Watched Seasons Cleanup`), with a delete action.
+   FLINCH fills them. Any rules their groups keep would pick items next to
+   FLINCH's plan, so FLINCH turns those rules off itself (Settings >
+   Collections > **Stop Maintainerr's own rules**, on by default), after
+   saving each group to `state/maintainerr-rules-backup/`. A season
+   collection needs "Unmonitor and delete existing episodes"
    ("Unmonitor and delete season", or deleting the show if empty, work too).
    Never "Unmonitor and delete all": Maintainerr refuses it for seasons, so
    nothing would ever leave. FLINCH reports it and hands that collection
    nothing.
 2. Create the Leaving Soon collections (`Leaving Soon` by default): one
    Maintainerr rule group per library with that same title, of media type
-   *movie* for the movie library and *season* for TV. Turn **Use rules** off:
-   FLINCH adds the items, and with a delete action anything the group's own
-   rules selected would be deleted by Maintainerr on its own. Give each an
+   *movie* for the movie library and *season* for TV. Their rules may select
+   nothing: FLINCH adds the items and, as above, turns any rules on them off.
+   Give each an
    *arr action that deletes files ("Delete" for movies, one of the season
    actions above for TV), "Take action after days" set to the household's
    warning window (14 is a good start), "Show on Plex home" on and "Keep in

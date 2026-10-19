@@ -47,6 +47,28 @@ pub struct Import {
     pub epoch: u64,
     /// The file's size.
     pub bytes: u64,
+    /// When its download was last grabbed before it landed, unix seconds;
+    /// `None` when the read holds no grab of it (a manual import, or a grab
+    /// before the window).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grabbed_at: Option<u64>,
+}
+
+/// How long after its grab an import may land and still be an arrival. Live,
+/// over 30 days of history, imports landed either within 15.1 h of their grab
+/// (usenet within 5.6 h, the slowest torrents 12.8 h and 15.1 h) or in bursts
+/// 32 to 145 h after it, the latest being the flush once the full TV disks
+/// had room again; none landed in between.
+pub const BACKLOG_AFTER_SECS: u64 = 24 * 3_600;
+
+impl Import {
+    /// Whether it sat downloaded but not imported (out of space, blocked)
+    /// rather than arriving. Its bytes counted as queued while it waited and
+    /// are in the disk's used bytes once it lands; counting them in the
+    /// arrival rate as well would project one flush forward as daily demand.
+    pub fn is_backlog(&self) -> bool {
+        self.grabbed_at.is_some_and(|grabbed| self.epoch.saturating_sub(grabbed) > BACKLOG_AFTER_SECS)
+    }
 }
 
 /// One download in an instance's queue, counted once however many episodes it covers.
@@ -56,7 +78,9 @@ pub struct Queued {
     /// The instance whose queue holds it; empty for the default.
     pub instance: String,
     pub item: ItemRef,
-    pub bytes_left: u64,
+    /// What it will still land on its volume: the bytes left to download, or
+    /// the whole download once it is complete and not imported yet.
+    pub bytes: u64,
 }
 
 /// A Seerr request that was not declined.

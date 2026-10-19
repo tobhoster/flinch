@@ -10,20 +10,29 @@ The daemon measures every disk that holds a library and forecasts each one a
 window ahead. Every cycle forecasts afresh from the measurement and the logs.
 
 ```text
-v        = EWMA_α(bytes imported per day, last 30 days)
-U_proj   = U + v·W + queued bytes left − evictions not yet freed
+v        = EWMA_α(bytes imported per day, last 30 days, backlog left out)
+U_proj   = U + v·W + queued bytes − evictions not yet freed
 B_target = max(0, U_proj − θ_target·C_max + headroom)
 ```
 
 - **U** is the disk's used bytes; **C_max** its size, or
   `capacity.max_capacity_bytes` when that is smaller.
 - **v** is the daily arrival rate from Radarr's and Sonarr's import history
-  (read at most every 6 hours, cached in `arr-imports.json`), smoothed with
-  α = 0.2.
-- **Queued bytes left** come from their download queues; **evictions not yet
-  freed** are the recycle-bin and held credit below.
+  and grabs (read at most every 6 hours, cached in `arr-imports.json`),
+  smoothed with α = 0.2.
+- **Queued bytes** are what their download queues will still land; **evictions
+  not yet freed** are the recycle-bin and held credit below.
 - Defaults: W = 14 days, θ_target = 0.80, headroom = 50 GiB. All are in
   Settings → Storage (`settings.json` `capacity`).
+
+A download the app holds downloaded but not imported (`importPending`,
+`importBlocked`, `importing`, or complete in the client and not yet picked up)
+is queued at its whole size on the disk its show or movie lives on, though
+nothing is left to download. When it does land it is backlog, not new demand:
+an import more than 24 h after its download's grab (joined by `downloadId`)
+stays out of v. Live, over 30 days, imports landed within 15 h of their grab
+or 32 h and more after it; ten episodes held for days on the full TV disks had
+counted as nothing queued and then, flushed in one night, tripled v.
 
 B_target is what the plan must free on that disk. Zero on every disk means
 healthy: the solver does not run. A disk at θ_emerg (0.95) or more *now* is an
@@ -578,9 +587,18 @@ Every eviction leaves by one of two routes, chosen by why it is safe:
 - **One title, both libraries.** Make one collection per library, both titled
   `Leaving Soon`: the movie one of type *movie*, the TV one of type *season*.
   Each kind uses its own. A TV collection made with the *show* type is
-  reported as the wrong type, and it never blocks movies. Turn **Use rules**
-  off on both: FLINCH adds the items, and anything the group's own rules
-  selected would be deleted by Maintainerr on its own.
+  reported as the wrong type, and it never blocks movies. Their rules may
+  select nothing: FLINCH adds the items.
+- **One planner per collection.** A rule group whose own rules still fill a
+  collection FLINCH hands items to would delete what those rules pick, with
+  no regret, forecast or warning (seen live: two seasons and two movies
+  FLINCH never chose). With `stop_maintainerr_rules` (on by default) each
+  sync turns those rules off: it writes the whole group to
+  `state/maintainerr-rules-backup/<id>-<time>.json`, sends `PUT /api/rules`
+  with the group and its collection exactly as they are and `useRules`
+  off, and reads the group back. No backup, no update. A dry run only
+  prints. Groups on other collections are never touched. Off, Maintainerr's
+  rules keep picking next to FLINCH.
 - **A newcomer never restarts a window.** The next cycle's plan takes what
   Maintainerr already holds first, so a slightly cheaper newcomer cannot push
   an announced item back out and restart its window. The item table shows
@@ -673,10 +691,17 @@ in the library has a name, and says which will download again.
   hand-over. An item nobody finished that is taken out before its Leaving Soon
   add lands counts as taken back; its next hand-over is when Leaving Soon
   takes it.
-- **Monitored with nothing on disk will download again.** Each entry says
-  whether the app still monitors the item (for a season: the show and the
-  season both) and whether a file is back. Monitored with nothing on disk
-  means Radarr or Sonarr will fetch it again. Turn on "Unmonitor Deleted
+- **Still wanted with nothing on disk will download again.** Each entry says
+  whether the app still wants the item and whether a file is back. A movie is
+  wanted while Radarr monitors it. A season is wanted while Sonarr monitors
+  the show and at least one of the season's episodes that has already aired
+  is monitored with no file: Sonarr fetches episodes, not seasons, and
+  Maintainerr unmonitors each episode it deletes while leaving the season
+  switched on. A monitored episode yet to air is a new download, not one
+  coming back. FLINCH reads the episodes of each monitored show with a season
+  listed, every cycle; when that read fails the entry falls back to the show
+  and season switches, which warns rather than hides. Wanted with nothing on
+  disk means Radarr or Sonarr will fetch it again. Turn on "Unmonitor Deleted
   Movies" in Radarr and "Unmonitor Deleted Episodes" in Sonarr (Settings →
   Media Management) so a file deleted outside FLINCH is not downloaded again.
 - **Only deletions that left the entry behind.** Items the app no longer has

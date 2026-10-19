@@ -109,10 +109,10 @@ impl fmt::Display for Misconfigured {
                 f,
                 " has no title: name it in Settings → Collections. Until then never-played reclaim is held, so nothing unwatched is handed over"
             ),
-            (CollectionProblem::NotFound, Route::Delete) => write!(f, " not found: create it in Maintainerr and bind a delete rule to it"),
+            (CollectionProblem::NotFound, Route::Delete) => write!(f, " not found: create a rule group with this name in Maintainerr, with an *arr action that deletes files; FLINCH adds the items"),
             (CollectionProblem::NotFound, Route::LeavingSoon) => write!(
                 f,
-                " not found: add a rule group with this name for the {kind} library in Maintainerr, with an *arr action that deletes files, \"Take action after days\" set (14 is a good start) and \"Show on Plex home\" on; its rules may select nothing, FLINCH adds the items. Until then nothing unwatched is handed over"
+                " not found: add a rule group with this name for the {kind} library in Maintainerr, with an *arr action that deletes files, \"Take action after days\" set (14 is a good start) and \"Show on Plex home\" on; FLINCH adds the items. Until then nothing unwatched is handed over"
             ),
             (CollectionProblem::WrongType { found }, _) => write!(f, " holds {found} items, not {kind}s"),
             (CollectionProblem::Inactive, _) => write!(f, " is inactive"),

@@ -355,6 +355,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             now,
             plex_listed: plex_listed.as_ref(),
             seerr: fetch::maintainerr_seerr_configured(http, args).await,
+            stop_rules: settings.stop_maintainerr_rules,
         };
         (handoff::sync(handoff, observed, &mut api, &mut owned, &governance, &mut ledger, operator_keeps.len()).await, None)
     };
@@ -407,7 +408,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             health,
             never_played_hold,
             never_played_requested: settings.unwatched_reclaim_enabled,
-            outside: history::outside(&removals, &ledger, (&movies, &series), now),
+            outside: history::outside((http, args), &removals, &ledger, (&movies, &series), now).await,
             embedding,
             inflow,
             inflow_actions,

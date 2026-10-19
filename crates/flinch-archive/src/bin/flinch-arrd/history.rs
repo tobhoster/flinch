@@ -6,7 +6,7 @@
 //! other cycle reads the cache. A failed read keeps the cached spans:
 //! presence is never worth failing a cycle over.
 
-use super::fetch::fetch_json;
+use super::fetch::{fetch_json, fetch_series_episodes};
 use super::Args;
 use anyhow::{Context, Result};
 use flinch_archive::arr::history::{HistoryPage, HistoryRecord};
@@ -154,18 +154,39 @@ pub(super) async fn attach(client: &reqwest::Client, args: &Args, movies: &mut [
 }
 
 /// The items whose files something other than FLINCH removed lately, logged
-/// when any is still monitored with nothing on disk: it will download again.
-pub(super) fn outside(
+/// when any is still wanted with nothing on disk: it will download again.
+///
+/// Request bound: one `/api/v3/episode` read per monitored show with a season
+/// listed — at most [`outside::LIMIT`], usually a handful. A read that fails
+/// leaves that show's seasons on their monitored flags, which warn rather
+/// than hide, so no read is retried.
+pub(super) async fn outside(
+    (http, args): (&reqwest::Client, &Args),
     removals: &[Removal],
     ledger: &EvictionLedger,
     (movies, series): (&[ArrMovie], &[ArrSeries]),
     now: u64,
 ) -> Vec<OutsideDeletion> {
-    let listed = outside::outside_deletions(removals, &ledger.handoffs, movies, series, now);
+    let mut listed = outside::outside_deletions(removals, &ledger.handoffs, movies, series, now);
+    let mut episodes = HashMap::new();
+    for show in outside::shows_to_settle(&listed, series) {
+        match fetch_series_episodes(http, args, &show.instance, show.id).await {
+            Ok(read) => {
+                episodes.insert(show.subject(), read);
+            }
+            Err(error) => {
+                eprintln!(
+                    "[flinch-arrd] sonarr episodes of {} unreadable, its deleted seasons keep the monitored flags: {error:#}",
+                    show.subject()
+                )
+            }
+        }
+    }
+    outside::settle_seasons(&mut listed, series, &episodes, now);
     let returning = listed.iter().filter(|item| item.monitored == Some(true) && !item.on_disk).count();
     if !listed.is_empty() {
         println!(
-            "[flinch-arrd] deleted outside FLINCH in the last {} days: {} item(s), {returning} still monitored with nothing on disk",
+            "[flinch-arrd] deleted outside FLINCH in the last {} days: {} item(s), {returning} still wanted with nothing on disk",
             outside::WINDOW_SECS / 86_400,
             listed.len()
         );

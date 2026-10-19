@@ -416,6 +416,12 @@ export default function Settings({ status }) {
             help="Announces items nobody finished before deletion: a Maintainerr collection, or with the native executor a Plex collection FLINCH keeps in each library. Blank keeps never-played reclaim off.">
             <TextField id="collection_leaving" value={form.collection_leaving} onChange={set('collection_leaving')} />
           </Row>
+          <Row label="Maintainerr rules" htmlFor="stop_maintainerr_rules"
+            help="Rules on these collections pick items next to FLINCH's plan, with no regret or warning. On, FLINCH turns them off each run, after saving each rule group to state/maintainerr-rules-backup/. Other rule groups are never touched.">
+            <Toggle id="stop_maintainerr_rules" checked={form.stop_maintainerr_rules !== false} onChange={set('stop_maintainerr_rules')}>
+              Stop Maintainerr's own rules on these collections
+            </Toggle>
+          </Row>
         </Section>
 
         <Section title="Instances">
