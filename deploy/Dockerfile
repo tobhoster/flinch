@@ -20,7 +20,7 @@ COPY crates ./crates
 RUN cargo build --release --locked -p flinch-archive --bin flinch-arrd --bin flinch-fit \
     && cargo build --release --locked -p flinch-web --bin flinch-web --bin flinch-demo
 
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 RUN apk add --no-cache ca-certificates tzdata libstdc++ libgcc && adduser -D -u 1000 flinch
 WORKDIR /data
 COPY --from=builder /build/target/release/flinch-arrd /usr/local/bin/flinch-arrd
