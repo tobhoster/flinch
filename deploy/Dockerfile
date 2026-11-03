@@ -1,7 +1,7 @@
 # flinch — one image, two binaries, a React UI baked at build time.
 # Node exists only in the builder stage; the runtime is Rust + static assets.
 # Base images are pinned by digest; Dependabot moves tag and digest together.
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS ui
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS ui
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
