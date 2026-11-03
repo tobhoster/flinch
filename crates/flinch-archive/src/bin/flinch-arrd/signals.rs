@@ -1,5 +1,6 @@
 //! The cycle's external signals ([`flinch_archive::signals`]): every Radarr
-//! and Sonarr instance's imports (read at most every six hours, cached in `arr-imports.json`)
+//! and Sonarr instance's imports with their grabs (read at most every six
+//! hours, cached in `arr-imports.json`)
 //! and queues, Seerr requests and watchlists, and per-card availability from
 //! Prowlarr (a budgeted trickle of searches, cached in `releases.json`)
 //! judged against SABnzbd's retention. Every source is best-effort: one that
@@ -13,7 +14,7 @@ use flinch_archive::arr::history::HistoryPage;
 use flinch_archive::arr::instances::Connection;
 use flinch_archive::signals::arr::{self, ImportCache, ImportRead};
 use flinch_archive::signals::release::{self, ReleaseCache, Searched};
-use flinch_archive::signals::{seerr, Queued, Signals, Watchlisted};
+use flinch_archive::signals::{seerr, Import, Queued, Signals, Watchlisted};
 use flinch_archive::ArchiveCard;
 use std::path::Path;
 
@@ -53,10 +54,9 @@ async fn imports(http: &reqwest::Client, args: &Args, path: &Path, now: u64, sig
         if cache.is_fresh(arr.app, &arr.name, now) {
             continue;
         }
-        match fetch_json(http, &format!("{}{}", arr.base, arr::imports_path(arr.app, now)), &arr.key).await.and_then(array) {
-            Ok(records) => {
-                let read = ImportRead { read_at: now, imports: arr::parse_imports(arr.app, &arr.name, records) };
-                cache.store(arr.app, &arr.name, read);
+        match read_imports(http, arr, now).await {
+            Ok(imports) => {
+                cache.store(arr.app, &arr.name, ImportRead { read_at: now, with_grabs: true, imports });
                 read_any = true;
             }
             Err(error) => {
@@ -73,6 +73,13 @@ async fn imports(http: &reqwest::Client, args: &Args, path: &Path, now: u64, sig
         super::write_state(path, &cache);
     }
     signals.imports = cache.imports(now);
+}
+
+/// One instance's imports of the window, each joined to its download's grab.
+async fn read_imports(http: &reqwest::Client, arr: &Connection, now: u64) -> Result<Vec<Import>> {
+    let imports = array(fetch_json(http, &format!("{}{}", arr.base, arr::imports_path(arr.app, now)), &arr.key).await?)?;
+    let grabs = array(fetch_json(http, &format!("{}{}", arr.base, arr::grabs_path(now)), &arr.key).await?)?;
+    Ok(arr::parse_imports(arr.app, &arr.name, imports, grabs))
 }
 
 /// One instance's queue, every page up to the cap.
@@ -244,7 +251,7 @@ async fn sab_retention(http: &reqwest::Client, args: &Args, signals: &mut Signal
 }
 
 /// The trimmed base url and key, when both are set.
-fn configured<'a>(url: &'a str, key: &'a str) -> Option<(&'a str, &'a str)> {
+pub(super) fn configured<'a>(url: &'a str, key: &'a str) -> Option<(&'a str, &'a str)> {
     let url = url.trim().trim_end_matches('/');
     (!url.is_empty() && !key.is_empty()).then_some((url, key))
 }

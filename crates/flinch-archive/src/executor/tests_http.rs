@@ -13,7 +13,7 @@ use std::net::TcpListener;
 use std::thread::JoinHandle;
 
 /// One request as the fake saw it: `METHOD /path?query` and the body.
-type Seen = (String, String);
+pub(crate) type Seen = (String, String);
 
 fn read_request(stream: &mut std::net::TcpStream) -> (String, String) {
     let mut request = Vec::new();
@@ -44,7 +44,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> (String, String) {
 }
 
 /// Serves `script` in order, one connection each, checking the API key.
-fn fake(script: Vec<(u16, &'static str)>) -> (String, JoinHandle<Vec<Seen>>) {
+pub(crate) fn fake(script: Vec<(u16, &'static str)>) -> (String, JoinHandle<Vec<Seen>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind the fake app");
     let base = format!("http://{}", listener.local_addr().expect("fake address"));
     let handle = std::thread::spawn(move || {
@@ -67,7 +67,7 @@ fn fake(script: Vec<(u16, &'static str)>) -> (String, JoinHandle<Vec<Seen>>) {
     (base, handle)
 }
 
-fn client() -> reqwest::Client {
+pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().expect("client")
 }
 

@@ -3,7 +3,7 @@
 //! plans exactly what an enforcing run would.
 
 use flinch_archive::maintainerr::{
-    CollectionInfo, ExclusionRow, HttpMaintainerr, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion,
+    CollectionInfo, ExclusionRow, HttpMaintainerr, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion, RuleGroup,
 };
 
 pub(super) enum Sink {
@@ -82,6 +82,20 @@ impl MaintainerrApi for Sink {
             Sink::Live(api) => api.remove_from_collection(collection_id, item_key).await,
             Sink::DryRun(_) => {
                 println!("[dry-run] would remove ratingKey {item_key} from collection {collection_id}");
+                Ok(())
+            }
+        }
+    }
+
+    async fn rule_groups(&mut self) -> Result<Vec<RuleGroup>, MaintainerrError> {
+        self.reader().rule_groups().await
+    }
+
+    async fn turn_off_rules(&mut self, group: &RuleGroup) -> Result<(), MaintainerrError> {
+        match self {
+            Sink::Live(api) => api.turn_off_rules(group).await,
+            Sink::DryRun(_) => {
+                println!("[dry-run] would turn off the rules of Maintainerr rule group {} ({:?})", group.id, group.name);
                 Ok(())
             }
         }

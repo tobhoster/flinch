@@ -59,6 +59,19 @@ pub(super) struct Handoff<'a> {
     pub(super) plex_listed: Option<&'a HashSet<String>>,
     /// Whether Maintainerr has Seerr configured; `None` when unread.
     pub(super) seerr: Option<bool>,
+    /// Turn off Maintainerr's own rules on the collections FLINCH fills.
+    pub(super) stop_rules: bool,
+}
+
+/// Where a rule group's JSON goes before FLINCH turns its rules off: one file
+/// per group and moment, so a later backup never overwrites an earlier one.
+fn back_up(group: &mx::RuleGroup, now: u64) -> std::io::Result<String> {
+    let dir = state_dir().join("maintainerr-rules-backup");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}-{now}.json", group.id));
+    let text = serde_json::to_string_pretty(&group.raw).map_err(std::io::Error::other)?;
+    std::fs::write(&path, text)?;
+    Ok(path.display().to_string())
 }
 
 /// Sync Maintainerr with the cycle's decisions and book the ledger. An
@@ -73,11 +86,21 @@ pub(super) async fn sync(
     ledger: &mut EvictionLedger,
     operator_keeps: usize,
 ) -> mx::SyncSummary {
-    let Handoff { items, cards, report, eligible, titles, caps, enforcing, now, plex_listed, seerr } = handoff;
+    let Handoff { items, cards, report, eligible, titles, caps, enforcing, now, plex_listed, seerr, stop_rules } = handoff;
     let names: HashMap<&str, &str> = cards.iter().map(|card| (card.id.as_str(), card.title.as_str())).collect();
     let observed = match observed {
         Ok(observed) => observed,
         Err(error) => return mx::SyncSummary::unavailable(&error, !enforcing, operator_keeps),
+    };
+    // Before planning: one planner per collection. A failed read is reported
+    // and the sync goes on; Maintainerr's rules then keep picking this cycle.
+    let rules_off = if stop_rules {
+        match mx::turn_off(api, &observed.collections, titles, |group| back_up(group, now)).await {
+            Ok(outcomes) => outcomes,
+            Err(error) => vec![mx::RulesOff::Failed { name: "every rule group".into(), error: error.to_string() }],
+        }
+    } else {
+        Vec::new()
     };
     let pick =
         |ids: &[String]| -> Vec<SyncItem> { ids.iter().filter_map(|id| items.get(id.as_str()).map(|item| (*item).clone())).collect() };
@@ -121,7 +144,13 @@ pub(super) async fn sync(
             eprintln!("[flinch-arrd] protected.json/scheduled.json write failed: {error}");
         }
     }
-    let summary = mx::SyncSummary::new(&synced, !enforcing);
+    let mut summary = mx::SyncSummary::new(&synced, !enforcing);
+    for outcome in rules_off {
+        match outcome {
+            mx::RulesOff::Failed { .. } => summary.problems.push(outcome.to_string()),
+            _ => summary.warnings.push(outcome.to_string()),
+        }
+    }
     for problem in summary.problems.iter().chain(&summary.warnings) {
         eprintln!("[flinch-arrd] maintainerr: {problem}");
     }
