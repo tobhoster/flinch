@@ -29,7 +29,7 @@ candle-core = "0.11"
 # port and its memory-mapped VarBuilder; no default features exist to drop.
 candle-nn = { version = "0.11", default-features = false }
 candle-transformers = { version = "0.11", default-features = false }
-tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 # Poster decoding for the optional image half of EmbeddingGemma 2: pure-Rust
 # codecs for what TMDB and TheTVDB serve, nothing else.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
