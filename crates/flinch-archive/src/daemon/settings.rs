@@ -25,6 +25,11 @@ pub struct RuntimeSettings {
     /// own library. Blank holds never-played reclaim off (see
     /// [`super::NeverPlayedHold`]).
     pub collection_leaving: String,
+    /// Turn off Maintainerr's own rules on the collections above, so only
+    /// FLINCH decides what enters them ([`crate::maintainerr::turn_off`]).
+    /// On by default; each group is backed up first. Off leaves Maintainerr's
+    /// rules picking items next to FLINCH, as before.
+    pub stop_maintainerr_rules: bool,
     /// Let items nobody ever played be candidates. Off by default: deleting on
     /// the strength of absent evidence is the operator's call.
     pub unwatched_reclaim_enabled: bool,
@@ -91,6 +96,9 @@ pub struct RuntimeSettings {
     /// Radarr and Sonarr instances beyond the default one of each
     /// ([`crate::arr::instances`]); none by default. Keys come from the env.
     pub instances: Vec<crate::arr::instances::InstanceConfig>,
+    /// Watching Radarr, Sonarr and Prowlarr: health, stuck queue items,
+    /// failing indexers ([`crate::fleet`]); every automatic action off.
+    pub fleet: crate::fleet::FleetConfig,
 }
 
 impl Default for RuntimeSettings {
@@ -103,6 +111,7 @@ impl Default for RuntimeSettings {
             collection_movie: "Watched Movies Cleanup".to_string(),
             collection_season: "Watched Seasons Cleanup".to_string(),
             collection_leaving: "Leaving Soon".to_string(),
+            stop_maintainerr_rules: true,
             unwatched_reclaim_enabled: false,
             plex_url: String::new(),
             plex_token: String::new(),
@@ -129,6 +138,7 @@ impl Default for RuntimeSettings {
             household: crate::requests::HouseholdConfig::default(),
             archive: crate::archive::ArchiveConfig::default(),
             instances: Vec::new(),
+            fleet: crate::fleet::FleetConfig::default(),
         }
     }
 }
@@ -177,6 +187,7 @@ impl RuntimeSettings {
         self.trash.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.archive.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         crate::arr::instances::validate(&self.instances).map_err(|error| SettingsError::Invalid(error.0))?;
+        self.fleet.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.streaming.validate().map_err(|error| SettingsError::Invalid(error.0))
     }
 }

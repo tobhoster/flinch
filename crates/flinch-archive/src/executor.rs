@@ -24,7 +24,7 @@
 
 use serde::{Deserialize, Serialize};
 
-mod http;
+pub(crate) mod http;
 pub mod lifecycle;
 pub mod radarr;
 pub mod recheck;
@@ -35,7 +35,7 @@ pub mod state;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod tests_http;
+pub(crate) mod tests_http;
 
 pub use http::ExecutorError;
 pub use shelf::{LeavingSoonShelf, Shelf, ShelfError, ShelfGroup, ShelfServer, Shelved};

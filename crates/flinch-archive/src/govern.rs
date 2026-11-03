@@ -43,7 +43,7 @@ pub fn show_volume<'a>(library: &'a LibraryVolumes, show: &ArrSeries) -> Option<
 }
 
 /// What is arriving on each volume: bytes imported per day (oldest first, see
-/// [`crate::capacity::daily_series`]) and bytes still downloading.
+/// [`crate::capacity::daily_series`]) and bytes queued downloads will still land.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Ingest {
     pub daily: BTreeMap<String, Vec<u64>>,
@@ -51,9 +51,9 @@ pub struct Ingest {
 }
 
 impl Ingest {
-    /// Attribute imports (the last [`INGEST_HISTORY_DAYS`]) and queued downloads
-    /// to volumes through the *arr item each names. An item on no governed
-    /// disk counts nowhere.
+    /// Attribute imports (the last [`INGEST_HISTORY_DAYS`], a backlog left out:
+    /// [`crate::signals::Import::is_backlog`]) and queued downloads to volumes
+    /// through the *arr item each names. An item on no governed disk counts nowhere.
     pub fn attribute(library: &LibraryVolumes, movies: &[ArrMovie], series: &[ArrSeries], signals: &Signals, now: u64) -> Self {
         // *arr ids repeat across instances: an event joins by instance and id.
         let movies: HashMap<(&str, u32), &ArrMovie> = movies.iter().map(|movie| ((movie.instance.as_str(), movie.id), movie)).collect();
@@ -69,7 +69,7 @@ impl Ingest {
             }
         };
         let mut imports: BTreeMap<&str, Vec<(u64, u64)>> = BTreeMap::new();
-        for import in &signals.imports {
+        for import in signals.imports.iter().filter(|import| !import.is_backlog()) {
             if let Some(volume) = volume_of(&import.instance, &import.item) {
                 imports.entry(volume).or_default().push((import.epoch, import.bytes));
             }
@@ -78,7 +78,7 @@ impl Ingest {
         for queued in &signals.queue {
             if let Some(volume) = volume_of(&queued.instance, &queued.item) {
                 let bytes = queue.entry(volume.to_string()).or_insert(0);
-                *bytes = bytes.saturating_add(queued.bytes_left);
+                *bytes = bytes.saturating_add(queued.bytes);
             }
         }
         let daily =
