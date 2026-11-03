@@ -519,7 +519,7 @@ export default function Settings({ status }) {
             </Toggle>
           </Row>
           <Row label="Model" htmlFor="taste.judge_model"
-            help="clef runs on your Ollama (ollama pull clef, 51 GB); clef:cloud runs on ollama.com with an API key. Switching clears the cached answers.">
+            help="clef runs on your Ollama (ollama pull clef, about 20 GB; on CPU about 45 s a question); clef:cloud runs on ollama.com with an API key and sends it what each viewer played. Switching clears the cached answers.">
             <TextField id="taste.judge_model" placeholder="clef" spellCheck={false} autoComplete="off" value={form.taste.judge_model} onChange={setIn('taste', 'judge_model')} />
           </Row>
           <Row label="Daily budget" htmlFor="taste.judge_daily_budget" help="Most questions asked per day (UTC), at most three minutes per run, this run's titles first. Answers are kept in taste_answers.json, so a title is asked again only when what its viewers played changes.">

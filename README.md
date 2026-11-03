@@ -251,7 +251,7 @@ qBittorrent/Transmission and TMDB are optional. FLINCH runs as two small pods
 on Kubernetes from one published image (`ghcr.io/tobhoster/flinch`, amd64 and
 arm64, no GPU). Taste and search by meaning are optional and need an
 [Ollama](https://ollama.com) both pods can reach, with `ollama pull
-embeddinggemma` (about 620 MB) and `ollama pull clef` (51 GB), or `clef:cloud`
+embeddinggemma` (about 620 MB) and `ollama pull clef` (about 20 GB), or `clef:cloud`
 on ollama.com with an API key; no model runs inside FLINCH.
 
 1. **Configure** the namespace and service URLs in

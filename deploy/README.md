@@ -520,11 +520,18 @@ Before switching it on, pull the models on the Ollama host:
 
 ```bash
 ollama pull embeddinggemma   # about 620 MB: the vectors
-ollama pull clef             # 51 GB: the taste judge
+ollama pull clef             # about 20 GB: the taste judge
 ```
 
-Or skip the 51 GB: set the taste model to `clef:cloud`, which runs on
-ollama.com and needs an ollama.com API key (Settings > Ollama).
+Clef needs about 20 GB of memory while loaded. On a CPU-only host it is slow:
+on an i7-12700T (20 threads, no GPU) one question took about 45 s warm and
+70 s with the model loading, so a cycle's 180 s judge budget asks three or
+four and a 500-question day fills over many cycles. Answers are cached, so
+only new or changed look-alikes are asked again.
+
+Or skip the local model: set the taste model to `clef:cloud`, which runs on
+ollama.com and needs an ollama.com API key (Settings > Ollama). Each question
+then carries, to ollama.com, the titles a viewer played and left unplayed.
 
 The description is built from content metadata only: title, year, genres,
 certification, runtime, original language, studio or network, series type,

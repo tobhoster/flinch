@@ -199,7 +199,7 @@ it, judged against what it played of the titles most like it.
    whether anything played it in the 90 days after, and who. For a title
    nobody played, the vectors still pick the 20 most similar titles (cosine
    similarity) from other shows or films with a closed outcome. Clef,
-   Cloudflare's 27B decision model (`ollama pull clef`, 51 GB, or
+   Cloudflare's 27B decision model (`ollama pull clef`, about 20 GB, or
    `clef:cloud` on ollama.com), gets them through Ollama's
    `POST /v1/systemone`: the candidate's description and those titles,
    nearest first, each marked played or unplayed, and one yes/no question,
