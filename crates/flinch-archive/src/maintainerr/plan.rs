@@ -275,6 +275,10 @@ pub fn operator_keeps(items: &[SyncItem], observed: &Observed, owned: &OwnedStat
         .collect()
 }
 
+/// One library kind and route, and the collections it resolved to (`None`
+/// when it is misconfigured).
+type Resolved<'a> = ((LibraryKind, Route), Option<Vec<&'a CollectionInfo>>);
+
 pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, caps: &Caps) -> SyncPlan {
     let owned_ids = owned.exclusion_ids();
     let mut plan = SyncPlan {
@@ -291,7 +295,7 @@ pub fn plan_sync(desired: &Desired, observed: &Observed, owned: &OwnedState, cap
         gone: BTreeSet::new(),
         warnings: validate::cleanup_warnings(&observed.collections, &desired.collections, desired.seerr_configured),
     };
-    let mut resolved: Vec<((LibraryKind, Route), Option<Vec<&CollectionInfo>>)> = Vec::new();
+    let mut resolved: Vec<Resolved> = Vec::new();
     for kind in [LibraryKind::Movie, LibraryKind::Season] {
         for route in [Route::Delete, Route::LeavingSoon] {
             let found = validate::resolve(&observed.collections, &desired.collections, kind, route)

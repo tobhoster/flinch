@@ -158,10 +158,10 @@ mod tests {
             match value {
                 Value::Array(entries) => entries.iter().for_each(|entry| stale(key, entry, around, found)),
                 Value::Object(fields) => fields.iter().for_each(|(key, entry)| stale(key, entry, around, found)),
-                Value::Number(number) if !key.ends_with("_bytes") => {
-                    if number.as_i64().is_some_and(|n| (n - around).abs() < 5 * 365 * 86_400) {
-                        found.push(format!("{key}={number}"));
-                    }
+                Value::Number(number)
+                    if !key.ends_with("_bytes") && number.as_i64().is_some_and(|n| (n - around).abs() < 5 * 365 * 86_400) =>
+                {
+                    found.push(format!("{key}={number}"));
                 }
                 _ => {}
             }

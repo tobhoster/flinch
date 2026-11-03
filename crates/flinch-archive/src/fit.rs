@@ -207,7 +207,7 @@ pub fn load_model(state_dir: &std::path::Path) -> Option<FittedModel> {
 thread_local! {
     /// Deterministic split seed: the same data must always produce the same
     /// report, or nobody can check a decision twice.
-    static SPLIT_SALT: u64 = 0x5eed_1234_abcd;
+    static SPLIT_SALT: u64 = const { 0x5eed_1234_abcd };
 }
 
 /// Fold membership by item id — the grouping that stops leakage.

@@ -104,7 +104,7 @@ fn keep_tag_ids(labels: Option<&TagLabels>, keep_tag: &str) -> Option<Vec<u32>> 
 /// A keep-tagged item is a hard guard. Unreadable tags hold every item of that
 /// app for the cycle: a keep tag FLINCH cannot see must not be deleted past.
 fn mark_keep(tags: &[u32], keep_ids: Option<&[u32]>) -> bool {
-    keep_ids.map_or(true, |ids| tags.iter().any(|tag| ids.contains(tag)))
+    keep_ids.is_none_or(|ids| tags.iter().any(|tag| ids.contains(tag)))
 }
 
 /// Newest file arrival per season (`/api/v3/episodefile?seriesId=`): each
