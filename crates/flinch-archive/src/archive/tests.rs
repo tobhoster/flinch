@@ -50,8 +50,12 @@ fn archive_settings_are_validated(#[case] config: ArchiveConfig, #[case] valid: 
 #[test]
 fn only_a_root_on_a_measured_disk_becomes_a_destination() {
     // Different sizes: two filesystems, never merged as one.
-    let disk =
-        |path: &str, total_gib: u64| Volume { path: path.to_string(), total_bytes: total_gib * GIB, free_bytes: total_gib / 2 * GIB };
+    let disk = |path: &str, total_gib: u64| Volume {
+        path: path.to_string(),
+        total_bytes: total_gib * GIB,
+        free_bytes: total_gib / 2 * GIB,
+        device: None,
+    };
     let radarr = AppDisks {
         app: App::Radarr,
         instance: String::new(),
@@ -61,6 +65,7 @@ fn only_a_root_on_a_measured_disk_becomes_a_destination() {
             RootFolder { path: "/archive/movies".into(), free_bytes: None },
         ],
         recycle: RecycleBin::Unknown,
+        recycle_path: String::new(),
     };
     let library = LibraryVolumes::build(&[radarr], |_| None);
     let forecasts = [VolumeForecast { volume: "/archive".into(), forecast: forecast(1_000, 500, 0) }];

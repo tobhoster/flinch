@@ -29,6 +29,7 @@ use thiserror::Error;
 
 mod client;
 mod execute;
+mod own_rules;
 mod plan;
 mod state;
 mod validate;
@@ -39,6 +40,7 @@ mod tests;
 
 pub use client::HttpMaintainerr;
 pub use execute::{execute, observe, Outcome, SyncReport, SyncSummary};
+pub use own_rules::{competing, turn_off, RuleGroup, RulesOff};
 pub use plan::{operator_keeps, plan_sync, Blocked, Caps, Desired, Observed, SyncAction, SyncItem, SyncPlan};
 pub use state::{read_operator_keeps, write_operator_keeps, OwnedState, ProtectedEntry, ScheduledEntry};
 pub use validate::{destinations, CollectionProblem, CollectionTitles, Destination, Handover, Misconfigured, Route};
@@ -177,4 +179,11 @@ pub trait MaintainerrApi {
     /// is always sent: without it Maintainerr removes the item from every
     /// collection.
     fn remove_from_collection(&mut self, collection_id: i64, item_key: &str) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
+
+    /// `GET /api/rules`: every rule group, with its rules.
+    fn rule_groups(&mut self) -> impl Future<Output = Result<Vec<RuleGroup>, MaintainerrError>> + Send;
+
+    /// `PUT /api/rules` with the group as it is and its rules off
+    /// ([`own_rules`]): the only rule-group write FLINCH makes.
+    fn turn_off_rules(&mut self, group: &RuleGroup) -> impl Future<Output = Result<(), MaintainerrError>> + Send;
 }

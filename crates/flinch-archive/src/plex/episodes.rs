@@ -44,7 +44,8 @@ impl PlexEpisodes {
 
 /// A series' episodes as Sonarr numbers them, per season: every episode, and
 /// the ones with a file — by TVDB id for confirming seasons, and by episode
-/// number for counting plays against what is on disk.
+/// number for counting plays against what is on disk — and the ones Sonarr
+/// still wants: monitored, with no file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SonarrEpisodes {
     numbered: Seasons,
@@ -54,6 +55,12 @@ pub struct SonarrEpisodes {
     /// A row did not parse, or had a file but no episode number: the numbers
     /// on disk may be missing one, so none of them are trusted.
     numbers_incomplete: bool,
+    /// Season → the first airing (unix seconds) of its monitored episodes
+    /// without a file. One with no air date has not aired and is left out.
+    wanted_since: BTreeMap<u32, u64>,
+    /// A row did not parse or did not say whether it is monitored: which
+    /// episodes Sonarr wants is unknown.
+    monitoring_incomplete: bool,
 }
 
 impl SonarrEpisodes {
@@ -70,13 +77,28 @@ impl SonarrEpisodes {
             tvdb_id: Option<u32>,
             #[serde(default)]
             has_file: bool,
+            #[serde(default)]
+            monitored: Option<bool>,
+            #[serde(default)]
+            air_date_utc: Option<String>,
         }
         let mut episodes = Self::default();
         for row in rows {
             let Ok(row) = Row::deserialize(row) else {
                 episodes.numbers_incomplete = true;
+                episodes.monitoring_incomplete = true;
                 continue;
             };
+            match row.monitored {
+                None => episodes.monitoring_incomplete = true,
+                Some(true) if !row.has_file => {
+                    if let Some(aired) = row.air_date_utc.as_deref().and_then(crate::presence::parse_utc) {
+                        let first = episodes.wanted_since.entry(row.season_number).or_insert(aired);
+                        *first = (*first).min(aired);
+                    }
+                }
+                Some(_) => {}
+            }
             if row.has_file {
                 match row.episode_number {
                     Some(number) => {
@@ -92,6 +114,13 @@ impl SonarrEpisodes {
             }
         }
         episodes
+    }
+
+    /// Whether Sonarr still wants an episode of `season` that has aired by
+    /// `now`: monitored, with no file. A monitored episode yet to air is a new
+    /// download, not one coming back. `None` when a row did not say.
+    pub fn wants_aired(&self, season: u32, now: u64) -> Option<bool> {
+        (!self.monitoring_incomplete).then(|| self.wanted_since.get(&season).is_some_and(|aired| *aired <= now))
     }
 
     /// Episode numbers of `season` with a file, ascending; `files` is Sonarr's
