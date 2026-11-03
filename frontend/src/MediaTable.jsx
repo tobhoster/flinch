@@ -110,7 +110,7 @@ const SORTABLE = [
   ...COLUMNS.filter((c) => c.key).map(({ key, label }) => ({ key, label })),
 ];
 
-/** The search box: plain title text, or meaning (EmbeddingGemma 2 on the server). */
+/** The search box: plain title text, or meaning (Ollama embeddings on the server). */
 const SEARCH_MODES = [
   { key: 'title', label: 'Title', placeholder: 'Search titles' },
   { key: 'meaning', label: 'Meaning', placeholder: 'Describe it, press Enter' },

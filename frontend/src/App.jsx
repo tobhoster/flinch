@@ -243,13 +243,22 @@ function Connections({ status }) {
         : { state: 'down', why: 'history incomplete, not recording, or not kept for every user and library' }),
     });
   }
-  // Taste embeddings only once switched on; off, cached vectors still serve.
+  // Ollama embeddings only once switched on; off, cached vectors still serve.
   const emb = status.embedding;
   if (emb?.configured) {
     services.push({
       name: 'Embeddings',
       ...(emb.problem ? { state: 'down', why: emb.problem }
         : { state: 'up', why: `${emb.with_vector} of ${emb.subjects} titles have a vector, ${emb.pending} to go, ${emb.budget_left} left today` }),
+    });
+  }
+  // The Clef taste judge likewise; off, taste counts for nothing.
+  const taste = status.taste;
+  if (taste?.configured) {
+    services.push({
+      name: 'Taste',
+      ...(taste.problem ? { state: 'down', why: taste.problem }
+        : { state: 'up', why: `${taste.model}: ${taste.answered} answers cached, ${taste.pending} waiting, ${taste.asked} asked this run, ${taste.budget_left} left today` }),
     });
   }
   return (

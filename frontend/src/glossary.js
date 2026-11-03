@@ -25,7 +25,7 @@ export const GLOSSARY = {
   },
   model: {
     term: 'Watch model',
-    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays, season cycle, whether everyone who played it finished it, and — for a title nobody played — how readily the household plays similar titles (taste, from embedding vectors of each title’s description made by the model chosen in Settings → Taste embeddings — EmbeddingGemma 2, bge-small or MiniLM — and of its poster when Posters is on; recent outcomes can weigh more with a taste half-life). Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
+    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays, season cycle, whether everyone who played it finished it, and — for a title nobody played — how readily the household would play it (taste: the title’s 20 nearest neighbours by the Ollama embedding vectors of each title’s description, marked played or not by each viewer, are put to Clef, which judges whether that viewer would play it; set up under Settings → Embeddings and Settings → Taste). Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
   },
   projection: {
     term: 'Storage projection',
@@ -133,11 +133,11 @@ export const GLOSSARY = {
   },
   themes: {
     term: 'Themes',
-    body: 'The library grouped by what titles are about: the taste embedding vectors clustered once a day, each group named by its most common genres. Played = titles anyone played in the last 365 days. A theme of 5+ titles under 10% played is seldom played. Display and quality advice only: themes never change what the plan evicts.',
+    body: 'The library grouped by what titles are about: the Ollama embedding vectors clustered once a day, each group named by its most common genres. Played = titles anyone played in the last 365 days. A theme of 5+ titles under 10% played is seldom played. Display and quality advice only: themes never change what the plan evicts.',
   },
   meaning_search: {
     term: 'Search by meaning',
-    body: 'Finds titles by what they are about, not their name: your words and each title’s description (genres, cast, overview) are compared as vectors of the model the titles were embedded with, closest first. Titles not embedded yet are left out. Search only: it never changes the plan.',
+    body: 'Finds titles by what they are about, not their name: your words are embedded by the same Ollama model as each title’s description (genres, cast, overview) and compared with them, closest first. Titles not embedded yet are left out. Search only: it never changes the plan.',
   },
   notifications: {
     term: 'Notifications',

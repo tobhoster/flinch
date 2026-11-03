@@ -50,12 +50,13 @@ it would make, and sends nothing.
 - **Treats finished as finished.** A title everyone who started it has
   finished is cheap to lose, however recently it ended. A season counts as
   finished only when every episode still on disk was watched.
-- **Learns what you'd watch.** EmbeddingGemma 2 — or the small bge-small or
-  MiniLM encoders (MiniLM runs in ~110 MB) — runs inside FLINCH on the CPU
-  (a pure-Rust candle port, no model server). Titles nobody opened yet are
-  compared with what each active viewer actually played, and reasons name the
-  look-alikes ("like *Hereditary*, *The Conjuring*, unplayed here").
-  [Details](deploy/README.md#taste-embeddings-embeddinggemma-2).
+- **Learns what you'd watch.** An [Ollama](https://ollama.com) you run
+  embeds each title's description (`embeddinggemma` by default, any Ollama
+  embedding model works), and Clef, Cloudflare's decision model, judges
+  through the same Ollama whether each active viewer would play a title
+  nobody opened yet, given which of its nearest look-alikes they played.
+  Reasons name the look-alikes ("like *Hereditary*, *The Conjuring*,
+  unplayed here"). [Details](deploy/README.md#taste-ollama-and-clef).
 - **Takes your rules as hard constraints.** Keep, keep for N days after a
   request, keep the newest N seasons or the first season, prefer or must
   evict: by library, folder, disk, tag, Plex section, requester, theme, genre,
@@ -140,7 +141,7 @@ deleting instead (Settings → Executor).
 flowchart LR
     ARR["Radarr + Sonarr<br/>files · disks · imports · queue"] --> ID["match by catalogue id<br/>TMDB · TVDB · IMDb"]
     PX["Plex · Jellyfin/Emby · Tautulli<br/>Tracearr · Trakt"] --> ID
-    ID --> R["regret per item<br/>+ taste (EmbeddingGemma 2)"]
+    ID --> R["regret per item<br/>+ taste (Ollama + Clef)"]
     EXT["Seerr · Prowlarr · SABnzbd<br/>torrents · streaming"] --> R
     ARR --> FC["forecast per disk<br/>14 days ahead"]
     RU["your rules"] --> S
@@ -240,9 +241,10 @@ newer is needed only if it does the deleting (the default; the native executor
 does it without). Tautulli, Tracearr, Trakt, Seerr, Prowlarr, SABnzbd,
 qBittorrent/Transmission and TMDB are optional. FLINCH runs as two small pods
 on Kubernetes from one published image (`ghcr.io/tobhoster/flinch`, amd64 and
-arm64, no GPU). With taste embeddings on, the daemon downloads about 580 MB
-of EmbeddingGemma 2 weights to its state volume once and needs up to 1 GiB of
-memory.
+arm64, no GPU). Taste and search by meaning are optional and need an
+[Ollama](https://ollama.com) both pods can reach, with `ollama pull
+embeddinggemma` (about 620 MB) and `ollama pull clef` (51 GB), or `clef:cloud`
+on ollama.com with an API key; no model runs inside FLINCH.
 
 1. **Configure** the namespace and service URLs in
    [`deploy/kustomization.yaml`](deploy/kustomization.yaml).

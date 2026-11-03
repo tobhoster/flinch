@@ -127,6 +127,11 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRACEARR_API_KEY, optional: true } }
             - name: FLINCH_TRAKT_CLIENT_ID
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRAKT_CLIENT_ID, optional: true } }
+            # Ollama API key, needed only for ollama.com (clef:cloud); used when
+            # Settings > Ollama names OLLAMA_API_KEY as its key variable. A
+            # local Ollama needs none.
+            - name: OLLAMA_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: OLLAMA_API_KEY, optional: true } }
           # Everything it writes goes to /state or /data; the image stays as built.
           securityContext:
             allowPrivilegeEscalation: false
@@ -134,9 +139,8 @@ spec:
             capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            # Taste embeddings map EmbeddingGemma 2's 542 MB of text weights
-            # while they run (about 650 MB resident at peak).
-            limits: { memory: 1Gi }
+            # Embeddings and the Clef taste judge run on Ollama, not in this pod.
+            limits: { memory: 512Mi }
           volumeMounts:
             - { name: watch, mountPath: /cfg, readOnly: true }
             - { name: state, mountPath: /state }

@@ -108,8 +108,8 @@ R = P(watch within 90 days) × C_reacq × A_household
   the show in the last 14 days), cos(2π·days since the last play / 365.25)
   for the film played every December, **finished** (1 when everyone who
   played it got to the end and nobody's latest play stopped short; see
-  below), and **taste** (for a title nobody played: how readily the household
-  plays titles like it, see [Taste](#taste-embeddinggemma-2)). The hand-set
+  below), and **taste** (for a title nobody played: whether the household
+  would play it, judged by Clef, see [Taste](#taste-ollama-vectors-clef-judges)). The hand-set
   priors are λ₀ = 0.004/day and β = −0.5 (recency), 0 (viewings), +0.7 (show
   plays), +0.3 (annual cycle), −2.5 (finished), 0 (taste), set from this
   household's record: finished titles are almost never replayed, so a
@@ -149,75 +149,79 @@ claims, or no seeders and retention terms (see
 [Integrations](#integrations-by-identity--never-by-title) for what each is
 asked, and [deploy/README.md](../deploy/README.md#configure) to connect them).
 
-### Taste (EmbeddingGemma 2)
+### Taste (Ollama vectors, Clef judges)
 
 Without it, every download nobody has opened looks the same to the hazard:
-"never played, N days on disk". Taste says how readily this household plays
-titles like it.
+"never played, N days on disk". Taste says whether this household would play
+it, judged against what it played of the titles most like it.
 
 1. **One vector per title.** The daemon builds a text from content metadata
    only — Radarr/Sonarr and Plex: title, year, genres, overview, people,
-   studio or network, rating, language, runtime, franchise — and embeds it
-   with EmbeddingGemma 2's text encoder, run in-process on the CPU (a Rust
-   port on candle whose vectors match the reference ONNX export to a cosine
-   of 1.000000; a show's seasons share the show's vector). The text never
-   holds anything about the household's viewing, so the vector cannot leak an
-   outcome. Vectors are cached in `state/embeddings.json` and re-embedded only
-   when the text, model revision or dimension changes, within a daily budget
-   and two minutes per cycle. With Settings → Taste embeddings → Posters on,
-   the text also holds the title's upstream poster (`Poster: <|image|>` after
-   the title line): a candle port of the model's vision tower turns it into
-   up to 280 soft tokens the text encoder reads in that place, so one vector
-   describes words and artwork (reference parity: cosine 1.000000 on a PNG,
-   0.99985 or better on JPEGs). Poster vectors are a space of their own
-   (model id `…+posters`, recipe 2), so switching posters re-embeds every
-   title; a poster that cannot be used leaves the text alone, never a gap.
-   Setting it up:
-   [deploy/README.md](../deploy/README.md#taste-embeddings-embeddinggemma-2).
-
-   **Smaller models.** For hosts that cannot spare EmbeddingGemma 2's ~650
-   MB, Settings → Taste embeddings → Model offers two small BERT sentence
-   encoders run by candle's BERT port: `BAAI/bge-small-en-v1.5` (CLS pooling)
-   and `sentence-transformers/all-MiniLM-L6-v2` (mean pooling), each 384-d
-   (the Dimensions setting is Gemma's alone), L2-normalised, fed the same
-   description without Gemma's `task: classification | query: ` prompt and
-   cut to 256 tokens. Posters need Gemma. The model id keys the vector cache,
-   so switching models re-embeds every title; everything downstream —
-   classifier, themes, inflow, search — is the same.
-2. **A nearest-neighbour classifier over the household's own outcomes.** The
-   panel (see [Accuracy](#accuracy-you-can-check)) records, for each title and
-   cut date, whether anything played it in the 90 days after, and who. For a
-   title nobody played, taste takes the 20 most similar titles (cosine
-   similarity) from other shows or films, weights each one's played share by
-   its similarity, adds 2 pseudo-neighbours at the overall played rate, and
-   reports the result as log-odds minus the overall log-odds: 0 means no
-   evidence, negative means "titles like this sit unplayed here".
-3. **Per viewer, warmest wins.** A household-wide share blurs its people: the
+   studio or network, rating, language, runtime, franchise — and has
+   [Ollama](https://ollama.com) embed it (`POST /api/embed`, the model in
+   Settings → Embeddings, `embeddinggemma` by default; a show's seasons share
+   the show's vector). Models named `embeddinggemma…` get the
+   `task: classification | query: ` prefix, `bge…` models bge's query
+   instruction, others the bare text. Dimensions above 0 cut each vector to
+   that length and re-normalise it (Matryoshka truncation); 0 keeps the
+   model's own length. The text never holds anything about the household's
+   viewing, so the vector cannot leak an outcome. Vectors are cached in
+   `state/embeddings.json` (model id `ollama:<model>`, with each title's
+   display title and the text it embedded) and re-embedded only when the
+   text, model or dimensions change, within a daily budget and two minutes
+   per cycle, on-disk titles first. Ollama unreachable or without the model
+   leaves the cache as it is and says so in the header; the cycle never
+   fails on it. Nothing runs in-process any more: the candle encoders
+   (EmbeddingGemma 2, bge-small, MiniLM), their weights download and poster
+   (vision) vectors are removed; Ollama's embed API takes text only. Setting
+   it up: [deploy/README.md](../deploy/README.md#taste-ollama-and-clef).
+2. **Clef judges against the household's own outcomes.** The panel (see
+   [Accuracy](#accuracy-you-can-check)) records, for each title and cut date,
+   whether anything played it in the 90 days after, and who. For a title
+   nobody played, the vectors still pick the 20 most similar titles (cosine
+   similarity) from other shows or films with a closed outcome. Clef,
+   Cloudflare's 27B decision model (`ollama pull clef`, 51 GB, or
+   `clef:cloud` on ollama.com), gets them through Ollama's
+   `POST /v1/systemone`: the candidate's description and those titles,
+   nearest first, each marked played or unplayed, and one yes/no question,
+   `would_play`: judging by those, would this viewer play the title within
+   90 days of it arriving? Taste is the log-odds of Clef's answer p, so 0
+   (p = 0.5) means no evidence and negative means "titles like this sit
+   unplayed here". The similarity-weighted neighbour rate of earlier
+   versions is gone.
+3. **Answers are cached.** `state/taste_answers.json` keys each answer by
+   the sha256 of the model, the question's version and what was asked. What
+   was asked holds booleans (played or not), not decayed rates, so it stays
+   the same from day to day and a title is asked again only when its
+   neighbours or their outcomes change. A missing answer waits as pending,
+   taste 0 meanwhile; once a cycle the daemon asks the pending questions,
+   this cycle's titles first, within Settings → Taste → Daily budget
+   (`taste.judge_daily_budget`, 1–20000 per UTC day) and three minutes.
+   Answers unused for 30 days are pruned; changing the Clef model clears the
+   cache. The daily refit adds its panel rows' missing answers to the
+   pending ones, so the fit learns from Clef's answers once they are in;
+   `flinch-fit` only reads answers unless run with `--write`.
+4. **Per viewer, warmest wins.** A household-wide share blurs its people: the
    one person who watches comedies can play every one while the comedies sit
-   among a lot of horror nobody else touches. So taste is read for each
+   among a lot of horror nobody else touches. So taste is asked for each
    active viewer (a Plex account or Tautulli user with a play in the year
-   before the date asked about) from their own outcomes — a title counts as
-   played by them if they played it in the 90 days, over the cut dates they
-   were active at — against their own overall rate, and the household's taste
+   before the date asked about) with the neighbours marked by their own
+   outcomes — a title counts as played by them if they played it in the 90
+   days, over the cut dates they were active at — and the household's taste
    is the warmest viewer's: someone here would watch it. A viewer counts only
    after playing at least 5 titles; when no active viewer has, the
-   household-wide outcomes speak as above. Viewers are not merged across
-   Plex and Tautulli: the same person seen by both is two viewers, which can
-   only repeat their taste, never outvote anyone's.
-4. **Leak-free.** A panel row at a cut date hears only outcomes whose 90 days
+   household-wide outcomes are asked about instead. Viewers are not merged
+   across Plex and Tautulli: the same person seen by both is two viewers,
+   which can only repeat their taste, never outvote anyone's.
+5. **Leak-free.** A panel row at a cut date hears only outcomes whose 90 days
    had closed by that date, never its own show's, from the viewers active
    before that date. The daemon asks with the outcomes the adopted fit
    learned from, household-wide and per viewer, stored with it in
-   `state/hazard.json`; a `hazard.json` from before per-viewer taste does not
-   load, and the daemon refits on its next cycle.
-5. **Recent outcomes may weigh more.** With Settings → Taste embeddings →
-   Taste half-life set (`taste.half_life_days`, 7–3650; 0, the default, is
-   off), each closed outcome counts `exp(−age / τ)` instead of 1, τ =
-   half-life / ln 2, its age measured from when its 90 days closed to the
-   date the record is asked at. The same weights are applied to each panel
-   row's own record and to the daemon's, so the fit learns exactly what the
-   daemon will ask with; an outcome closed after a cut still never reaches
-   it. A changed half-life takes effect at the next daily refit.
+   `state/hazard.json`. A `hazard.json` whose taste coefficient was learned
+   on the old neighbour rate does not load, and the daemon refits on its
+   next cycle. The taste half-life (`taste.half_life_days`) is removed with
+   that rate: what Clef is shown holds no weights to decay; a settings.json
+   that still has it loads and ignores it.
 6. **Gated like everything else.** Its prior weight is 0, so under the priors
    it moves nothing. It enters P(watch) only through the full fit, and only
    when that fit beats the priors out of fold. It speaks only for titles
@@ -229,8 +233,9 @@ titles like it.
    speaks), `· like Hereditary, The Conjuring (unplayed here)` for a cold one
    (played by nobody).
 
-Embedding switched off, a missing vector or an unread outcome record leaves
-taste at 0, the household's average: absence is never read as dislike.
+Embedding or the judge switched off, a missing vector, an answer still
+pending or an unread outcome record leaves taste at 0, the household's
+average: absence is never read as dislike.
 
 ### Who competes
 
@@ -605,7 +610,7 @@ unwatched* (`crates/flinch-archive/src/inflow.rs`):
   Netflix (DE), a service you have". Checked before taste; unknown
   availability names nothing.
 
-Taste here is the classifier of *Taste (EmbeddingGemma 2)* asked with the
+Taste here is Clef's answer of *Taste (Ollama vectors, Clef judges)* asked with the
 adopted fit's outcomes, or, under the priors, with the household-wide record
 of the current library (a title is played if any part of it ever was). It
 is advice only and never feeds P(watch) from this path. Each suggestion
@@ -1220,7 +1225,7 @@ dry run.
 ### Themes: where the disk goes, and what nobody visits
 
 Once a day, and whenever a taste vector changes, the daemon clusters the
-vectors of every movie and show ([Taste](#taste-embeddinggemma-2)) with
+vectors of every movie and show ([Taste](#taste-ollama-vectors-clef-judges)) with
 spherical k-means: cosine similarity, k ≈ √(n/2) clamped to 4–24, k-means++
 seeding from a fixed seed, ties to the lower index and at most 30 rounds, so
 the same vectors always give the same themes. Fewer than 16 titles with a
@@ -1337,20 +1342,17 @@ filter by theme, and an item's details name its theme.
 `GET /api/search?q=…&kind=movie|season&limit=50` (behind the login like
 every API route), and the table shows the 50 titles whose description is
 closest, best first; a column header re-sorts them and *Sort by relevance*
-brings the ranking back. flinch-web embeds the query with the same
-EmbeddingGemma 2 encoder on the weights the daemon downloaded
-(`state/models/…`; flinch-web never downloads them), cuts it to the cached
-vectors' dimensions and scores each item by cosine against
-`state/embeddings.json`; a season scores as its show, and titles without a
-vector yet are counted but not listed. Text-and-poster vectors are searched
-like text-only ones: they sit in the same model's shared text and image
-space (the probe below measured text-only ones). The encoder is opened on
-the first search and kept, queries run one at a time off the async runtime,
-and a query is at most 200 characters. With no weights, no vectors, or
-vectors of another model revision the API answers 409 with what to switch
-on. The query carries the model's retrieval prompt
+brings the ranking back. flinch-web embeds the query through the Ollama in
+Settings → Ollama (`settings.json` `ollama`) with the model the cached
+vectors name, cuts it to their dimensions and scores each item by cosine
+against `state/embeddings.json`; a season scores as its show, and titles
+without a vector yet are counted but not listed. A query is at most 200
+characters. With no vectors the API answers 409 with what to switch on; with
+Ollama unreachable or without that model, 502 with what is wrong. For
+EmbeddingGemma models the query carries the retrieval prompt
 `task: search result | query:` although the cached descriptions carry the
-classification prompt: on 16
+classification prompt. Measured before the move to Ollama, on the removed
+in-process EmbeddingGemma 2: on 16
 hand-labelled queries ("monster on a spaceship", "cooking competition",
 "dinosaurs", …) over 15 classification-prompt descriptions, the retrieval
 prompt ranked the intended title first 16 of 16 times at both 256 and 768
@@ -1373,7 +1375,7 @@ flowchart LR
         ARR["Radarr / Sonarr<br/>ids · files · disks · imports · queue"]
         PX["Plex + Tautulli<br/>GUIDs · history"]
         EXT["Seerr · Prowlarr · SABnzbd<br/>claims · availability"]
-        EMB["EmbeddingGemma 2<br/>in-process (candle)"]
+        EMB["Ollama<br/>embeddings · Clef"]
     end
     subgraph DECIDE["decide"]
         ID["identity join<br/>(GUID)"] --> REG["regret<br/>P(watch) × C_reacq × A"]
@@ -1382,7 +1384,7 @@ flowchart LR
         EXC -->|pinned| KEEP["keep"]
         CAP["per-disk forecast<br/>B_target, recycle credit"] --> PLAN
         FIT["daily fit<br/>(out-of-fold gate)"] --> REG
-        TASTE["taste<br/>nearest titles' outcomes"] --> FIT
+        TASTE["taste<br/>Clef on nearest titles"] --> FIT
         REG --> QA["quality advice<br/>keep · downgrade · evict"]
     end
     subgraph OUT["act"]
