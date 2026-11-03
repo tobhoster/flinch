@@ -23,6 +23,7 @@ pub mod dupes;
 pub mod embedding;
 pub mod executor;
 pub mod fit;
+pub mod fleet;
 pub mod golden;
 pub mod govern;
 pub mod ids;

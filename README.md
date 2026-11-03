@@ -117,6 +117,14 @@ it would make, and sends nothing.
 - **Shows where the disk goes.** Per disk, how much isn't library media and
   what an eviction should have freed; per theme, how big it is and how much of
   it was played this year.
+- **Draws the library.** A graph of titles, who watches and requests them,
+  the disk each fills and what holds it; click a title to see why it stays or
+  goes and keep it with a previewed rule. Rules can be built as chains on a
+  visual canvas, too.
+- **Watches the *arr fleet.** Each app's health and version, what is stuck in
+  a queue and why (a full disk is left to import; a release that never will
+  can be removed and blocklisted), and Prowlarr's failing indexers, with a
+  test button.
 - **Turns off the tap.** Flags what's coming in that nobody will watch (cold
   or abandoned monitored shows, cold requests). While a disk is over target it
   can unmonitor the future seasons and switch off the import lists you ticked.

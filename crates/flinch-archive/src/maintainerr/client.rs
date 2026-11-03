@@ -1,7 +1,7 @@
 //! The live Maintainerr client.
 
-use super::wire;
-use super::{CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion};
+use super::{own_rules, wire};
+use super::{CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion, RuleGroup};
 use reqwest::{Method, RequestBuilder};
 use std::time::Duration;
 
@@ -98,5 +98,22 @@ impl MaintainerrApi for HttpMaintainerr {
             self.request(Method::DELETE, "/api/collections/media").query(&[("mediaId", item_key), ("collectionId", collection.as_str())]);
         let (status, body) = send(wire::REMOVE_MEMBER, request).await?;
         wire::read_accepted(wire::REMOVE_MEMBER, status, &body)
+    }
+
+    async fn rule_groups(&mut self) -> Result<Vec<RuleGroup>, MaintainerrError> {
+        let (status, body) = send(own_rules::RULE_GROUPS, self.request(Method::GET, "/api/rules")).await?;
+        own_rules::read_rule_groups(status, &body)
+    }
+
+    async fn turn_off_rules(&mut self, group: &RuleGroup) -> Result<(), MaintainerrError> {
+        let Some(update) = own_rules::rules_off_request(group) else {
+            return Err(MaintainerrError::Refused {
+                endpoint: own_rules::UPDATE_RULE_GROUP,
+                code: 0,
+                message: "the rule group has no collection".into(),
+            });
+        };
+        let (status, body) = send(own_rules::UPDATE_RULE_GROUP, self.request(Method::PUT, "/api/rules").json(&update)).await?;
+        own_rules::read_update(status, &body)
     }
 }

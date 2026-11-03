@@ -11,6 +11,8 @@
 
 mod auth;
 mod dupes;
+mod fleet;
+mod graph;
 mod notify;
 mod requests;
 mod restore;
@@ -274,6 +276,7 @@ fn app(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/status", get(api_status))
         .route("/api/items", get(api_items))
+        .route("/api/graph", get(graph::api_graph))
         .route("/api/history", get(api_history))
         .route("/api/search", get(search::api_search))
         .route("/api/run", post(api_run))
@@ -286,6 +289,9 @@ fn app(state: AppState) -> Router {
         .route("/api/dupes/decide", post(dupes::decide))
         .route("/api/requests", get(requests::list))
         .route("/api/requests/{id}/{decision}", post(requests::decide))
+        .route("/api/fleet", get(fleet::status))
+        .route("/api/fleet/queue/{app}/{id}/remove", post(fleet::remove))
+        .route("/api/fleet/indexer/{id}/test", post(fleet::test_indexer))
         .route("/api/{*rest}", any(api_unknown))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_auth));
     Router::new()

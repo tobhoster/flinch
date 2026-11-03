@@ -336,7 +336,8 @@ export default function Settings({ status }) {
             <TextField id="keep_tag" placeholder="flinch-keep" autoComplete="off" spellCheck={false} value={form.keep_tag} onChange={set('keep_tag')} />
           </Row>
           <Row label="Rules" term="rules" help="Hard keeps and forced evictions, never a change to regret; keep beats evict. Preview a change before saving it.">
-            <RulesEditor rules={form.rules || []} onChange={(rules) => update({ ...form, rules })} onPreviewed={setPreviewedRules} lastRun={status?.rules} />
+            <RulesEditor rules={form.rules || []} onChange={(rules) => update({ ...form, rules })} onPreviewed={setPreviewedRules} lastRun={status?.rules}
+              context={{ target: Number(form.capacity?.target_utilization) / 100, leavingSoonDays: form.executor === 'native' ? Number(form.native?.leaving_soon_days) : null }} />
           </Row>
           <Row label="Ignored viewers" htmlFor="ignore_viewers" term="ignore_viewers"
             help="Names whose plays count as no play: a guest, a kid's profile, your own test plays. Matched per source (Plex account, Tautulli user, Jellyfin/Emby user, Tracearr username, Trakt source name). Health stays as read, so an item only they played reads as never played only where the record is complete. Plex's own item state of the token's account cannot be split and still counts.">
@@ -415,6 +416,12 @@ export default function Settings({ status }) {
           <Row label="Leaving Soon" htmlFor="collection_leaving" term="leaving_soon"
             help="Announces items nobody finished before deletion: a Maintainerr collection, or with the native executor a Plex collection FLINCH keeps in each library. Blank keeps never-played reclaim off.">
             <TextField id="collection_leaving" value={form.collection_leaving} onChange={set('collection_leaving')} />
+          </Row>
+          <Row label="Maintainerr rules" htmlFor="stop_maintainerr_rules"
+            help="Rules on these collections pick items next to FLINCH's plan, with no regret or warning. On, FLINCH turns them off each run, after saving each rule group to state/maintainerr-rules-backup/. Other rule groups are never touched.">
+            <Toggle id="stop_maintainerr_rules" checked={form.stop_maintainerr_rules !== false} onChange={set('stop_maintainerr_rules')}>
+              Stop Maintainerr's own rules on these collections
+            </Toggle>
           </Row>
         </Section>
 

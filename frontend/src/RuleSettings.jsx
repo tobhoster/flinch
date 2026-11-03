@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, Eye, Loader2, Pencil, Plus, X } from 'lucide-react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
+import { ArrowDown, ArrowUp, Copy, Eye, Loader2, Pencil, Plus, Workflow, X } from 'lucide-react';
 import { previewRules } from './api.js';
 import { GiB } from './ui.jsx';
+
+// React Flow only loads when the Canvas view opens.
+const RuleCanvas = lazy(() => import('./rules/RuleCanvas.jsx'));
 
 // Settings > Rules: hard constraints on what the plan may take (see
 // crates/flinch-archive/src/rules.rs). The list holds the rules exactly as
@@ -10,7 +13,7 @@ import { GiB } from './ui.jsx';
 // saved rules and under this draft, and the page saves rule changes only once
 // that draft was previewed.
 
-const EFFECTS = [
+export const EFFECTS = [
   ['keep', 'Keep'],
   ['keep_until', 'Keep until…'],
   ['keep_latest_seasons', 'Keep the newest seasons'],
@@ -19,14 +22,14 @@ const EFFECTS = [
   ['must_evict', 'Must evict'],
 ];
 
-const EVENTS = [
+export const EVENTS = [
   ['added', 'it was added'],
   ['last_played', 'it was last played'],
   ['requested', 'it was requested'],
 ];
 
 /** Every list condition: `[key, label, placeholder, numeric]`. */
-const LISTS = [
+export const LISTS = [
   ['root_folders', 'Root folders', '/data/media/kids'],
   ['disks', 'Disks', 'volume key'],
   ['tags', '*arr tags', 'kids'],
@@ -38,7 +41,7 @@ const LISTS = [
 ];
 
 /** Every range condition: `[key, label, unit]`. */
-const RANGES = [
+export const RANGES = [
   ['size_gib', 'Size', 'GiB'],
   ['age_days', 'On disk', 'days'],
   ['last_played_days', 'Last played', 'days ago'],
@@ -51,7 +54,7 @@ const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
 const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
 
 /** A scope without its empty conditions, as the server writes it. */
-function clean(scope) {
+export function clean(scope) {
   const out = {};
   for (const [key, value] of Object.entries(scope || {})) {
     if (value == null || (Array.isArray(value) && !value.length)) continue;
@@ -68,7 +71,7 @@ export function rulesPayload(rules) {
   return rules.map((rule) => ({ ...rule, name: rule.name.trim(), scope: clean(rule.scope) }));
 }
 
-function effectLabel(effect) {
+export function effectLabel(effect) {
   if (effect.type === 'keep_until') {
     const event = EVENTS.find(([key]) => key === effect.after)?.[1] || effect.after;
     return `Keep ${effect.days} days after ${event}`;
@@ -78,16 +81,17 @@ function effectLabel(effect) {
 }
 
 /** A new effect of `type`, keeping what the old one had in common. */
-function effectOf(type, old) {
+export function effectOf(type, old) {
   if (type === 'keep_until') return { type, days: old.days || 60, after: old.after || 'requested' };
   if (type === 'keep_latest_seasons') return { type, seasons: old.seasons || 2 };
   return { type };
 }
 
-function scopeLabel(scope) {
+export function scopeLabel(scope) {
   const parts = [];
   const s = clean(scope);
   if (s.kind) parts.push(s.kind === 'movie' ? 'movies' : 'seasons');
+  if (s.ids) parts.push(`titles ${s.ids.join(', ')}`);
   for (const [key, label] of LISTS) if (s[key]) parts.push(`${label.toLowerCase()} ${s[key].join(', ')}`);
   if (s.played != null) parts.push(s.played ? 'played' : 'never played');
   for (const [key, label, unit] of RANGES) {
@@ -231,7 +235,7 @@ function Changes({ title, changes, tone }) {
   );
 }
 
-function PreviewResult({ diff }) {
+export function PreviewResult({ diff }) {
   const totals = (t) => `${t.items} items · ${GiB(t.bytes)} GiB · regret ${t.regret.toFixed(2)}${t.covered ? '' : ' · target not met'}`;
   return (
     <div className="space-y-2 rounded-md border border-line-soft p-3">
@@ -282,9 +286,10 @@ function LastRun({ status }) {
  * can tell whether the rules about to be saved were previewed; `lastRun` is
  * the status block of the saved rules.
  */
-export function RulesEditor({ rules, onChange, onPreviewed, lastRun }) {
+export function RulesEditor({ rules, onChange, onPreviewed, lastRun, context }) {
   const [editing, setEditing] = useState(null);
   const [view, setView] = useState('form');
+  const [workspace, setWorkspace] = useState(false);
   const [preview, setPreview] = useState({ state: 'idle' });
   const set = (index, rule) => onChange(rules.map((r, i) => (i === index ? rule : r)));
   const move = (index, by) => {
@@ -309,14 +314,31 @@ export function RulesEditor({ rules, onChange, onPreviewed, lastRun }) {
     <div className="w-full space-y-3">
       <div className="flex flex-wrap gap-2">
         <button className={`btn ${view === 'form' ? 'btn-primary' : ''}`} onClick={() => setView('form')}>Rules</button>
+        <button className="btn" onClick={() => setWorkspace(true)}><Workflow size={13} /> Visual workspace</button>
         <button className={`btn ${view === 'yaml' ? 'btn-primary' : ''}`} onClick={() => setView('yaml')}>YAML</button>
       </div>
-      {view === 'yaml' ? (
+      {workspace && (
+        // Full window: the Settings column is too narrow for a canvas and its inspector.
+        <div role="dialog" aria-modal="true" aria-label="Visual rules workspace" className="fixed inset-0 z-50 flex flex-col gap-3 bg-ink-950/95 p-4 sm:p-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-fg">Visual rules workspace</span>
+            <span className="text-[12px] text-fg-faint">Edits the rule list on the Settings page; preview and save there, as always.</span>
+            <button className="btn ml-auto" onClick={() => setWorkspace(false)}><X size={13} /> Close</button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <Suspense fallback={<p className="text-[12px] text-fg-faint">Loading the canvas…</p>}>
+              <RuleCanvas rules={rules} onChange={onChange} context={context} />
+            </Suspense>
+          </div>
+        </div>
+      )}
+      {view === 'yaml' && (
         <div className="relative">
           <pre className="max-h-96 overflow-auto rounded-md border border-line-soft bg-ink-950 p-3 font-mono text-[12px] text-fg">{yaml}</pre>
           <button className="btn absolute right-2 top-2 px-2" aria-label="Copy YAML" onClick={() => navigator.clipboard?.writeText(yaml)}><Copy size={13} /></button>
         </div>
-      ) : (
+      )}
+      {view === 'form' && (
         <>
           {rules.map((rule, i) => (
             <div key={i} className="space-y-2">

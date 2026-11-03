@@ -400,6 +400,40 @@ editor with `moveFiles: true` and read back at the new path. A dry run prints
 each move. See
 [The archive tier](../docs/how-it-works.md#the-archive-tier-move-instead-of-delete-off-by-default).
 
+### Fleet (Radarr, Sonarr, Prowlarr health)
+
+On by default (`settings.json` `fleet.enabled`); nothing new goes into the
+Secret (it uses `RADARR_API_KEY`/`SONARR_API_KEY` and, when set,
+`PROWLARR_URL`/`PROWLARR_API_KEY`; without Prowlarr the indexer list is
+empty). Each cycle, before anything else, the daemon reads every Radarr and
+Sonarr instance's version, health checks, disks and download queue, and
+Prowlarr's health and indexers, into `state/arr-fleet-status.json`
+(`GET /api/fleet`). A queue item is listed when the app flags it, with why:
+
+| Reason | Means | Removable |
+| --- | --- | --- |
+| `no_space` | "Not enough free space": it imports by itself once the library disk has room | never |
+| `unimportable` | missing or fake files (an executable), a sample only, "No files eligible", an unknown series or movie, a failed download or usenet repair ("not enough repair blocks") | yes |
+| `stalled_download` | still downloading, with no progress for `fleet.stalled_after_minutes` (120) | no |
+| `other` | flagged by the app for anything else | no |
+
+An indexer is failing while Prowlarr holds it in back-off (`disabledTill`
+set) or it failed in the last 6 hours.
+
+Two actions, each queued by the UI as a file under `state/fleet-requests/`
+and carried out at the top of the next cycle:
+`POST /api/fleet/queue/{instance}/{id}/remove` removes the item from its
+download client and blocklists the release
+(`DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=true`), and is
+refused for anything but an `unimportable` item, by the web and again by the
+daemon; `POST /api/fleet/indexer/{id}/test` runs Prowlarr's indexer test.
+`fleet.auto_remove_unimportable` (off) removes every unimportable item each
+cycle; `fleet.disable_failing_indexers_after_hours` (0, off) disables an
+indexer failing that long. A dry run prints each write and records it as
+`dry-run`; a request is taken once, so ask again after turning dry run off.
+The last 50 actions are kept in the status file. See
+[The *arr fleet](../docs/how-it-works.md#the-arr-fleet-health-stuck-queues-failing-indexers).
+
 ### Quality profiles (TRaSH sync)
 
 Optional, in Settings > Quality profiles (TRaSH), and off by default; nothing
@@ -773,19 +807,21 @@ only for pinned items and items someone is partway through, so your other
 Maintainerr rule groups still act on everything else.
 
 1. Make the two delete collections, Movies (`Watched Movies Cleanup` by
-   default) and Seasons (`Watched Seasons Cleanup`), manual-membership
-   collections with a delete action. If they also keep their own rules,
-   Maintainerr will delete what those rules select regardless of FLINCH's
-   plan. A season collection needs "Unmonitor and delete existing episodes"
+   default) and Seasons (`Watched Seasons Cleanup`), with a delete action.
+   FLINCH fills them. Any rules their groups keep would pick items next to
+   FLINCH's plan, so FLINCH turns those rules off itself (Settings >
+   Collections > **Stop Maintainerr's own rules**, on by default), after
+   saving each group to `state/maintainerr-rules-backup/`. A season
+   collection needs "Unmonitor and delete existing episodes"
    ("Unmonitor and delete season", or deleting the show if empty, work too).
    Never "Unmonitor and delete all": Maintainerr refuses it for seasons, so
    nothing would ever leave. FLINCH reports it and hands that collection
    nothing.
 2. Create the Leaving Soon collections (`Leaving Soon` by default): one
    Maintainerr rule group per library with that same title, of media type
-   *movie* for the movie library and *season* for TV. Turn **Use rules** off:
-   FLINCH adds the items, and with a delete action anything the group's own
-   rules selected would be deleted by Maintainerr on its own. Give each an
+   *movie* for the movie library and *season* for TV. Their rules may select
+   nothing: FLINCH adds the items and, as above, turns any rules on them off.
+   Give each an
    *arr action that deletes files ("Delete" for movies, one of the season
    actions above for TV), "Take action after days" set to the household's
    warning window (14 is a good start), "Show on Plex home" on and "Keep in
@@ -977,6 +1013,9 @@ file reads as "nothing yet".
 | `dupes.json` | the duplicate copies you chose to keep in the UI, confirmed or not | your choices are gone; nothing is removed until you choose and confirm again |
 | `dupes-acted.json` | duplicate copies removed (or tried) in the last 30 days | a failed removal may be tried once more; the kept copy is checked first every time |
 | `restore/<item id>` | an undo the UI queued, until the daemon takes it | nothing; press Restore again |
+| `arr-fleet-status.json` | the last read of every Radarr, Sonarr and Prowlarr: health, disks, stuck queue items with their reason, indexers, and the last 50 fleet actions | read again next cycle; the action log starts over |
+| `fleet-queue.json` | each queue item's bytes left and when it last progressed | every download's stall clock starts over |
+| `fleet-requests/queue-remove.<instance>-<id>`, `fleet-requests/indexer-test.<id>` | a queue removal or indexer test the UI queued, until the daemon takes it | nothing; ask again |
 
 `protected.json` and `scheduled.json` record only the exclusions and
 collection members FLINCH created and verified by reading them back, so runs

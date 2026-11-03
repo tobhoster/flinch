@@ -4,6 +4,7 @@
 //! Sonarr reads its state on unchanged, and Ollama's vectors and Clef's
 //! answers reach the state directory.
 
+mod arrivals;
 mod fake;
 mod instances;
 mod ollama;

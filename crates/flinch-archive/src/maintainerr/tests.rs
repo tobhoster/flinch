@@ -7,6 +7,7 @@ use crate::ids::PlexIds;
 mod client;
 mod execute;
 mod fake;
+mod own_rules;
 mod plan;
 mod props;
 mod state;

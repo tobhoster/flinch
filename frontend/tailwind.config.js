@@ -1,6 +1,7 @@
 /**
- * The palette is declared here and nowhere else; components use it only through
- * Tailwind classes.
+ * The palette is declared here and nowhere else; components use it through
+ * Tailwind classes, and the graph (src/graph/model.js), which needs computed
+ * colours, imports `palette` from here.
  *
  * Neutral greys by default; state colours are muted and reserved for state.
  */
