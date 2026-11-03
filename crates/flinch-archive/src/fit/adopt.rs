@@ -182,12 +182,16 @@ pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel,
     (dataset, model, asked)
 }
 
-/// Note the panel's taste lookups in `answers` (the household's cache) and
-/// write it, so the daemon's taste step asks the missing questions. Nothing
-/// is written while the judge is off or nothing changed.
-pub fn record_questions(state_dir: &Path, answers: Option<AnswerCache>, asked: &Asked, now: u64) -> Result<(), RefitError> {
-    let Some(mut cache) = answers else { return Ok(()) };
-    if cache.note(asked, now) {
+/// Note the panel's taste lookups in `taste_answers.json` as it is on disk
+/// now (answers the daemon wrote since the household was loaded stay), so
+/// the daemon's taste step asks the missing questions. `judge_model` is the
+/// household's ([`Household::answers`]); `None` (the judge off) writes
+/// nothing, and so does a note that changes nothing.
+pub fn record_questions(state_dir: &Path, judge_model: Option<&str>, asked: &Asked, now: u64) -> Result<(), RefitError> {
+    let Some(model) = judge_model else { return Ok(()) };
+    let mut cache = AnswerCache::read(state_dir)?;
+    let retargeted = cache.retarget(model);
+    if cache.note_panel(asked, now) || retargeted {
         cache.write(state_dir)?;
     }
     Ok(())
@@ -196,7 +200,7 @@ pub fn record_questions(state_dir: &Path, answers: Option<AnswerCache>, asked: &
 fn refit(state_dir: &Path, now: u64) -> Result<FitStatus, RefitError> {
     let household = load::load_household(state_dir)?;
     let (_, model, asked) = panel_fit(&household, now);
-    record_questions(state_dir, household.answers, &asked, now)?;
+    record_questions(state_dir, household.answers.as_ref().map(AnswerCache::model), &asked, now)?;
     let adopted = adopt(state_dir, &model)? == Adoption::Written;
     let status = FitStatus {
         fitted_at_unix: now,

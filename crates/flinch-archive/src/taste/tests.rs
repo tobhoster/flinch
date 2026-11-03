@@ -23,10 +23,10 @@ fn store(entries: &[(&str, [f32; 2])]) -> VectorStore {
     store
 }
 
-/// A Clef stand-in: the played share of the three nearest titles, pulled
+/// A Clef stand-in: the played share of the two nearest titles, pulled
 /// toward even odds.
 fn clef(state: &State) -> f64 {
-    let near = &state.nearest[..state.nearest.len().min(3)];
+    let near = &state.nearest[..state.nearest.len().min(2)];
     (near.iter().filter(|neighbour| neighbour.played).count() as f64 + 0.5) / (near.len() as f64 + 1.0)
 }
 
@@ -146,12 +146,19 @@ fn judged_taste(record: &Record, vectors: &VectorStore, subject: &str) -> f64 {
     judged(clef, |judge| taste_of(record, vectors, subject, judge)).unwrap_or(f64::NAN)
 }
 
+/// The household of [`household`] played 2 of its 5 titles.
+const HOUSEHOLD_RATE: f64 = 0.4;
+
+fn log_odds(p: f64) -> f64 {
+    (p / (1.0 - p)).ln()
+}
+
 #[rstest]
-#[case::likely(0.8, (0.8f64 / 0.2).ln())]
-#[case::even_odds_is_no_evidence(0.5, 0.0)]
-#[case::unlikely(0.2, (0.2f64 / 0.8).ln())]
-#[case::certain_is_bounded(1.0, (0.99f64 / 0.01).ln())]
-fn clefs_probability_is_the_taste_as_log_odds(#[case] p: f64, #[case] taste: f64) {
+#[case::likely(0.8, log_odds(0.8) - log_odds(HOUSEHOLD_RATE))]
+#[case::what_the_household_does_anyway_is_no_evidence(HOUSEHOLD_RATE, 0.0)]
+#[case::unlikely(0.2, log_odds(0.2) - log_odds(HOUSEHOLD_RATE))]
+#[case::certain_is_bounded(1.0, log_odds(0.99) - log_odds(HOUSEHOLD_RATE))]
+fn clefs_probability_against_the_audiences_own_rate_is_the_taste(#[case] p: f64, #[case] taste: f64) {
     let vectors = vectors();
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let read = judged(|_| p, |judge| taste_of(&record, &vectors, "radarr-10", judge));
@@ -225,7 +232,9 @@ fn the_warmest_viewer_speaks_and_a_viewer_still_unanswered_holds_the_taste_back(
     cache.answer(bo[0].0.clone(), 0.1, NOW);
     let mut judge = Judge::new(&cache);
     let Some(reading) = shortlist.read(&record, &mut judge) else { panic!("both answered") };
-    assert!((reading.taste - (0.9f64 / 0.1).ln()).abs() < 1e-12, "Ann's warmth speaks: {}", reading.taste);
+    // Ann played 5 of the 21 closed titles: 0.9 from her is far above her own rate.
+    let ann = log_odds(0.9) - log_odds(5.0 / 21.0);
+    assert!((reading.taste - ann).abs() < 1e-12, "Ann's warmth speaks: {}", reading.taste);
     assert_eq!(reading.like.map(|like| (like.played, like.subjects.len())), Some((true, 5)), "the five comedies Ann played");
 }
 

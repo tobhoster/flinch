@@ -97,3 +97,24 @@ fn folds_split_by_item_so_a_title_never_validates_itself() {
         assert_eq!(folds.len(), 1, "{id} spans folds");
     }
 }
+
+#[test]
+fn recording_the_panels_questions_keeps_answers_the_daemon_wrote_since() {
+    use crate::taste::{AnswerCache, Judge, Neighbour, State};
+    let dir = std::env::temp_dir().join(format!("flinch-fit-record-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // The household was loaded with an empty cache; the panel missed one question.
+    let loaded = AnswerCache::default();
+    let mut judge = Judge::new(&loaded);
+    judge.p(State { nearest: vec![Neighbour { title: "Heat (1995)".into(), played: true }], title: "Title: Thief".into() });
+    let asked = judge.finish();
+    // Meanwhile the daemon answered another and wrote the file.
+    let mut daemon = AnswerCache::default();
+    daemon.retarget("clef");
+    daemon.answer("answered-meanwhile".into(), 0.6, NOW);
+    daemon.write(&dir).unwrap();
+    adopt::record_questions(&dir, Some("clef"), &asked, NOW).unwrap();
+    let after = AnswerCache::read(&dir).unwrap();
+    assert_eq!((after.answered(), after.pending()), (1, 1), "the daemon's answer stays beside the panel's question");
+    std::fs::remove_dir_all(&dir).ok();
+}

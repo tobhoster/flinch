@@ -9,8 +9,9 @@
 //! retrieve a title's nearest titles with a closed outcome; Clef, Ollama's
 //! decision model, reads them and judges ([`judge`]): shown the title's
 //! description and those neighbours, each marked played or not, would this
-//! audience play it? Taste is that probability as log-odds (0 at even odds:
-//! no evidence either way).
+//! audience play it? Taste is that probability as log-odds against the
+//! audience's own played rate (0 when Clef expects what that audience does
+//! with anything: no evidence either way).
 //!
 //! A household is several people, and the household-wide record blurs them: a
 //! comedy can sit among horror nobody else touches while the one person who
@@ -71,6 +72,11 @@ impl Outcomes {
             self.played += 1.0;
         }
         self.total += 1.0;
+    }
+
+    /// The played share; `None` before any outcome closed.
+    fn rate(self) -> Option<f64> {
+        (self.total > 0.0).then(|| self.played / self.total)
     }
 }
 
@@ -291,20 +297,26 @@ impl Shortlist<'_> {
 
     /// Who speaks for the household, and their taste: the warmest viewer with
     /// a question to ask, or the household as a whole when no viewer has one.
-    /// Every audience's question is looked up, so all of them are recorded
-    /// when some are unanswered.
+    /// Each audience's lean is Clef's log-odds minus that audience's own
+    /// played rate, so a typical title for a viewer who plays little reads 0,
+    /// not cold. Every audience's question is looked up, so all of them are
+    /// recorded when some are unanswered.
     fn speaker<'r>(&self, record: &'r Record, judge: &mut Judge<'_>) -> Option<(f64, &'r Tally)> {
-        let mut audiences: Vec<(State, &Tally)> = record.viewers.values().filter_map(|tally| Some((self.state(tally)?, tally))).collect();
+        let asked = |tally: &'r Tally| Some((self.state(tally)?, tally.overall.rate()?, tally));
+        let mut audiences: Vec<(State, f64, &Tally)> = record.viewers.values().filter_map(asked).collect();
         if audiences.is_empty() {
-            audiences.extend(self.state(&record.household).map(|state| (state, &record.household)));
+            audiences.extend(asked(&record.household));
         }
         let mut warmest: Option<(f64, &Tally)> = None;
         let mut unanswered = false;
-        for (state, tally) in audiences {
-            match judge.p(state) {
-                Some(p) if warmest.is_none_or(|(best, _)| logit(p) > best) => warmest = Some((logit(p), tally)),
-                Some(_) => {}
-                None => unanswered = true,
+        for (state, overall, tally) in audiences {
+            let Some(p) = judge.p(state) else {
+                unanswered = true;
+                continue;
+            };
+            let lean = logit(p) - logit(overall);
+            if warmest.is_none_or(|(best, _)| lean > best) {
+                warmest = Some((lean, tally));
             }
         }
         warmest.filter(|_| !unanswered)

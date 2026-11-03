@@ -185,10 +185,12 @@ it, judged against what it played of the titles most like it.
    `POST /v1/systemone`: the candidate's description and those titles,
    nearest first, each marked played or unplayed, and one yes/no question,
    `would_play`: judging by those, would this viewer play the title within
-   90 days of it arriving? Taste is the log-odds of Clef's answer p, so 0
-   (p = 0.5) means no evidence and negative means "titles like this sit
-   unplayed here". The similarity-weighted neighbour rate of earlier
-   versions is gone.
+   90 days of it arriving? Taste is the log-odds of Clef's answer p minus
+   the log-odds of that viewer's own played rate, so 0 means "what this
+   viewer does with anything" (no evidence) and negative means "titles like
+   this sit unplayed here". The similarity-weighted neighbour rate of
+   earlier versions is gone. At most 1,000 questions wait at once; this
+   cycle's titles go ahead of the daily refit's panel rows.
 3. **Answers are cached.** `state/taste_answers.json` keys each answer by
    the sha256 of the model, the question's version and what was asked. What
    was asked holds booleans (played or not), not decayed rates, so it stays

@@ -49,11 +49,13 @@ pub const MIN_OUTCOMES: usize = 12;
 pub const MIN_AUC: f32 = 0.60;
 /// Item-grouped folds; together they give every row an out-of-fold forecast.
 pub const FOLDS: usize = 4;
-/// The source of the `taste` feature a fit learns its weight on: 2 is Clef's
-/// verdict ([`crate::taste::judge`]). A `hazard.json` without it (1, the
-/// similarity-weighted rate of neighbours) or with another is unreadable, so
-/// the daemon refits instead of running a weight learnt on another taste.
-pub const TASTE_VERSION: u32 = 2;
+/// The source of the `taste` feature a fit learns its weight on: 3 is Clef's
+/// verdict against the audience's own played rate ([`crate::taste::judge`]).
+/// A `hazard.json` without it (1, the similarity-weighted rate of
+/// neighbours) or with another (2, Clef's verdict centred at even odds) is
+/// unreadable, so the daemon refits instead of running a weight learnt on
+/// another taste.
+pub const TASTE_VERSION: u32 = 3;
 
 /// Monthly cut dates out to [`MAX_CUT_DAYS`].
 pub fn default_cuts() -> Vec<f32> {

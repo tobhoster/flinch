@@ -33,6 +33,13 @@ pub const DEFAULT_MODEL: &str = "clef";
 pub const MAX_DAILY_BUDGET: u32 = 20_000;
 /// Days an answer (or a pending question) stays without being looked up.
 pub const KEEP_DAYS: u64 = 30;
+/// Most questions waiting at once. A state carries a description of up to
+/// 2,000 characters and 20 titles (about 2.5 KB), and the panel alone can ask
+/// one per never-played row, cut and viewer — some 100,000 for 3,000 titles
+/// and 3 viewers, far more than a daily budget asks. Capped, the file stays
+/// near 2.5 MB of waiting questions; the panel's give way to the cycle's, and
+/// what was dropped is asked for again by the next lookup.
+pub const MAX_PENDING: usize = 1_000;
 const DAY_SECS: u64 = 86_400;
 /// The longest model name accepted.
 const MAX_MODEL_CHARS: usize = 200;
@@ -146,11 +153,14 @@ struct Verdict {
     used_day: u64,
 }
 
-/// A question still to ask, and the last UTC day a lookup wanted it.
+/// A question still to ask, the last UTC day a lookup wanted it, and whether
+/// only the daily refit's panel asked it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Pending {
     state: State,
     wanted_day: u64,
+    #[serde(default)]
+    panel: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -202,13 +212,25 @@ impl AnswerCache {
         self.pending.len()
     }
 
-    /// Record what lookups used and missed on the UTC day of `now`. Returns
-    /// whether anything changed.
+    /// Record what the cycle's lookups (cards, inflow) used and missed on the
+    /// UTC day of `now`. Returns whether anything changed.
     pub fn note(&mut self, asked: &Asked, now: u64) -> bool {
+        self.note_from(asked, now, false)
+    }
+
+    /// Record what the refit's panel rows used and missed. Panel questions
+    /// only take free room under [`MAX_PENDING`]; the cycle's push them out.
+    pub fn note_panel(&mut self, asked: &Asked, now: u64) -> bool {
+        self.note_from(asked, now, true)
+    }
+
+    /// Days only move forward: an offline fit pinned to a past `now` never
+    /// ages an answer the daemon used today.
+    fn note_from(&mut self, asked: &Asked, now: u64, panel: bool) -> bool {
         let day = now / DAY_SECS;
         let mut changed = false;
         for key in &asked.used {
-            if let Some(verdict) = self.entries.get_mut(key).filter(|verdict| verdict.used_day != day) {
+            if let Some(verdict) = self.entries.get_mut(key).filter(|verdict| verdict.used_day < day) {
                 verdict.used_day = day;
                 changed = true;
             }
@@ -217,27 +239,38 @@ impl AnswerCache {
             if self.entries.contains_key(key) {
                 continue;
             }
-            match self.pending.get_mut(key) {
-                Some(pending) if pending.wanted_day == day => {}
-                Some(pending) => {
+            if let Some(pending) = self.pending.get_mut(key) {
+                if pending.wanted_day < day {
                     pending.wanted_day = day;
                     changed = true;
                 }
-                None => {
-                    self.pending.insert(key.clone(), Pending { state: state.clone(), wanted_day: day });
+                if pending.panel && !panel {
+                    pending.panel = false;
                     changed = true;
                 }
+                continue;
             }
+            if self.pending.len() >= MAX_PENDING {
+                let evicted = self.pending.iter().rev().find(|(_, pending)| pending.panel).map(|(key, _)| key.clone());
+                match evicted.filter(|_| !panel) {
+                    Some(evicted) => self.pending.remove(&evicted),
+                    None => continue,
+                };
+            }
+            self.pending.insert(key.clone(), Pending { state: state.clone(), wanted_day: day, panel });
+            changed = true;
         }
         changed
     }
 
     /// Every pending question in asking order: the keys in `first` (this
-    /// cycle's cards), then the rest, each group by key.
+    /// cycle's cards), then the cycle's earlier ones, then the panel's, each
+    /// group by key.
     pub fn queue(&self, first: &Asked) -> Vec<(String, State)> {
-        let (mut now, mut later): (Vec<_>, Vec<_>) = self.pending.iter().partition(|(key, _)| first.missing.contains_key(*key));
-        now.append(&mut later);
-        now.into_iter().map(|(key, pending)| (key.clone(), pending.state.clone())).collect()
+        let rank = |key: &str, pending: &Pending| (!first.missing.contains_key(key), pending.panel);
+        let mut queue: Vec<(&String, &Pending)> = self.pending.iter().collect();
+        queue.sort_by_key(|(key, pending)| rank(key, pending));
+        queue.into_iter().map(|(key, pending)| (key.clone(), pending.state.clone())).collect()
     }
 
     /// Keep Clef's answer `p` to the question under `key`, asked on the UTC
@@ -353,3 +386,6 @@ pub struct TasteStatus {
     /// Why this cycle asked less than it could, in words.
     pub problem: Option<String>,
 }
+
+#[cfg(test)]
+mod tests;

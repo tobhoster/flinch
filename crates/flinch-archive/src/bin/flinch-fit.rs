@@ -17,6 +17,7 @@ use clap::Parser;
 use flinch_archive::fit::adopt::{self, Adoption};
 use flinch_archive::fit::load;
 use flinch_archive::regret::HazardModel;
+use flinch_archive::taste::AnswerCache;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -61,7 +62,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     if args.write {
-        adopt::record_questions(&args.state_dir, household.answers, &asked, now)?;
+        adopt::record_questions(&args.state_dir, household.answers.as_ref().map(AnswerCache::model), &asked, now)?;
         let outcome = adopt::adopt(&args.state_dir, &model)?;
         eprintln!(
             "[flinch-fit] {}",
