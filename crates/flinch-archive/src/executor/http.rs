@@ -48,7 +48,7 @@ impl<'a> Api<'a> {
         let status = response.status().as_u16();
         let body = crate::body::read_text(response).await.map_err(|source| ExecutorError::Body { endpoint, source })?;
         if !(200..300).contains(&status) {
-            let detail = body.chars().take(200).collect::<String>().trim().to_string();
+            let detail = validation_messages(&body).unwrap_or_else(|| body.chars().take(200).collect::<String>().trim().to_string());
             return Err(ExecutorError::Http { endpoint, status, detail });
         }
         if body.trim().is_empty() {
@@ -82,6 +82,21 @@ impl<'a> Api<'a> {
         query: &[(&str, String)],
         body: Option<&Value>,
     ) -> Result<Option<Value>, ExecutorError> {
+        self.write_within(endpoint, method, path, query, body, None).await
+    }
+
+    /// [`Api::write`] for a call the app itself takes long to answer (an
+    /// indexer test retries a dead site for most of a minute): `timeout`
+    /// replaces the client's for this request only.
+    pub(crate) async fn write_within(
+        &self,
+        endpoint: &'static str,
+        method: Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Value>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Option<Value>, ExecutorError> {
         if self.dry_run {
             let query = query.iter().map(|(name, value)| format!("{name}={value}")).collect::<Vec<_>>().join("&");
             let query = if query.is_empty() { String::new() } else { format!("?{query}") };
@@ -93,8 +108,21 @@ impl<'a> Api<'a> {
         if let Some(body) = body {
             request = request.json(body);
         }
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
         Ok(Some(self.send(endpoint, request).await?.1))
     }
+}
+
+/// The *arrs refuse a write with a list of validation failures
+/// (`[{"propertyName": …, "errorMessage": …}]`); their messages, whole, say
+/// why far better than the first 200 bytes of the JSON do.
+fn validation_messages(body: &str) -> Option<String> {
+    let failures: Vec<Value> = serde_json::from_str(body).ok()?;
+    let messages: Vec<&str> =
+        failures.iter().filter_map(|failure| failure.get("errorMessage")?.as_str()).filter(|text| !text.is_empty()).collect();
+    (!messages.is_empty()).then(|| messages.join("; "))
 }
 
 /// A JSON number as u64, whether the app sent it as a number or a string.

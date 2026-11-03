@@ -122,6 +122,15 @@ export function loadHistory() {
 }
 
 /**
+ * The library as a graph (`GET /api/graph`): `{ items, users, disks, guards,
+ * edges: [{ source, target, kind }], target_utilization, sources }`, joined on
+ * the server from what the daemon last published. Null before its first cycle.
+ */
+export function loadGraph() {
+  return getJson('/api/graph');
+}
+
+/**
  * Items of `kind` ranked by meaning: `{ results: [{ id, score, … }], unranked }`,
  * best first. Rejects with the server's reason, which says what to switch on
  * when the model or the title vectors are missing.
@@ -168,6 +177,35 @@ export async function restoreItem(id) {
   const res = await request(`/api/restore/${encodeURIComponent(id)}`, { method: 'POST' });
   if (!res.ok) throw new Error(await reason(res));
   return true;
+}
+
+/**
+ * The *arr fleet as the daemon last read it (`state/arr-fleet-status.json`):
+ * `{ checked_at, instances, indexers, actions }`, or null before its first read.
+ */
+export function loadFleet() {
+  return getJson('/api/fleet').catch(() => null);
+}
+
+/** POST a fleet request; resolves with `{ queued }`, rejects with the server's reason. */
+async function queueFleet(url) {
+  const res = await request(url, { method: 'POST' });
+  if (!res.ok) throw new Error(await reason(res));
+  return res.json();
+}
+
+/**
+ * Ask the daemon to remove a stuck queue item from its download client and
+ * blocklist the release, on its next run. The server refuses (409) an item
+ * that only waits for free space. `app` is the instance key (`sonarr`, `sonarr@anime`).
+ */
+export function removeQueueItem(app, id) {
+  return queueFleet(`/api/fleet/queue/${encodeURIComponent(app)}/${encodeURIComponent(id)}/remove`);
+}
+
+/** Ask the daemon to run Prowlarr's test of indexer `id` on its next run. */
+export function testIndexer(id) {
+  return queueFleet(`/api/fleet/indexer/${encodeURIComponent(id)}/test`);
 }
 
 /**

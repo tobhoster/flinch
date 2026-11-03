@@ -22,7 +22,8 @@ fn library_prefix() -> Option<std::path::PathBuf> {
 }
 
 /// The filesystem under `root` as mounted here, measured with `statvfs`, for a
-/// root the app reports no mount for. `None` when it is not mounted here either.
+/// root the app reports no mount for, with its device so two shares of one
+/// size that filled alike stay two disks. `None` when it is not mounted here either.
 // The statvfs fields are u64 on this target and u32 on 32-bit ones: the cast
 // is a no-op here and a lossless widening there.
 #[allow(clippy::unnecessary_cast)]
@@ -39,12 +40,14 @@ fn probe(prefix: &std::path::Path, root: &str) -> Option<Volume> {
     // SAFETY: statvfs returned 0, so the buffer is initialised.
     let stat = unsafe { stat.assume_init() };
     let block = stat.f_frsize as u64;
-    Some(Volume { path: root.to_string(), total_bytes: stat.f_blocks as u64 * block, free_bytes: stat.f_bavail as u64 * block })
+    let device = std::fs::metadata(&local).ok().map(|meta| std::os::unix::fs::MetadataExt::dev(&meta));
+    Some(Volume { path: root.to_string(), total_bytes: stat.f_blocks as u64 * block, free_bytes: stat.f_bavail as u64 * block, device })
 }
 
 /// Forecast this cycle's volumes, crediting what recycle bins still hold and
-/// what the disk never released. Returns the governance and the ledger,
-/// advanced to `now`.
+/// what the disk never released. Returns the governance, the ledger advanced
+/// to `now`, and the problems an operator must fix (a recycle bin on another
+/// disk than the library it deletes from).
 pub(super) fn govern(
     disks: &[AppDisks],
     (movies, series): (&[ArrMovie], &[ArrSeries]),
@@ -52,7 +55,7 @@ pub(super) fn govern(
     signals: &Signals,
     config: &CapacityConfig,
     now: u64,
-) -> (Governance, EvictionLedger) {
+) -> (Governance, EvictionLedger, Vec<String>) {
     let prefix = library_prefix();
     let library = LibraryVolumes::build(disks, |root| prefix.as_deref().and_then(|prefix| probe(prefix, root)));
     for (owner, root) in &library.unmatched_roots {
@@ -77,15 +80,19 @@ pub(super) fn govern(
         .collect();
     let mut ledger = EvictionLedger::read(&ledger_path());
     let present: HashSet<&str> = cards.iter().map(|card| card.id.as_str()).collect();
-    ledger.observe(|id| present.contains(id), |id| library.recycle_secs_of(id), &measured, now);
+    ledger.observe(|id| present.contains(id), |id, volume| library.recycle_secs_of(id, volume), &measured, now);
     for owner in library.never_emptied() {
         eprintln!("[flinch-arrd] capacity: {owner} never empties its recycle bin; its deletes free no space until someone does");
+    }
+    let problems: Vec<String> = library.bins_elsewhere().iter().map(|bin| bin.describe()).collect();
+    for problem in &problems {
+        eprintln!("[flinch-arrd] capacity: {problem}");
     }
     let ingest = Ingest::attribute(&library, movies, series, signals, now);
     let on_disk = OnDisk { library: library_bytes, credit: ledger.credits(), held: ledger.held() };
     let governance = govern::govern(library, located, config, &ingest, on_disk);
     log(&governance);
-    (governance, ledger)
+    (governance, ledger, problems)
 }
 
 /// One line per governed volume, shaped for grep.
