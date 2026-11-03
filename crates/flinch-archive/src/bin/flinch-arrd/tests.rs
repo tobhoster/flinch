@@ -3,6 +3,7 @@
 //! the card names, and an install upgraded from one Radarr and one Sonarr
 //! reads its state on unchanged.
 
+mod arrivals;
 mod fake;
 mod instances;
 mod upgrade;

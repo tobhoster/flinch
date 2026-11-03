@@ -3,7 +3,9 @@
 //!
 //! Handing an item to Maintainerr frees nothing for days: it sits in the
 //! collection until `deleteAfterDays`, and once deleted Radarr/Sonarr move it
-//! into a recycle bin *on the same volume* for `recycleBinCleanupDays`. During
+//! into their recycle bin for `recycleBinCleanupDays`. When the bin is on the
+//! same volume (a bin elsewhere frees the volume at once, see
+//! [`super::LibraryVolumes::recycle_secs_of`]), during
 //! that last window the item is gone from the library while the disk still
 //! reads full — without a ledger a latched volume would pick the next items,
 //! then the next, and over-evict by a whole goal per window.
@@ -70,12 +72,13 @@ pub struct Eviction {
 
 impl Eviction {
     /// How long its bytes may legitimately stay on disk after it left:
-    /// `recycle_secs` answers for the card id, whose instance's bin holds it.
-    fn window(&self, id: &str, recycle_secs: &impl Fn(&str) -> u64) -> u64 {
+    /// `recycle_secs` answers for the card id and the volume it left, since
+    /// a bin on another filesystem holds nothing there.
+    fn window(&self, id: &str, recycle_secs: &impl Fn(&str, &str) -> u64) -> u64 {
         if self.archived {
             0
         } else {
-            recycle_secs(id)
+            recycle_secs(id, &self.volume)
         }
     }
 }
@@ -246,7 +249,7 @@ impl EvictionLedger {
     pub fn observe(
         &mut self,
         on_disk: impl Fn(&str) -> bool,
-        recycle_secs: impl Fn(&str) -> u64,
+        recycle_secs: impl Fn(&str, &str) -> u64,
         measured: &BTreeMap<String, Occupancy>,
         now: u64,
     ) {
@@ -278,7 +281,7 @@ impl EvictionLedger {
     /// order the windows ended: freed once *other* has dropped by at least half
     /// an eviction's size since it left the library — each drop pays for one
     /// eviction only — and held when the grace runs out first.
-    fn settle(&mut self, volume: &str, occupancy: Occupancy, recycle_secs: &impl Fn(&str) -> u64, now: u64) {
+    fn settle(&mut self, volume: &str, occupancy: Occupancy, recycle_secs: &impl Fn(&str, &str) -> u64, now: u64) {
         let mut gone: Vec<(u64, u64, String)> = Vec::new();
         let mut credited = 0u64;
         for (id, eviction) in self.entries.iter().filter(|(_, eviction)| eviction.volume == volume) {

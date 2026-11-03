@@ -38,7 +38,7 @@ fn a_season_pack_is_the_sum_of_its_episodes_files() {
     // Ten episodes of one download, each record carrying its own file size:
     // deduping by download would count one episode for the whole pack.
     let records = (1..=10).map(|episode| sonarr_import(100 + u64::from(episode), episode, 2, "4831838208")).collect();
-    let imports = parse_imports(App::Sonarr, "", records);
+    let imports = parse_imports(App::Sonarr, "", records, Vec::new());
     assert_eq!(imports.len(), 10);
     assert_eq!(imports.iter().map(|import| import.bytes).sum::<u64>(), 48_318_382_080);
     assert!(imports.iter().all(|import| import.item == ItemRef::Series { series_id: 7, season: Some(2) }));
@@ -56,12 +56,42 @@ fn radarr_imports_skip_malformed_records_not_the_read() {
         {"movieId": 15, "date": "2026-09-23T08:00:00Z", "eventType": "downloadFolderImported", "data": {"size": " 42 "}, "id": 5}
     ]));
     let imports: Vec<(ItemRef, u64)> =
-        parse_imports(App::Radarr, "", records).into_iter().map(|import| (import.item, import.bytes)).collect();
+        parse_imports(App::Radarr, "", records, Vec::new()).into_iter().map(|import| (import.item, import.bytes)).collect();
     assert_eq!(imports, vec![(ItemRef::Movie(12), 8_589_934_592), (ItemRef::Movie(15), 42)]);
 }
 
+/// Dark Matter S01E01 as it landed live: grabbed 2026-10-13, held on a full
+/// disk, imported in the flush of 2026-10-19.
+fn dark_matter_import() -> Value {
+    json!({
+        "episodeId": 2101, "seriesId": 36, "date": "2026-10-19T04:07:12Z", "downloadId": "06101a8a-76fa-4976-a",
+        "eventType": "downloadFolderImported", "data": {"size": "11381519000", "downloadClient": "SABnzbd"},
+        "episode": {"seriesId": 36, "seasonNumber": 1, "episodeNumber": 1}, "id": 900
+    })
+}
+
+#[rstest]
+#[case::flushed_after_six_days_on_a_full_disk(&["2026-10-13T03:11:00Z"], true)]
+#[case::the_slowest_torrent_of_the_month(&["2026-10-18T13:04:00Z"], false)]
+#[case::grabbed_again_hours_before_it_landed(&["2026-10-13T03:11:00Z", "2026-10-19T03:40:00Z"], false)]
+#[case::grabbed_again_after_it_landed(&["2026-10-13T03:11:00Z", "2026-10-19T09:00:00Z"], true)]
+#[case::a_day_to_the_second(&["2026-10-18T04:07:12Z"], false)]
+#[case::no_grab_in_the_window(&[], false)]
+fn an_import_is_backlog_when_it_landed_over_a_day_after_its_grab(#[case] grabbed: &[&str], #[case] backlog: bool) {
+    let mut grabs: Vec<Value> = grabbed
+        .iter()
+        .map(|date| json!({"seriesId": 36, "date": date, "downloadId": "06101a8a-76fa-4976-a", "eventType": "grabbed", "id": 1}))
+        .collect();
+    // Another download's grab, and one without a download, join nothing.
+    grabs.push(json!({"seriesId": 36, "date": "2026-10-19T04:00:00Z", "downloadId": "other", "eventType": "grabbed", "id": 2}));
+    grabs.push(json!({"seriesId": 36, "date": "2026-10-19T04:00:00Z", "eventType": "grabbed", "id": 3}));
+    let imports = parse_imports(App::Sonarr, "", vec![dark_matter_import()], grabs);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].is_backlog(), backlog, "{:?}", imports[0]);
+}
+
 #[test]
-fn the_queue_counts_each_download_once_with_its_bytes_left() {
+fn the_queue_counts_each_download_once_with_what_it_will_land() {
     let page: crate::arr::history::HistoryPage = serde_json::from_value(json!({
         "page": 1, "pageSize": 500, "sortKey": "timeleft", "sortDirection": "ascending", "totalRecords": 6,
         "records": [
@@ -85,17 +115,44 @@ fn the_queue_counts_each_download_once_with_its_bytes_left() {
                 app: App::Sonarr,
                 instance: "anime".into(),
                 item: ItemRef::Series { series_id: 7, season: Some(2) },
-                bytes_left: 12_079_595_520
+                bytes: 12_079_595_520
             },
-            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 9, season: Some(1) }, bytes_left: 0 },
+            // Downloaded, not imported yet: all of it is still to land.
+            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 9, season: Some(1) }, bytes: 100 },
             // An unreadable `sizeleft` skips its record; a pack across seasons names none.
-            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 8, season: None }, bytes_left: 5 },
+            Queued { app: App::Sonarr, instance: "anime".into(), item: ItemRef::Series { series_id: 8, season: None }, bytes: 5 },
         ]
     );
 }
 
+#[rstest]
+#[case::waiting_for_space("completed", "importPending", 0, 6_445_614_213)]
+#[case::import_blocked("completed", "importBlocked", 0, 6_445_614_213)]
+#[case::importing("completed", "importing", 0, 6_445_614_213)]
+#[case::finished_in_the_client_not_yet_seen("completed", "downloading", 0, 6_445_614_213)]
+#[case::still_downloading("downloading", "downloading", 1_000, 1_000)]
+#[case::already_imported("completed", "imported", 0, 0)]
+#[case::failed("failed", "failedPending", 0, 0)]
+fn a_download_lands_what_is_left_or_all_of_it_once_complete(
+    #[case] status: &str,
+    #[case] state: &str,
+    #[case] left: u64,
+    #[case] lands: u64,
+) {
+    // Carrie S01E06 as live Sonarr listed it for five days, "Not enough free space".
+    let record = json!({"id": 1_734_954_914_u64, "seriesId": 38, "title": "Carrie S01E06 2160p", "size": 6_445_614_213_u64, "sizeleft": left,
+        "status": status, "trackedDownloadStatus": "warning", "trackedDownloadState": state,
+        "statusMessages": [{"title": "Carrie S01E06 2160p", "messages": ["Not enough free space"]}], "downloadId": "15398ed4"});
+    let queued = parse_queue(App::Sonarr, "", vec![record]);
+    assert_eq!(queued.iter().map(|queued| queued.bytes).collect::<Vec<_>>(), [lands]);
+}
+
 fn import(epoch: u64) -> Import {
-    Import { app: App::Radarr, instance: String::new(), item: ItemRef::Movie(1), epoch, bytes: 1 }
+    Import { app: App::Radarr, instance: String::new(), item: ItemRef::Movie(1), epoch, bytes: 1, grabbed_at: None }
+}
+
+fn read(read_at: u64, imports: Vec<Import>) -> ImportRead {
+    ImportRead { read_at, with_grabs: true, imports }
 }
 
 #[rstest]
@@ -104,7 +161,7 @@ fn import(epoch: u64) -> Import {
 #[case::stale(NOW - IMPORT_REFRESH_SECS, false)]
 #[case::from_the_future(NOW + 60, false)]
 fn an_import_read_serves_six_hours(#[case] read_at: u64, #[case] fresh: bool) {
-    let cache = ImportCache { radarr: Some(ImportRead { read_at, imports: Vec::new() }), ..ImportCache::default() };
+    let cache = ImportCache { radarr: Some(read(read_at, Vec::new())), ..ImportCache::default() };
     assert_eq!(cache.is_fresh(App::Radarr, "", NOW), fresh);
     assert!(!cache.is_fresh(App::Sonarr, "", NOW), "never read is never fresh");
     assert!(!cache.is_fresh(App::Radarr, "4k", NOW), "each instance is read on its own");
@@ -114,12 +171,12 @@ fn an_import_read_serves_six_hours(#[case] read_at: u64, #[case] fresh: bool) {
 fn cached_imports_leave_the_window_as_it_moves() {
     let since = NOW - IMPORT_WINDOW_SECS;
     let mut cache = ImportCache {
-        radarr: Some(ImportRead { read_at: NOW - 3_600, imports: vec![import(since - 1), import(since), import(NOW - DAY)] }),
+        radarr: Some(read(NOW - 3_600, vec![import(since - 1), import(since), import(NOW - DAY)])),
         ..ImportCache::default()
     };
     assert_eq!(cache.imports(NOW), vec![import(since), import(NOW - DAY)]);
     let uhd = Import { instance: "4k".into(), ..import(NOW) };
-    cache.store(App::Radarr, "4k", ImportRead { read_at: NOW, imports: vec![uhd.clone()] });
+    cache.store(App::Radarr, "4k", read(NOW, vec![uhd.clone()]));
     assert_eq!(cache.imports(NOW), vec![import(since), import(NOW - DAY), uhd]);
 }
 
@@ -129,6 +186,17 @@ fn an_import_cache_from_before_instances_still_reads() {
     let cache: ImportCache = serde_json::from_str(older).unwrap_or_else(|error| panic!("older cache: {error}"));
     assert_eq!(cache.read(App::Radarr, "").map(|read| read.imports[0].instance.as_str()), Some(""));
     assert!(cache.extra.is_empty());
+}
+
+#[test]
+fn an_import_read_from_before_grabs_were_read_is_read_again_at_once() {
+    // As arr-imports.json held it live: the flush of 2026-10-19 counted as arrival.
+    let older = format!(
+        r#"{{"sonarr":{{"read_at":{NOW},"imports":[{{"app":"sonarr","item":{{"series":{{"series_id":36,"season":1}}}},"epoch":{NOW},"bytes":2}}]}}}}"#
+    );
+    let cache: ImportCache = serde_json::from_str(&older).unwrap_or_else(|error| panic!("older cache: {error}"));
+    assert!(!cache.is_fresh(App::Sonarr, "", NOW), "read again, now with the grabs");
+    assert_eq!(cache.imports(NOW).len(), 1, "it still serves should that read fail");
 }
 
 #[test]

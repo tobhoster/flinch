@@ -28,7 +28,7 @@ pub struct ArrDiskSpace {
 
 impl From<&ArrDiskSpace> for crate::capacity::Volume {
     fn from(entry: &ArrDiskSpace) -> Self {
-        crate::capacity::Volume { path: entry.path.clone(), total_bytes: entry.total_space, free_bytes: entry.free_space }
+        crate::capacity::Volume { path: entry.path.clone(), total_bytes: entry.total_space, free_bytes: entry.free_space, device: None }
     }
 }
 

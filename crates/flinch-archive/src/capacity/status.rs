@@ -19,7 +19,7 @@ pub struct VolumeStatus {
     /// C_max the forecast used: the measured size, or the operator's cap.
     pub capacity_bytes: u64,
     pub daily_ingest_bytes: u64,
-    /// Bytes still to download for items on this volume.
+    /// Bytes queued downloads will still land on this volume.
     pub queue_bytes: u64,
     pub projected_used_bytes: u64,
     /// B_target: what this volume must free.

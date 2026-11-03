@@ -7,7 +7,7 @@ const GB: u64 = 1_000_000_000;
 const DAY: u64 = 86_400;
 
 fn vol(path: &str, total_gb: u64, used_gb: u64) -> Volume {
-    Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB }
+    Volume { path: path.to_string(), total_bytes: total_gb * GB, free_bytes: (total_gb - used_gb) * GB, device: None }
 }
 
 /// The daemon without a library prefix: nothing is probed.
@@ -17,7 +17,7 @@ fn no_probe(_: &str) -> Option<Volume> {
 
 fn disks(app: App, diskspace: Vec<Volume>, roots: &[&str]) -> AppDisks {
     let root_folders = roots.iter().map(|path| RootFolder { path: path.to_string(), free_bytes: None }).collect();
-    AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled }
+    AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() }
 }
 
 /// Target 80%, 10-day window, no headroom: round numbers to reason about.
@@ -219,7 +219,7 @@ fn attribution_is_per_instance_because_each_is_its_own_container() {
 #[test]
 fn a_share_mounted_at_different_paths_is_one_filesystem() {
     // Radarr sees the share at /movies, Sonarr at /tv, sampled seconds apart.
-    let sonarr_view = Volume { path: "/tv".to_string(), total_bytes: 8000 * GB, free_bytes: 997 * GB };
+    let sonarr_view = Volume { path: "/tv".to_string(), total_bytes: 8000 * GB, free_bytes: 997 * GB, device: None };
     let library = LibraryVolumes::build(
         &[disks(App::Radarr, vec![vol("/movies", 8000, 7000)], &["/movies"]), disks(App::Sonarr, vec![sonarr_view], &["/tv"])],
         no_probe,
@@ -257,8 +257,14 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     // roots fall through to the container's root filesystem; each root's own
     // free space shows it lives elsewhere. Radarr's root agrees with `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
+    let app = |app, diskspace, root_folders| AppDisks {
+        app,
+        instance: String::new(),
+        diskspace,
+        root_folders,
+        recycle: RecycleBin::Disabled,
+        recycle_path: String::new(),
+    };
     let library = LibraryVolumes::build(
         &[
             app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
@@ -285,8 +291,14 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     // NFS shares FLINCH has mounted read-only. tv and tv-b are their own
     // disks; anime sits on the share Radarr already reports as `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled };
+    let app = |app, diskspace, root_folders| AppDisks {
+        app,
+        instance: String::new(),
+        diskspace,
+        root_folders,
+        recycle: RecycleBin::Disabled,
+        recycle_path: String::new(),
+    };
     let probe = |path: &str| match path {
         "/data/media/tv" => Some(vol("/data/media/tv", 834, 780)),
         "/data/media/tv-b" => Some(vol("/data/media/tv-b", 834, 666)),
@@ -310,6 +322,31 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Lioness/Season 1"), Some("/data/media/tv"));
     assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/anime/Frieren"), Some("/data"));
     assert_eq!(library.volume_of(App::Radarr, "", "/data/media/movies/Heat (1995)"), Some("/data"));
+}
+
+#[test]
+fn two_measured_shares_of_one_size_that_filled_alike_stay_two_disks() {
+    // Live shape: tv and tv-b are two 790 GiB shares, both near 93% full, free
+    // space 1.9 GiB apart: within the 0.5% that guesses one filesystem seen
+    // twice. Measured here, each has its own device, and that decides.
+    let probed = |path: &str, used_gb: u64, device: u64| Volume { device: Some(device), ..vol(path, 834, used_gb) };
+    // Sonarr lists only `/`; each root's own free space rules it out.
+    let root = |path: &str, free_gb: u64| RootFolder { path: path.into(), free_bytes: Some(free_gb * GB) };
+    let roots = [root("/data/media/tv", 56), root("/data/media/tv-b", 54)];
+    let sonarr = |probe: &dyn Fn(&str) -> Option<Volume>| {
+        let app = AppDisks { root_folders: roots.to_vec(), ..disks(App::Sonarr, vec![vol("/", 510, 57)], &[]) };
+        LibraryVolumes::build(&[app], probe)
+    };
+    let library = sonarr(&|path| Some(probed(path, if path.ends_with("tv-b") { 780 } else { 778 }, path.len() as u64)));
+    let paths: Vec<&str> = library.volumes.iter().map(|v| v.path.as_str()).collect();
+    assert_eq!(paths, ["/data/media/tv", "/data/media/tv-b"]);
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv-b/Reacher/Season 1"), Some("/data/media/tv-b"));
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv/Lioness/Season 3"), Some("/data/media/tv"));
+
+    // One share reached through two roots: one device, one disk, one goal.
+    let library = sonarr(&|path| Some(probed(path, 778, 7)));
+    assert_eq!(library.volumes.len(), 1);
+    assert_eq!(library.volume_of(App::Sonarr, "", "/data/media/tv-b/Reacher"), Some("/data/media/tv"));
 }
 
 #[test]
@@ -434,6 +471,6 @@ fn an_app_that_never_answered_holds_space_for_the_default_week() {
 fn each_instance_answers_for_its_own_recycle_bin() {
     let uhd = AppDisks { instance: "4k".into(), recycle: RecycleBin::Days(3), ..disks(App::Radarr, Vec::new(), &[]) };
     let library = LibraryVolumes::build(&[disks(App::Radarr, Vec::new(), &[]), uhd], no_probe);
-    assert_eq!((library.recycle_secs_of("radarr-1"), library.recycle_secs_of("radarr@4k-1")), (0, 3 * 86_400));
-    assert_eq!(library.recycle_secs_of("sonarr@anime-1-s1"), 7 * 86_400, "an instance that never answered: the default week");
+    assert_eq!((library.recycle_secs_of("radarr-1", "/data"), library.recycle_secs_of("radarr@4k-1", "/data")), (0, 3 * 86_400));
+    assert_eq!(library.recycle_secs_of("sonarr@anime-1-s1", "/data"), 7 * 86_400, "an instance that never answered: the default week");
 }
