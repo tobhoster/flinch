@@ -2,11 +2,14 @@
 //! playback record and report how it does against the hand-set priors.
 //!
 //! Reads what the daemon already records (`items.json` for the library,
-//! `playback.json` and `tautulli.json` for every play), builds a temporal panel
-//! of "as of" questions, judges each candidate out of fold, and prints the
-//! report. With `--write` it writes `hazard.json` only if the fit beats the
-//! priors (and removes a stale one if not) — the same gate the daemon's daily
-//! refit uses. `--now <unix>` pins the panel's date to reproduce a report.
+//! `playback.json` and `tautulli.json` for every play, `embeddings.json` and
+//! `taste_answers.json` for taste), builds a temporal panel of "as of"
+//! questions, judges each candidate out of fold, and prints the report. Taste
+//! questions Clef has not answered yet leave their rows at no taste. With
+//! `--write` it writes `hazard.json` only if the fit beats the priors (and
+//! removes a stale one if not) — the same gate the daemon's daily refit uses —
+//! and records the unanswered taste questions for the daemon to ask. `--now
+//! <unix>` pins the panel's date to reproduce a report.
 //!
 //! Exit codes: 0 report produced, 1 state unreadable or output unwritable.
 
@@ -24,7 +27,8 @@ struct Args {
     /// The panel's "now", unix seconds (default: the current time).
     #[arg(long)]
     now: Option<u64>,
-    /// Write hazard.json if the fit beats the priors; remove a stale one if not.
+    /// Write hazard.json if the fit beats the priors (remove a stale one if
+    /// not), and record the taste questions still to ask.
     #[arg(long)]
     write: bool,
     /// Print the fitted model as JSON instead of the report.
@@ -36,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let now = args.now.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
     let household = load::load_household(&args.state_dir)?;
-    let (dataset, model) = adopt::panel_fit(&household, now);
+    let (dataset, model, asked) = adopt::panel_fit(&household, now);
     if args.json {
         println!("{}", serde_json::to_string_pretty(&model)?);
     } else {
@@ -52,8 +56,12 @@ fn main() -> anyhow::Result<()> {
             None => println!("beats the priors out of fold"),
             Some(reason) => println!("priors stay: {reason}"),
         }
+        if household.answers.is_some() {
+            println!("{} taste questions still to ask Clef", asked.missing());
+        }
     }
     if args.write {
+        adopt::record_questions(&args.state_dir, household.answers, &asked, now)?;
         let outcome = adopt::adopt(&args.state_dir, &model)?;
         eprintln!(
             "[flinch-fit] {}",

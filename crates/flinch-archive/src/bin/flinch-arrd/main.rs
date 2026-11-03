@@ -37,6 +37,7 @@ mod sink;
 mod snapshot;
 mod storage;
 mod streaming;
+mod taste_judge;
 mod themes;
 mod torrents;
 mod trash_sync;
@@ -187,7 +188,8 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     } = evidence::gather(args, http, settings, &movies, &series, &mut cards, cycle_now).await?;
     // Taste vectors of every movie and show, refreshed within today's budget.
     let library = embeddings::Library { movies: &movies, series: &series, plex_content: &plex_content, plex_ids: &plex_ids };
-    let embeddings::Refresh { vectors, status: embedding } = embeddings::refresh(&settings.embedding, library, cycle_now).await;
+    let embeddings::Refresh { vectors, status: embedding } =
+        embeddings::refresh(http, &settings.ollama, &settings.embedding, library, cycle_now).await;
 
     // Dry run unless the planner says otherwise; FLINCH_DRY_RUN forces one.
     let forced_dry = std::env::var("FLINCH_DRY_RUN").map(|v| v == "1" || v == "true").unwrap_or(false);
@@ -270,11 +272,10 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
     let in_plex: HashSet<String> = plex_ids.keys().chain(jellyfin_ids.keys().filter(|_| jellyfin_shelf)).cloned().collect();
     let handed = native::handed(settings.executor, &owned);
     // Taste has weight only in an adopted fit, and is asked with the outcomes
-    // that fit learned from; under the priors it would move nothing.
-    let taste = running.outcomes.as_ref().map(|record| flinch_archive::taste::read_cards(&cards, &vectors, record)).unwrap_or_default();
-    // Inflow advice asks taste too: the adopted fit's outcomes, else the household's.
+    // that fit learned from; under the priors it would move nothing. Inflow
+    // advice asks taste too: the adopted fit's outcomes, else the household's.
     let household = flinch_archive::inflow::household_record(&cards, cycle_now);
-    let inflow = flinch_archive::inflow::suggest(&flinch_archive::inflow::Inputs {
+    let inflow_inputs = flinch_archive::inflow::Inputs {
         cards: &cards,
         series: &series,
         movies: &movies,
@@ -282,7 +283,18 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         streams: &signals.streams,
         vectors: &vectors,
         record: running.outcomes.as_ref().unwrap_or(&household),
-    });
+    };
+    // Clef judges both, through one answers cache.
+    let taste_judge::Judged { out: (taste, inflow), status: taste_status } =
+        taste_judge::judge(http, &settings.ollama, &settings.taste, cycle_now, |judge| {
+            let taste = running
+                .outcomes
+                .as_ref()
+                .map(|record| flinch_archive::taste::read_cards(&cards, &vectors, record, judge))
+                .unwrap_or_default();
+            (taste, flinch_archive::inflow::suggest(&inflow_inputs, judge))
+        })
+        .await;
     // Themes of the taste vectors: storage by theme, and downgrade advice in cold ones.
     let themed = themes::refresh(&vectors, (&movies, &series), &cards, &plays, cycle_now);
     let library = candidates::Library {
@@ -400,6 +412,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
             never_played_requested: settings.unwatched_reclaim_enabled,
             outside: history::outside(&removals, &ledger, (&movies, &series), now),
             embedding,
+            taste: taste_status,
             inflow,
             inflow_actions,
             notify,

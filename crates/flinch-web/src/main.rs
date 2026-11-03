@@ -38,7 +38,7 @@ struct AppState {
     web: Arc<PathBuf>,
     /// Who may use the API: the login, the API key and the live sessions.
     auth: Arc<auth::Auth>,
-    /// Semantic search: the query encoder once opened, and the vectors.
+    /// Semantic search: the client that embeds queries, and the vectors.
     search: Arc<search::Search>,
     /// The no-login links' key (`FLINCH_WEB_LINK_SECRET`); `None` turns every
     /// link away.
@@ -57,14 +57,16 @@ async fn api_items(AxumState(st): AxumState<AppState>) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/json")], read_json(&st.dir.join("items.json")))
 }
 
-/// Settings as the browser sees them. The Plex and Jellyfin tokens stay on the
-/// server; `plex_token_set` / `jellyfin_token_set` say whether one is saved.
+/// Settings as the browser sees them. The Plex, Jellyfin and Ollama tokens
+/// stay on the server; `plex_token_set` / `jellyfin_token_set` /
+/// `ollama_token_set` say whether one is saved.
 #[derive(serde::Serialize)]
 struct SettingsView {
     #[serde(flatten)]
     settings: RuntimeSettings,
     plex_token_set: bool,
     jellyfin_token_set: bool,
+    ollama_token_set: bool,
 }
 
 /// The settings the daemon runs with: `settings.json`, every missing field at
@@ -75,9 +77,11 @@ async fn api_settings_get(AxumState(st): AxumState<AppState>) -> Response {
         Ok(settings) => {
             let plex_token_set = !settings.plex_token.is_empty();
             let jellyfin_token_set = !settings.jellyfin.token.is_empty();
+            let ollama_token_set = !settings.ollama.token.is_empty();
             let jellyfin = flinch_archive::jellyfin::JellyfinConfig { token: String::new(), ..settings.jellyfin.clone() };
-            let settings = RuntimeSettings { plex_token: String::new(), jellyfin, ..settings };
-            axum::Json(SettingsView { settings, plex_token_set, jellyfin_token_set }).into_response()
+            let ollama = flinch_archive::ollama::OllamaConfig { token: String::new(), ..settings.ollama.clone() };
+            let settings = RuntimeSettings { plex_token: String::new(), jellyfin, ollama, ..settings };
+            axum::Json(SettingsView { settings, plex_token_set, jellyfin_token_set, ollama_token_set }).into_response()
         }
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
@@ -99,6 +103,7 @@ async fn api_settings_put(AxumState(st): AxumState<AppState>, body: String) -> R
     if let Err(problem) = pair_jellyfin_credential(&mut settings, saved.as_ref()) {
         return refuse(StatusCode::BAD_REQUEST, problem);
     }
+    pair_ollama_credential(&mut settings, saved.as_ref());
     if let Err(problem) = pair_plex_credential(&mut settings, saved) {
         return refuse(StatusCode::BAD_REQUEST, problem);
     }
@@ -154,6 +159,22 @@ fn pair_jellyfin_credential(settings: &mut RuntimeSettings, saved: Option<&Runti
         }
         _ if !jellyfin.api_key_env.is_empty() => Ok(()),
         _ => Err("A new Jellyfin URL needs its API key: enter it again, or name the variable that holds it"),
+    }
+}
+
+/// The Ollama URL and its key are one credential, like Plex's: a blank token
+/// keeps the saved one only for the same URL. No key at all is fine — a local
+/// Ollama needs none — so a new URL without one is saved without one.
+fn pair_ollama_credential(settings: &mut RuntimeSettings, saved: Option<&RuntimeSettings>) {
+    let ollama = &mut settings.ollama;
+    trim_in_place(&mut ollama.url);
+    trim_in_place(&mut ollama.token);
+    trim_in_place(&mut ollama.api_key_env);
+    if !ollama.token.is_empty() {
+        return;
+    }
+    if let Some(saved) = saved.map(|saved| &saved.ollama).filter(|saved| saved.url.trim() == ollama.url) {
+        ollama.token.clone_from(&saved.token);
     }
 }
 
@@ -294,7 +315,7 @@ async fn main() -> Result<()> {
     let auth = Arc::new(auth::Auth::from_env());
     let dir = PathBuf::from(dir);
     let links = flinch_archive::requests::link::LinkSecret::from_env().map(Arc::new);
-    let search = Arc::new(search::Search::new());
+    let search = Arc::new(search::Search::new().context("search client")?);
     let app = app(AppState { dir: Arc::from(dir), web: Arc::from(PathBuf::from(web)), auth, search, links });
     let addr = format!("0.0.0.0:{port}");
     println!("flinch-web on {addr}");

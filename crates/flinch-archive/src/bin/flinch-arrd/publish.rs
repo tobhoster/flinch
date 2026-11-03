@@ -60,6 +60,8 @@ pub(super) struct Run<'a> {
     pub(super) outside: Vec<OutsideDeletion>,
     /// The taste vectors after this cycle's refresh.
     pub(super) embedding: EmbeddingStatus,
+    /// The taste judge after this cycle's questions.
+    pub(super) taste: flinch_archive::taste::TasteStatus,
     /// Incoming storage likely wasted, for the operator.
     pub(super) inflow: Vec<flinch_archive::inflow::Suggestion>,
     /// What acting on approved advice did; `None` while off.
@@ -104,6 +106,7 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         never_played_requested,
         outside,
         embedding,
+        taste,
         inflow,
         inflow_actions,
         notify,
@@ -151,6 +154,7 @@ pub(super) fn publish(run: Run<'_>, items: &[ItemSnapshot]) -> Result<()> {
         fit: flinch_archive::fit::adopt::read_status(&dir),
         outside_deletions: outside,
         embedding: Some(embedding),
+        taste: Some(taste),
         inflow,
         notify,
         themes,

@@ -7,8 +7,9 @@ use super::candidate::{self, ModelKind};
 use super::eval::{self, Scorecard};
 use super::load::{self, Household, LoadError};
 use super::panel::{self, Example, PanelSpec};
-use super::{default_cuts, FittedModel, Metrics, HORIZON_DAYS};
+use super::{default_cuts, FittedModel, Metrics, HORIZON_DAYS, TASTE_VERSION};
 use crate::regret::HazardModel;
+use crate::taste::{AnswerCache, Asked, Judge};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -50,6 +51,8 @@ pub enum Adoption {
 pub enum RefitError {
     #[error(transparent)]
     Load(#[from] LoadError),
+    #[error(transparent)]
+    Answers(#[from] crate::taste::judge::AnswersError),
     #[error("cannot write the fit: {0}")]
     Write(#[from] std::io::Error),
     #[error("cannot encode the fit: {0}")]
@@ -111,9 +114,10 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
     let items_with_plays = household.items.iter().filter(|item| !item.plays.is_empty()).count();
     FittedModel {
         fitted_on: format!(
-            "{} library items ({items_with_plays} with plays, {} titles with a taste vector), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
+            "{} library items ({items_with_plays} with plays, {} titles with a taste vector, {} Clef taste answers), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
             household.items.len(),
             household.vectors.len(),
+            household.answers.as_ref().map_or(0, AnswerCache::answered),
             household.plex_rows,
             household.tautulli_rows,
             dataset.len(),
@@ -121,7 +125,8 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
         kind,
         hazard: candidate::fit(kind, dataset),
         metrics,
-        outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now, household.taste_decay),
+        outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now),
+        taste_version: TASTE_VERSION,
     }
 }
 
@@ -165,17 +170,33 @@ pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, Refi
 }
 
 /// Build the panel `now`, give its never-played rows their taste, and fit it.
-pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel) {
+/// Also returns the taste questions its rows asked that Clef has not
+/// answered yet, for [`record_questions`].
+pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel, Asked) {
     let cuts = default_cuts();
     let mut dataset = panel::build_dataset(&household.items, &PanelSpec { now, cuts_days: &cuts, horizon_days: HORIZON_DAYS });
-    crate::taste::fill(&mut dataset, &household.vectors, &activity(household), horizon_secs(), household.taste_decay);
+    let mut judge = household.answers.as_ref().map_or_else(Judge::off, Judge::new);
+    crate::taste::fill(&mut dataset, &household.vectors, &activity(household), horizon_secs(), &mut judge);
+    let asked = judge.finish();
     let model = fit_model(household, &dataset, now, cuts.len());
-    (dataset, model)
+    (dataset, model, asked)
+}
+
+/// Note the panel's taste lookups in `answers` (the household's cache) and
+/// write it, so the daemon's taste step asks the missing questions. Nothing
+/// is written while the judge is off or nothing changed.
+pub fn record_questions(state_dir: &Path, answers: Option<AnswerCache>, asked: &Asked, now: u64) -> Result<(), RefitError> {
+    let Some(mut cache) = answers else { return Ok(()) };
+    if cache.note(asked, now) {
+        cache.write(state_dir)?;
+    }
+    Ok(())
 }
 
 fn refit(state_dir: &Path, now: u64) -> Result<FitStatus, RefitError> {
     let household = load::load_household(state_dir)?;
-    let (_, model) = panel_fit(&household, now);
+    let (_, model, asked) = panel_fit(&household, now);
+    record_questions(state_dir, household.answers, &asked, now)?;
     let adopted = adopt(state_dir, &model)? == Adoption::Written;
     let status = FitStatus {
         fitted_at_unix: now,

@@ -25,7 +25,7 @@ pub(crate) fn state_with(tmp: &Path, auth: auth::Auth) -> AppState {
         r#"[{"ran_at_unix":1,"scanned":4,"delete_candidates":0,"reclaimed_bytes":0,"protections_added":0}]"#,
     )
     .unwrap();
-    let search = Arc::new(search::Search::new());
+    let search = Arc::new(search::Search::new().unwrap());
     AppState { dir: Arc::from(dir), web: Arc::from(tmp.join("web")), auth: Arc::new(auth), search, links: None }
 }
 
@@ -164,6 +164,40 @@ async fn the_plex_url_and_token_are_saved_as_one_credential(
             assert_eq!(fs::read(st.dir.join("settings.json")).unwrap(), before, "a refused save must not touch the file");
         }
     }
+    fs::remove_dir_all(&tmp).ok();
+}
+
+const OLLAMA: &str = "https://ollama.com";
+
+/// `(url, token)` saved, then PUT; what must be stored after. A key is never
+/// required: a local Ollama needs none.
+#[rstest]
+#[case::url_unchanged_blank_token((OLLAMA, "old"), (OLLAMA, ""), (OLLAMA, "old"))]
+#[case::url_unchanged_new_token((OLLAMA, "old"), (OLLAMA, " new "), (OLLAMA, "new"))]
+#[case::url_changed_blank_token((OLLAMA, "old"), ("http://evil.example:11434", ""), ("http://evil.example:11434", ""))]
+#[case::local_without_a_key(("http://localhost:11434", ""), ("http://ollama.home:11434", ""), ("http://ollama.home:11434", ""))]
+#[tokio::test]
+async fn the_ollama_key_never_reaches_the_browser_or_another_server(
+    #[case] saved: (&str, &str),
+    #[case] put: (&str, &str),
+    #[case] stored: (&str, &str),
+) {
+    let tmp = scratch("ollama");
+    let st = state(&tmp, Some(TOKEN));
+    let mut settings = RuntimeSettings::default();
+    (settings.ollama.url, settings.ollama.token) = (saved.0.to_string(), saved.1.to_string());
+    write_settings(&st.dir.join("settings.json"), &settings).unwrap();
+
+    let shown = body_of(send(&st, get("/api/settings", &[("authorization", &format!("Bearer {TOKEN}"))])).await).await;
+    let mut view: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(view["ollama"]["token"], "", "{shown}");
+    assert_eq!(view["ollama_token_set"], !saved.1.is_empty());
+
+    // The page saves back what it was shown, with the Ollama fields edited.
+    (view["ollama"]["url"], view["ollama"]["token"]) = (put.0.into(), put.1.into());
+    assert_eq!(send(&st, put_settings(view.to_string())).await.status(), StatusCode::OK);
+    let after = read_settings(&st.dir.join("settings.json")).unwrap();
+    assert_eq!((after.ollama.url.as_str(), after.ollama.token.as_str()), stored);
     fs::remove_dir_all(&tmp).ok();
 }
 

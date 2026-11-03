@@ -11,6 +11,7 @@ pub(super) struct Request {
     /// With its query.
     pub(super) path: String,
     pub(super) api_key: Option<String>,
+    pub(super) body: String,
 }
 
 impl Request {
@@ -50,7 +51,7 @@ fn read_request(stream: &TcpStream) -> Option<Request> {
     }
     let mut body = vec![0u8; length];
     reader.read_exact(&mut body).ok()?;
-    Some(Request { method, path, api_key })
+    Some(Request { method, path, api_key, body: String::from_utf8_lossy(&body).into_owned() })
 }
 
 /// Serve until the test process ends.

@@ -2,21 +2,22 @@
 //!
 //! The hazard reads an item's own plays, so every download nobody has opened
 //! looks alike: "never played, N days on disk". What the household did with
-//! the *rest* of the library says more. EmbeddingGemma 2 places every title in
-//! one space from its content alone — story, genres, people, studio
+//! the *rest* of the library says more. Ollama places every title in one
+//! embedding space from its content alone — story, genres, people, studio
 //! ([`crate::embedding`]) — and the panel already records, per title, whether
-//! it was played in the horizon after each cut, and by whom. Taste is a
-//! nearest-neighbour classifier over those outcomes: the played share of the
-//! most similar titles, smoothed toward the overall played rate, and reported
-//! as a log-odds shift from that rate (0 = no evidence either way).
+//! it was played in the horizon after each cut, and by whom. The vectors
+//! retrieve a title's nearest titles with a closed outcome; Clef, Ollama's
+//! decision model, reads them and judges ([`judge`]): shown the title's
+//! description and those neighbours, each marked played or not, would this
+//! audience play it? Taste is that probability as log-odds (0 at even odds:
+//! no evidence either way).
 //!
-//! A household is several people, and the household-wide share blurs them: a
+//! A household is several people, and the household-wide record blurs them: a
 //! comedy can sit among horror nobody else touches while the one person who
-//! watches comedies plays every one. So taste is read per active viewer, each
-//! from their own outcomes against their own baseline, and the household's
-//! taste is the warmest of them — someone here would watch it. Only when no
-//! active viewer has played enough titles to point anywhere does the
-//! household-wide record speak.
+//! watches comedies plays every one. So taste is asked per active viewer, each
+//! with their own outcomes, and the household's taste is the warmest of them —
+//! someone here would watch it. Only when no active viewer has a neighbour
+//! with an outcome of theirs does the household-wide record speak.
 //!
 //! It is the zero-prior `taste` feature of the hazard ([`crate::regret`]): it
 //! moves no decision until the daily held-out fit gives it a weight and that
@@ -25,13 +26,14 @@
 //! Leak-freedom: a panel row asks with the outcomes whose window had closed by
 //! its own cut (`cut + horizon <= as_of`), never with its own show's, and with
 //! the viewers active before that cut. The daemon asks with the outcomes the
-//! adopted fit was made from, which travel with it in `hazard.json`. With a
-//! half-life set ([`decay`]), each outcome is weighted by its age at the
-//! record's own date, identically in both.
+//! adopted fit was made from, which travel with it in `hazard.json`.
+//!
+//! Everything here is pure: answers come through a [`Judge`] lookup, which
+//! records the questions still to ask instead of asking them.
 
-pub mod decay;
+pub mod judge;
 
-pub use decay::{Decay, TasteConfig};
+pub use judge::{AnswerCache, Asked, Judge, Neighbour, State, TasteConfig, TasteStatus};
 
 use crate::card::ArchiveCard;
 use crate::embedding::{subject_of, VectorStore};
@@ -40,16 +42,12 @@ use crate::fit::plays::{Play, Viewer};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-/// Neighbours that vote.
+/// Neighbours shown to the judge.
 pub const NEIGHBOURS: usize = 20;
 /// Titles kept per query, nearest first: the first [`NEIGHBOURS`] with a closed
 /// outcome are almost always among them, at every cut.
 const SHORTLIST: usize = 200;
-/// Pseudo-neighbours voting the audience's overall rate: a title whose few
-/// neighbours were all played is pulled back toward what that audience does
-/// with anything.
-pub const PRIOR_WEIGHT: f64 = 2.0;
-/// Rates are kept off 0 and 1 before they become log-odds.
+/// Probabilities are kept off 0 and 1 before they become log-odds.
 const RATE_BOUNDS: (f64, f64) = (0.01, 0.99);
 /// A viewer is part of the household at a date with a play in the year before
 /// it: an account nobody has used for a year no longer says what gets watched.
@@ -60,8 +58,7 @@ pub const MIN_VIEWER_TITLES: usize = 5;
 /// Neighbours an explanation names.
 const NAMED: usize = 2;
 
-/// Closed outcomes: rows, and rows played within their horizon, each weighted
-/// by its [`Decay`] (1 when recency weighting is off, so these are counts).
+/// Closed outcomes: rows, and rows played within their horizon.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Outcomes {
     pub played: f64,
@@ -69,15 +66,11 @@ pub struct Outcomes {
 }
 
 impl Outcomes {
-    fn add(&mut self, played: bool, weight: f64) {
+    fn add(&mut self, played: bool) {
         if played {
-            self.played += weight;
+            self.played += 1.0;
         }
-        self.total += weight;
-    }
-
-    fn rate(self) -> Option<f64> {
-        (self.total > 0.0).then(|| self.played / self.total)
+        self.total += 1.0;
     }
 }
 
@@ -90,13 +83,13 @@ pub struct Tally {
 }
 
 impl Tally {
-    fn add(&mut self, subject: &str, played: bool, weight: f64) {
-        self.overall.add(played, weight);
+    fn add(&mut self, subject: &str, played: bool) {
+        self.overall.add(played);
         match self.subjects.get_mut(subject) {
-            Some(outcomes) => outcomes.add(played, weight),
+            Some(outcomes) => outcomes.add(played),
             None => {
                 let mut outcomes = Outcomes::default();
-                outcomes.add(played, weight);
+                outcomes.add(played);
                 self.subjects.insert(subject.to_string(), outcomes);
             }
         }
@@ -121,25 +114,22 @@ pub struct Record {
 }
 
 impl Record {
-    /// Count every panel row whose horizon had closed by `as_of`, each
-    /// weighted by `decay` for its age at `as_of`.
-    pub fn as_of(dataset: &[Example], activity: &Activity, horizon_secs: u64, as_of: u64, decay: Decay) -> Self {
+    /// Count every panel row whose horizon had closed by `as_of`.
+    pub fn as_of(dataset: &[Example], activity: &Activity, horizon_secs: u64, as_of: u64) -> Self {
         let present = activity.present_at(as_of);
         let mut household = Tally::default();
         let mut viewers = vec![Tally::default(); present.len()];
         let mut active_by_cut: HashMap<u64, Vec<bool>> = HashMap::new();
         for row in dataset.iter() {
-            let closed = row.cut_unix.saturating_add(horizon_secs);
-            if closed > as_of {
+            if row.cut_unix.saturating_add(horizon_secs) > as_of {
                 continue;
             }
-            let weight = decay.weight(closed, as_of);
             let subject = subject_of(&row.item_id);
-            household.add(subject, row.label >= 0.5, weight);
+            household.add(subject, row.label >= 0.5);
             let active =
                 active_by_cut.entry(row.cut_unix).or_insert_with(|| present.iter().map(|member| member.active_at(row.cut_unix)).collect());
             for ((member, tally), _) in present.iter().zip(viewers.iter_mut()).zip(active.iter()).filter(|(_, active)| **active) {
-                tally.add(subject, row.played_by.contains(&member.viewer), weight);
+                tally.add(subject, row.played_by.contains(&member.viewer));
             }
         }
         let viewers = present
@@ -212,8 +202,9 @@ impl Activity {
     }
 }
 
-/// The titles that may vote, with their vectors.
+/// The titles that may be neighbours, with their vectors.
 pub struct Pool<'v> {
+    vectors: &'v VectorStore,
     members: Vec<(String, &'v [f32])>,
 }
 
@@ -224,14 +215,14 @@ impl<'v> Pool<'v> {
         names.sort_unstable();
         names.dedup();
         let members = names.into_iter().filter_map(|subject| Some((subject.to_string(), vectors.vector(subject)?))).collect();
-        Self { members }
+        Self { vectors, members }
     }
 
     /// The pool ranked by resemblance to `subject`, nearest first, without
     /// `subject` itself (and so without any season of the same show); `None`
     /// when the store has no vector for it.
-    pub fn shortlist(&self, vectors: &VectorStore, subject: &str) -> Option<Shortlist<'_>> {
-        let query = vectors.vector(subject)?;
+    pub fn shortlist(&self, subject: &str) -> Option<Shortlist<'_>> {
+        let query = self.vectors.vector(subject)?;
         let mut ranked: Vec<(&str, f32)> = self
             .members
             .iter()
@@ -245,12 +236,17 @@ impl<'v> Pool<'v> {
             ranked.truncate(SHORTLIST);
         }
         ranked.sort_unstable_by(nearest_first);
-        Some(Shortlist(ranked))
+        let nearest = ranked.into_iter().map(|(member, _)| member).collect();
+        Some(Shortlist { vectors: self.vectors, subject: subject.to_string(), nearest })
     }
 }
 
-/// One title's nearest titles, nearest first, with their cosine similarity.
-pub struct Shortlist<'p>(Vec<(&'p str, f32)>);
+/// One title's nearest titles, nearest first.
+pub struct Shortlist<'p> {
+    vectors: &'p VectorStore,
+    subject: String,
+    nearest: Vec<&'p str>,
+}
 
 /// The nearest titles behind a taste that went the way it leans, nearest
 /// first: played ones for a warm taste, ones nobody here played for a cold one.
@@ -280,38 +276,58 @@ pub struct Reading {
 
 impl Shortlist<'_> {
     /// The household's taste for the title, as of `record` (see
-    /// [`Shortlist::read`]). `None` before any outcome has closed.
-    pub fn taste(&self, record: &Record) -> Option<f64> {
-        self.speaker(record).map(|(taste, _)| taste)
+    /// [`Shortlist::read`]).
+    pub fn taste(&self, record: &Record, judge: &mut Judge<'_>) -> Option<f64> {
+        self.speaker(record, judge).map(|(taste, _)| taste)
     }
 
     /// The household's taste for the title and the neighbours behind it.
-    pub fn read(&self, record: &Record) -> Option<Reading> {
-        let (taste, tally) = self.speaker(record)?;
+    /// `None` when there is nothing to ask (no description, no neighbour with
+    /// an outcome) or while any audience's question is unanswered.
+    pub fn read(&self, record: &Record, judge: &mut Judge<'_>) -> Option<Reading> {
+        let (taste, tally) = self.speaker(record, judge)?;
         Some(Reading { taste, like: self.likeness(record, taste, tally) })
     }
 
-    /// Who speaks for the household, and their taste: the warmest viewer in
-    /// the record, or the household as a whole when the record has none.
-    fn speaker<'r>(&self, record: &'r Record) -> Option<(f64, &'r Tally)> {
-        let warmest = record.viewers.values().filter_map(|tally| Some((self.lean(tally)?, tally))).max_by(|a, b| a.0.total_cmp(&b.0));
-        warmest.or_else(|| Some((self.lean(&record.household)?, &record.household)))
+    /// Who speaks for the household, and their taste: the warmest viewer with
+    /// a question to ask, or the household as a whole when no viewer has one.
+    /// Every audience's question is looked up, so all of them are recorded
+    /// when some are unanswered.
+    fn speaker<'r>(&self, record: &'r Record, judge: &mut Judge<'_>) -> Option<(f64, &'r Tally)> {
+        let mut audiences: Vec<(State, &Tally)> = record.viewers.values().filter_map(|tally| Some((self.state(tally)?, tally))).collect();
+        if audiences.is_empty() {
+            audiences.extend(self.state(&record.household).map(|state| (state, &record.household)));
+        }
+        let mut warmest: Option<(f64, &Tally)> = None;
+        let mut unanswered = false;
+        for (state, tally) in audiences {
+            match judge.p(state) {
+                Some(p) if warmest.is_none_or(|(best, _)| logit(p) > best) => warmest = Some((logit(p), tally)),
+                Some(_) => {}
+                None => unanswered = true,
+            }
+        }
+        warmest.filter(|_| !unanswered)
     }
 
-    /// One audience's taste: the similarity-weighted played share of the
-    /// title's nearest [`NEIGHBOURS`] with a closed outcome in `tally`,
-    /// smoothed by [`PRIOR_WEIGHT`] toward its overall rate, as log-odds minus
-    /// the overall log-odds.
-    fn lean(&self, tally: &Tally) -> Option<f64> {
-        let overall = tally.overall.rate()?;
-        let (mut weighted, mut weight) = (0.0, 0.0);
-        for (_, rate, similarity) in voters(&self.0, tally) {
-            let vote = f64::from(similarity.max(0.0));
-            weighted += vote * rate;
-            weight += vote;
-        }
-        let rate = (weighted + PRIOR_WEIGHT * overall) / (weight + PRIOR_WEIGHT);
-        Some(logit(rate) - logit(overall))
+    /// What the judge is shown for `tally`'s audience: the title's
+    /// description and its [`NEIGHBOURS`] voters. `None` without either.
+    fn state(&self, tally: &Tally) -> Option<State> {
+        let title = self.vectors.text(&self.subject)?.to_string();
+        let nearest: Vec<Neighbour> = self.voters(tally).map(|(_, title, played)| Neighbour { title: title.to_string(), played }).collect();
+        (!nearest.is_empty()).then_some(State { nearest, title })
+    }
+
+    /// The nearest [`NEIGHBOURS`] with a closed outcome in `tally` and a
+    /// title to show: subject, title, whether the audience played it.
+    fn voters<'a>(&'a self, tally: &'a Tally) -> impl Iterator<Item = (&'a str, &'a str, bool)> + 'a {
+        self.nearest
+            .iter()
+            .filter_map(|subject| {
+                let outcomes = tally.subjects.get(*subject).filter(|outcomes| outcomes.total > 0.0)?;
+                Some((*subject, self.vectors.title(subject)?, outcomes.played > 0.0))
+            })
+            .take(NEIGHBOURS)
     }
 
     /// The voters of `tally` that went the way `taste` leans: played by the
@@ -326,34 +342,28 @@ impl Shortlist<'_> {
             outcomes.is_some_and(|outcomes| (outcomes.played > 0.0) == played)
         };
         let subjects: Vec<String> =
-            voters(&self.0, tally).map(|(subject, ..)| subject).filter(|subject| agrees(subject)).map(str::to_string).collect();
+            self.voters(tally).map(|(subject, ..)| subject).filter(|subject| agrees(subject)).map(str::to_string).collect();
         (!subjects.is_empty()).then_some(Likeness { subjects, played })
     }
 }
 
-/// The nearest [`NEIGHBOURS`] with a closed outcome in `tally`: subject,
-/// played share, similarity.
-fn voters<'a>(nearest: &'a [(&'a str, f32)], tally: &'a Tally) -> impl Iterator<Item = (&'a str, f64, f32)> + 'a {
-    nearest.iter().filter_map(|(subject, similarity)| Some((*subject, tally.subjects.get(*subject)?.rate()?, *similarity))).take(NEIGHBOURS)
-}
-
 /// Fill the taste of every never-played panel row, each with the outcomes
-/// closed by its own cut, weighted by `decay` as of that cut. A store without
-/// vectors leaves every row at 0.
-pub fn fill(dataset: &mut [Example], vectors: &VectorStore, activity: &Activity, horizon_secs: u64, decay: Decay) {
+/// closed by its own cut. A store without vectors, or an unanswered
+/// question, leaves a row at 0; `judge` records the questions to ask.
+pub fn fill(dataset: &mut [Example], vectors: &VectorStore, activity: &Activity, horizon_secs: u64, judge: &mut Judge<'_>) {
     if vectors.is_empty() {
         return;
     }
     let mut records: BTreeMap<u64, Record> = BTreeMap::new();
     for row in dataset.iter().filter(|row| row.features.never_played) {
-        records.entry(row.cut_unix).or_insert_with(|| Record::as_of(dataset, activity, horizon_secs, row.cut_unix, decay));
+        records.entry(row.cut_unix).or_insert_with(|| Record::as_of(dataset, activity, horizon_secs, row.cut_unix));
     }
     let subjects: Vec<String> = dataset.iter().map(|row| subject_of(&row.item_id).to_string()).collect();
     let pool = Pool::new(vectors, subjects.iter().map(String::as_str));
     let mut shortlists: HashMap<&str, Option<Shortlist>> = HashMap::new();
     for (row, subject) in dataset.iter_mut().zip(&subjects).filter(|(row, _)| row.features.never_played) {
-        let shortlist = shortlists.entry(subject.as_str()).or_insert_with(|| pool.shortlist(vectors, subject));
-        let taste = shortlist.as_ref().zip(records.get(&row.cut_unix)).and_then(|(shortlist, record)| shortlist.taste(record));
+        let shortlist = shortlists.entry(subject.as_str()).or_insert_with(|| pool.shortlist(subject));
+        let taste = shortlist.as_ref().zip(records.get(&row.cut_unix)).and_then(|(shortlist, record)| shortlist.taste(record, judge));
         row.features = row.features.with_taste(taste);
     }
 }
@@ -361,13 +371,13 @@ pub fn fill(dataset: &mut [Example], vectors: &VectorStore, activity: &Activity,
 /// Card id → taste and the neighbours behind it, for every card with no
 /// recorded play, from the outcomes the adopted fit learned from. Seasons
 /// share their show's answer.
-pub fn read_cards(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record) -> HashMap<String, Reading> {
+pub fn read_cards(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record, judge: &mut Judge<'_>) -> HashMap<String, Reading> {
     let pool = Pool::new(vectors, record.household.subjects.keys().map(String::as_str));
     let mut by_subject: HashMap<&str, Option<Reading>> = HashMap::new();
     let mut out = HashMap::new();
     for card in cards.iter().filter(|card| card.last_watched_days.is_none()) {
         let subject = subject_of(&card.id);
-        let reading = by_subject.entry(subject).or_insert_with(|| pool.shortlist(vectors, subject)?.read(record));
+        let reading = by_subject.entry(subject).or_insert_with(|| pool.shortlist(subject)?.read(record, judge));
         if let Some(reading) = reading {
             out.insert(card.id.clone(), reading.clone());
         }
@@ -376,8 +386,8 @@ pub fn read_cards(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record)
 }
 
 /// Card id → taste, as [`read_cards`] without the neighbours.
-pub fn for_cards(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record) -> HashMap<String, f64> {
-    read_cards(cards, vectors, record).into_iter().map(|(id, reading)| (id, reading.taste)).collect()
+pub fn for_cards(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record, judge: &mut Judge<'_>) -> HashMap<String, f64> {
+    read_cards(cards, vectors, record, judge).into_iter().map(|(id, reading)| (id, reading.taste)).collect()
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {

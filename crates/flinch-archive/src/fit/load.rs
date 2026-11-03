@@ -31,6 +31,10 @@ pub enum LoadError {
     /// `embeddings.json` exists but cannot be used. Absent is fine: no taste.
     #[error(transparent)]
     Vectors(#[from] crate::embedding::StoreError),
+    /// `taste_answers.json` exists but cannot be used. Absent is fine: every
+    /// question is still to ask.
+    #[error(transparent)]
+    Answers(#[from] crate::taste::judge::AnswersError),
 }
 
 /// The household as the fitter sees it.
@@ -44,8 +48,10 @@ pub struct Household {
     pub tautulli_rows: usize,
     /// Every title's embedding vector the daemon has cached.
     pub vectors: crate::embedding::VectorStore,
-    /// Taste's recency weighting, from `settings.json` (off when unreadable).
-    pub taste_decay: crate::taste::Decay,
+    /// Clef's taste answers, pointed at the configured judge model, while the
+    /// judge is switched on in `settings.json`; `None` while it is off (or
+    /// the settings are unreadable), and taste stays 0.
+    pub answers: Option<crate::taste::AnswerCache>,
 }
 
 /// What the fitter reads out of an `items.json` row; only the fields it needs.
@@ -118,9 +124,16 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
         })
         .collect();
     let vectors = crate::embedding::VectorStore::read(state_dir)?;
-    let taste_decay =
-        crate::daemon::read_settings(&state_dir.join("settings.json")).map(|settings| settings.taste.decay()).unwrap_or_default();
-    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors, taste_decay })
+    let taste = crate::daemon::read_settings(&state_dir.join("settings.json")).map(|settings| settings.taste).unwrap_or_default();
+    let answers = match taste.judge_enabled {
+        true => {
+            let mut cache = crate::taste::AnswerCache::read(state_dir)?;
+            cache.retarget(taste.judge_model.trim());
+            Some(cache)
+        }
+        false => None,
+    };
+    Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors, answers })
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.

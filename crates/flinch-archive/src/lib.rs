@@ -30,6 +30,7 @@ pub mod inflow;
 pub mod jellyfin;
 pub mod maintainerr;
 pub mod notify;
+pub mod ollama;
 pub mod outside;
 pub mod overlay;
 pub mod persist;

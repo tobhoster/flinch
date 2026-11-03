@@ -1,10 +1,12 @@
-//! The daemon against fake *arrs and old state files: what a cycle reads
-//! lands on the instance it came from, what it deletes goes to the instance
-//! the card names, and an install upgraded from one Radarr and one Sonarr
-//! reads its state on unchanged.
+//! The daemon against fake *arrs, a fake Ollama and old state files: what a
+//! cycle reads lands on the instance it came from, what it deletes goes to
+//! the instance the card names, an install upgraded from one Radarr and one
+//! Sonarr reads its state on unchanged, and Ollama's vectors and Clef's
+//! answers reach the state directory.
 
 mod fake;
 mod instances;
+mod ollama;
 mod upgrade;
 
 use super::Args;
