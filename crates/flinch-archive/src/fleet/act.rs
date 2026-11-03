@@ -63,7 +63,8 @@ pub async fn remove_queue_item(fleet: &Fleet<'_>, status: &FleetStatus, app: App
 pub async fn test_indexer(fleet: &Fleet<'_>, id: u64) -> Result<Sent, ActionError> {
     let api = fleet.prowlarr().ok_or(ActionError::NoProwlarr)?;
     let resource = api.find("indexer", &format!("/api/v1/indexer/{id}")).await?.ok_or(ActionError::NoIndexer)?;
-    let sent = api.write_within("indexer test", Method::POST, "/api/v1/indexer/test", &[], Some(&resource), Some(INDEXER_TEST_TIMEOUT)).await?;
+    let sent =
+        api.write_within("indexer test", Method::POST, "/api/v1/indexer/test", &[], Some(&resource), Some(INDEXER_TEST_TIMEOUT)).await?;
     Ok(sent.map_or(Sent::DryRun, |_| Sent::Done))
 }
 

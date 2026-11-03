@@ -14,7 +14,6 @@ fn no_bin(_: &str, _: &str) -> u64 {
     0
 }
 
-
 /// The one volume's reading, in GB.
 fn disk(used_gb: u64, library_gb: u64) -> BTreeMap<String, Occupancy> {
     BTreeMap::from([("/media".to_string(), Occupancy { used: used_gb * GB, library: library_gb * GB })])

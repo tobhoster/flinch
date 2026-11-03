@@ -50,8 +50,12 @@ fn archive_settings_are_validated(#[case] config: ArchiveConfig, #[case] valid: 
 #[test]
 fn only_a_root_on_a_measured_disk_becomes_a_destination() {
     // Different sizes: two filesystems, never merged as one.
-    let disk =
-        |path: &str, total_gib: u64| Volume { path: path.to_string(), total_bytes: total_gib * GIB, free_bytes: total_gib / 2 * GIB, device: None };
+    let disk = |path: &str, total_gib: u64| Volume {
+        path: path.to_string(),
+        total_bytes: total_gib * GIB,
+        free_bytes: total_gib / 2 * GIB,
+        device: None,
+    };
     let radarr = AppDisks {
         app: App::Radarr,
         instance: String::new(),

@@ -211,8 +211,9 @@ impl LibraryVolumes {
                 // FLINCH's own mount answers with a device; a reported mount
                 // only counts when it is not the container's `/`, which holds
                 // every path and so proves nothing (Sonarr reports no NFS mount).
-                let measured = probe(&disk.recycle_path)
-                    .or_else(|| deepest_mount(&disk.recycle_path, &disk.diskspace).filter(|mount| !trim_separators(&mount.path).is_empty()).cloned());
+                let measured = probe(&disk.recycle_path).or_else(|| {
+                    deepest_mount(&disk.recycle_path, &disk.diskspace).filter(|mount| !trim_separators(&mount.path).is_empty()).cloned()
+                });
                 if let Some(fs) = measured {
                     library.bins.push((owner.clone(), disk.recycle_path.clone(), fs));
                 }

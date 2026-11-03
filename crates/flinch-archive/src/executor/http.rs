@@ -120,7 +120,8 @@ impl<'a> Api<'a> {
 /// why far better than the first 200 bytes of the JSON do.
 fn validation_messages(body: &str) -> Option<String> {
     let failures: Vec<Value> = serde_json::from_str(body).ok()?;
-    let messages: Vec<&str> = failures.iter().filter_map(|failure| failure.get("errorMessage")?.as_str()).filter(|text| !text.is_empty()).collect();
+    let messages: Vec<&str> =
+        failures.iter().filter_map(|failure| failure.get("errorMessage")?.as_str()).filter(|text| !text.is_empty()).collect();
     (!messages.is_empty()).then(|| messages.join("; "))
 }
 

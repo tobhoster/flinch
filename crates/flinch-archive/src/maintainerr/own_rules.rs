@@ -34,7 +34,8 @@ impl RuleGroup {
     pub(super) fn from_value(raw: Value) -> Option<Self> {
         let id = raw.get("id")?.as_i64()?;
         let name = raw.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-        let collection_id = raw.get("collectionId").and_then(Value::as_i64).or_else(|| raw.pointer("/collection/id").and_then(Value::as_i64));
+        let collection_id =
+            raw.get("collectionId").and_then(Value::as_i64).or_else(|| raw.pointer("/collection/id").and_then(Value::as_i64));
         let use_rules = raw.get("useRules").and_then(Value::as_bool).unwrap_or(false);
         let rules = raw.get("rules").and_then(Value::as_array).map_or(0, Vec::len);
         Some(Self { id, name, collection_id, use_rules, rules, raw })
@@ -88,8 +89,11 @@ pub(super) fn rules_off_request(group: &RuleGroup) -> Option<Value> {
     for field in RUNTIME {
         collection.remove(field);
     }
-    let mut body: Map<String, Value> =
-        source.iter().filter(|(key, _)| !matches!(key.as_str(), "collection" | "rules" | "collectionId")).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut body: Map<String, Value> = source
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "collection" | "rules" | "collectionId"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     for field in LIFTED {
         if let Some(value) = collection.get(field).filter(|value| !value.is_null()) {
             body.insert(field.to_string(), value.clone());
@@ -113,18 +117,30 @@ pub fn competing<'a>(groups: &'a [RuleGroup], collections: &[CollectionInfo], ti
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RulesOff {
     /// Turned off and read back off; the backup is at `backup`.
-    Done { name: String, backup: String },
+    Done {
+        name: String,
+        backup: String,
+    },
     /// Printed, not sent.
-    DryRun { name: String },
-    Failed { name: String, error: String },
+    DryRun {
+        name: String,
+    },
+    Failed {
+        name: String,
+        error: String,
+    },
 }
 
 impl std::fmt::Display for RulesOff {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Done { name, backup } => write!(f, "turned off Maintainerr's own rules on {name:?}, which FLINCH fills (backup: {backup})"),
+            Self::Done { name, backup } => {
+                write!(f, "turned off Maintainerr's own rules on {name:?}, which FLINCH fills (backup: {backup})")
+            }
             Self::DryRun { name } => write!(f, "would turn off Maintainerr's own rules on {name:?}, which FLINCH fills"),
-            Self::Failed { name, error } => write!(f, "Maintainerr's own rules on {name:?} still pick items FLINCH did not choose; turning them off failed: {error}"),
+            Self::Failed { name, error } => {
+                write!(f, "Maintainerr's own rules on {name:?} still pick items FLINCH did not choose; turning them off failed: {error}")
+            }
         }
     }
 }
@@ -153,7 +169,9 @@ pub async fn turn_off<A: MaintainerrApi>(
                 Ok(path) => match api.turn_off_rules(group).await {
                     Err(error) => RulesOff::Failed { name, error: error.to_string() },
                     Ok(()) => match api.rule_groups().await?.iter().find(|again| again.id == group.id) {
-                        Some(again) if again.picks() => RulesOff::Failed { name, error: "Maintainerr answered success but the rules are still on".into() },
+                        Some(again) if again.picks() => {
+                            RulesOff::Failed { name, error: "Maintainerr answered success but the rules are still on".into() }
+                        }
                         _ => RulesOff::Done { name, backup: path },
                     },
                 },

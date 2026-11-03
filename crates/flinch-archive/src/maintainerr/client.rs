@@ -107,7 +107,11 @@ impl MaintainerrApi for HttpMaintainerr {
 
     async fn turn_off_rules(&mut self, group: &RuleGroup) -> Result<(), MaintainerrError> {
         let Some(update) = own_rules::rules_off_request(group) else {
-            return Err(MaintainerrError::Refused { endpoint: own_rules::UPDATE_RULE_GROUP, code: 0, message: "the rule group has no collection".into() });
+            return Err(MaintainerrError::Refused {
+                endpoint: own_rules::UPDATE_RULE_GROUP,
+                code: 0,
+                message: "the rule group has no collection".into(),
+            });
         };
         let (status, body) = send(own_rules::UPDATE_RULE_GROUP, self.request(Method::PUT, "/api/rules").json(&update)).await?;
         own_rules::read_update(status, &body)

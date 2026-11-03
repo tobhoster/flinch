@@ -257,8 +257,14 @@ fn a_root_whose_free_space_contradicts_its_mount_is_on_an_unreported_disk() {
     // roots fall through to the container's root filesystem; each root's own
     // free space shows it lives elsewhere. Radarr's root agrees with `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() };
+    let app = |app, diskspace, root_folders| AppDisks {
+        app,
+        instance: String::new(),
+        diskspace,
+        root_folders,
+        recycle: RecycleBin::Disabled,
+        recycle_path: String::new(),
+    };
     let library = LibraryVolumes::build(
         &[
             app(App::Radarr, vec![vol("/", 510, 57), vol("/data", 834, 460)], vec![root("/data/media/movies", 374)]),
@@ -285,8 +291,14 @@ fn a_root_the_app_does_not_report_is_measured_where_flinch_has_it_mounted() {
     // NFS shares FLINCH has mounted read-only. tv and tv-b are their own
     // disks; anime sits on the share Radarr already reports as `/data`.
     let root = |path: &str, free_gb: u64| RootFolder { path: path.to_string(), free_bytes: Some(free_gb * GB) };
-    let app =
-        |app, diskspace, root_folders| AppDisks { app, instance: String::new(), diskspace, root_folders, recycle: RecycleBin::Disabled, recycle_path: String::new() };
+    let app = |app, diskspace, root_folders| AppDisks {
+        app,
+        instance: String::new(),
+        diskspace,
+        root_folders,
+        recycle: RecycleBin::Disabled,
+        recycle_path: String::new(),
+    };
     let probe = |path: &str| match path {
         "/data/media/tv" => Some(vol("/data/media/tv", 834, 780)),
         "/data/media/tv-b" => Some(vol("/data/media/tv-b", 834, 666)),

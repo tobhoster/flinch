@@ -4,7 +4,7 @@
 use super::super::own_rules::{read_rule_groups, rules_off_request};
 use super::super::{competing, turn_off, RuleGroup, RulesOff};
 use super::fake::{Fake, Fault, Op};
-use super::{collection, current, valid_collections, titles, SEASONS};
+use super::{collection, current, titles, valid_collections, SEASONS};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
@@ -45,14 +45,27 @@ fn the_update_keeps_every_collection_setting_and_turns_only_the_rules_off() {
     assert_eq!(update["useRules"], json!(false));
     assert_eq!(update["rules"], json!([]));
     let collection = &update["collection"];
-    for (field, kept) in [("sortTitle", json!("001 Leaving Soon")), ("overlayEnabled", json!(true)), ("overlayTemplateId", json!(3)), ("deleteAfterDays", json!(0)), ("visibleOnHome", json!(true))] {
+    for (field, kept) in [
+        ("sortTitle", json!("001 Leaving Soon")),
+        ("overlayEnabled", json!(true)),
+        ("overlayTemplateId", json!(3)),
+        ("deleteAfterDays", json!(0)),
+        ("visibleOnHome", json!(true)),
+    ] {
         assert_eq!(collection[field], kept, "{field} goes back as it was: omitting it resets it");
     }
     for runtime in ["media", "id", "addDate", "handledMediaAmount", "mediaServerId"] {
         assert!(collection.get(runtime).is_none(), "{runtime} is state, not a setting");
     }
-    assert_eq!((update["arrAction"].clone(), update["forceSeerr"].clone(), update["sonarrSettingsId"].clone()), (json!(2), json!(true), json!(1)), "the DTO's top-level settings");
-    assert!(update.get("collectionId").is_none() && update.get("radarrSettingsId").is_none() && update.get("ruleHandlerCronSchedule").is_none(), "nulls and read-only fields stay out");
+    assert_eq!(
+        (update["arrAction"].clone(), update["forceSeerr"].clone(), update["sonarrSettingsId"].clone()),
+        (json!(2), json!(true), json!(1)),
+        "the DTO's top-level settings"
+    );
+    assert!(
+        update.get("collectionId").is_none() && update.get("radarrSettingsId").is_none() && update.get("ruleHandlerCronSchedule").is_none(),
+        "nulls and read-only fields stay out"
+    );
     assert_eq!((update["id"].clone(), update["libraryId"].clone(), update["dataType"].clone()), (json!(11), json!("2"), json!("season")));
 }
 
@@ -103,7 +116,9 @@ fn fake_writes_none(backed_up: &RefCell<Vec<Value>>) -> bool {
 #[tokio::test]
 async fn without_a_backup_nothing_is_sent() {
     let mut fake = fake_with(vec![group(11, SEASONS, true, 4)]);
-    let outcomes = turn_off(&mut fake, &valid_collections(), &titles(), |_: &RuleGroup| Err(std::io::Error::other("read-only state"))).await.expect("read");
+    let outcomes = turn_off(&mut fake, &valid_collections(), &titles(), |_: &RuleGroup| Err(std::io::Error::other("read-only state")))
+        .await
+        .expect("read");
     assert!(matches!(&outcomes[0], RulesOff::Failed { error, .. } if error.contains("backup not written")), "{outcomes:?}");
     assert!(fake.writes.is_empty());
 }
@@ -120,9 +135,11 @@ async fn an_update_maintainerr_accepts_but_does_not_apply_is_a_failure() {
 async fn a_dry_run_prints_and_writes_no_backup() {
     let mut fake = fake_with(vec![group(11, SEASONS, true, 4)]);
     fake.simulated = true;
-    let outcomes = turn_off(&mut fake, &valid_collections(), &titles(), |_: &RuleGroup| -> std::io::Result<String> { panic!("no backup in a dry run") })
-        .await
-        .expect("read");
+    let outcomes = turn_off(&mut fake, &valid_collections(), &titles(), |_: &RuleGroup| -> std::io::Result<String> {
+        panic!("no backup in a dry run")
+    })
+    .await
+    .expect("read");
     assert_eq!(outcomes, [RulesOff::DryRun { name: "group 11".into() }]);
     assert!(fake.groups[0].picks(), "nothing changed");
 }
