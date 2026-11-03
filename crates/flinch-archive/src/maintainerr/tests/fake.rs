@@ -5,7 +5,7 @@
 //! children's; a collection refuses an item of the wrong kind. Failures are
 //! scripted per operation.
 
-use super::super::{CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion};
+use super::super::{CollectionInfo, ExclusionRow, MaintainerrApi, MaintainerrError, MaintainerrTarget, MaintainerrVersion, RuleGroup};
 use crate::card::LibraryKind;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -15,6 +15,7 @@ pub(crate) enum Op {
     RemoveExclusion,
     AddToCollection,
     RemoveFromCollection,
+    TurnOffRules,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +39,8 @@ pub(crate) struct Fake {
     /// Behave like the dry-run sink: writes succeed and change nothing.
     pub simulated: bool,
     pub writes: Vec<(Op, String)>,
+    /// `GET /api/rules`; a turned-off group reads back with its rules gone.
+    pub groups: Vec<RuleGroup>,
 }
 
 impl Fake {
@@ -52,6 +55,7 @@ impl Fake {
             faults: BTreeMap::new(),
             simulated: false,
             writes: Vec::new(),
+            groups: Vec::new(),
         }
     }
 
@@ -157,6 +161,20 @@ impl MaintainerrApi for Fake {
         if self.write(Op::RemoveFromCollection, item_key.to_string())? {
             if let Some(members) = self.members.get_mut(&collection_id) {
                 members.remove(item_key);
+            }
+        }
+        Ok(())
+    }
+
+    async fn rule_groups(&mut self) -> Result<Vec<RuleGroup>, MaintainerrError> {
+        Ok(self.groups.clone())
+    }
+
+    async fn turn_off_rules(&mut self, group: &RuleGroup) -> Result<(), MaintainerrError> {
+        if self.write(Op::TurnOffRules, group.id.to_string())? {
+            if let Some(kept) = self.groups.iter_mut().find(|known| known.id == group.id) {
+                kept.use_rules = false;
+                kept.rules = 0;
             }
         }
         Ok(())

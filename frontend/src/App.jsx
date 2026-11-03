@@ -1,15 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, LogOut, Play } from 'lucide-react';
-import { Locked, loadSession, loadStatus, loadItems, loadHistory, logOut, onLocked, triggerRun } from './api.js';
+import { Locked, loadSession, loadStatus, loadItems, loadHistory, loadFleet, logOut, onLocked, triggerRun } from './api.js';
 import { Dot, Tabs, ago, every } from './ui.jsx';
 import Overview from './Overview.jsx';
 import MediaTable from './MediaTable.jsx';
 import Settings from './Settings.jsx';
 import QualityProfiles from './QualityProfiles.jsx';
 import Login from './Login.jsx';
+import Fleet, { FleetStrip } from './Fleet.jsx';
 import { parseArrRef } from './arrRef.js';
 
-const TABS = [['overview', 'Overview'], ['series', 'Series'], ['movies', 'Movies'], ['quality', 'Quality profiles'], ['settings', 'Settings']];
+// d3-force only loads when the Graph tab opens.
+const RelationshipGraph = lazy(() => import('./graph/RelationshipGraph.jsx'));
+
+const TABS = [['overview', 'Overview'], ['series', 'Series'], ['movies', 'Movies'], ['graph', 'Graph'], ['fleet', 'Fleet'], ['quality', 'Quality profiles'], ['settings', 'Settings']];
 
 // A notification's Keep link opens FLINCH at `?item=<card id>`: the item's tab
 // (movies are radarr-… or radarr@4k-…, seasons sonarr-…), with its detail open.
@@ -22,6 +26,7 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [items, setItems] = useState([]);
   const [history, setHistory] = useState([]);
+  const [fleet, setFleet] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   // null while the API accepts us; `{ loginConfigured, sso, reason, over }`
@@ -36,8 +41,8 @@ export default function App() {
   const [checked, setChecked] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [st, it, hi] = await Promise.all([loadStatus(), loadItems(), loadHistory()]);
-    setStatus(st); setItems(it); setHistory(hi); setLoading(false);
+    const [st, it, hi, fl] = await Promise.all([loadStatus(), loadItems(), loadHistory(), loadFleet()]);
+    setStatus(st); setItems(it); setHistory(hi); setFleet(fl); setLoading(false);
   }, []);
 
   // Only requests the dashboard makes can be refused, so it is up. A refresh
@@ -78,7 +83,7 @@ export default function App() {
       // No answer: the session lives on at the server until it expires or
       // flinch-web restarts. The login is shown either way.
     }
-    setStatus(null); setItems([]); setHistory([]); setLoading(true);
+    setStatus(null); setItems([]); setHistory([]); setFleet(null); setLoading(true);
     setLocked({ ...ways.current, reason: '', over: false });
   };
 
@@ -130,12 +135,21 @@ export default function App() {
           <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
             <Tabs tabs={TABS} value={tab} onChange={setTab} />
           </div>
+          <div className="pt-3">
+            <FleetStrip fleet={fleet} status={status} onOpen={() => setTab('fleet')} />
+          </div>
         </header>
 
         <main className="pt-4">
           {tab === 'overview' && <Overview status={status} items={items} history={history} loading={loading} />}
           {tab === 'series' && <MediaTable items={items} kind="season" focus={LINKED} instances={status?.arr_instances} />}
           {tab === 'movies' && <MediaTable items={items} kind="movie" focus={LINKED} instances={status?.arr_instances} />}
+          {tab === 'graph' && (
+            <Suspense fallback={<p className="text-xs text-fg-muted">Loading the graph…</p>}>
+              <RelationshipGraph />
+            </Suspense>
+          )}
+          {tab === 'fleet' && <Fleet fleet={fleet} status={status} />}
           {tab === 'quality' && <QualityProfiles />}
           {tab === 'settings' && <Settings status={status} />}
         </main>

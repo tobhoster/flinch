@@ -6,13 +6,19 @@
 //! Everything else that removed a file — a person in the *arr's UI, a script
 //! on its API, Maintainerr's own rules, a file that vanished from disk — gets
 //! none of the cleanup a hand-over gets. Listing each one with whether the
-//! *arr still monitors it shows which will simply be downloaded again.
+//! *arr still wants it shows which will simply be downloaded again.
 //!
 //! A movie removed from Radarr outright takes its history with it, so only
 //! deletions that left the entry behind can be listed — exactly the ones that
 //! can come back.
+//!
+//! Sonarr fetches an episode when the show and the episode are monitored.
+//! Maintainerr unmonitors every episode it deletes and leaves the season flag
+//! on, so a season is settled from its episodes ([`settle_seasons`]); the show
+//! and season flags stand in when those could not be read.
 
 use crate::arr::{ArrMovie, ArrSeries};
+use crate::plex::SonarrEpisodes;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -60,9 +66,11 @@ pub struct OutsideDeletion {
     pub files: u32,
     /// How the latest file left.
     pub reason: RemovalReason,
-    /// Whether the *arr still monitors it — for a season, the show and the
-    /// season both. Monitored with no file on disk means it downloads again.
-    /// `None` when the *arr did not say.
+    /// Whether the *arr still wants it. A movie: it is monitored. A season:
+    /// the show is monitored and an episode that has aired is monitored with
+    /// no file — the show and season flags both, when its episodes could not
+    /// be read. Wanted with nothing on disk means it downloads again. `None`
+    /// when the *arr did not say.
     pub monitored: Option<bool>,
     /// A file is on disk again.
     pub on_disk: bool,
@@ -143,6 +151,48 @@ pub fn outside_deletions(
     listed.sort_by(|a, b| b.at_unix.cmp(&a.at_unix).then_with(|| a.id.cmp(&b.id)));
     listed.truncate(LIMIT);
     listed
+}
+
+/// The listed seasons, with the index of each in `listed`, its show and its
+/// season number.
+fn listed_seasons<'a>(listed: &[OutsideDeletion], series: &'a [ArrSeries]) -> Vec<(usize, &'a ArrSeries, u32)> {
+    let index: HashMap<&str, usize> = listed.iter().enumerate().map(|(at, item)| (item.id.as_str(), at)).collect();
+    let mut seasons = Vec::new();
+    for show in series {
+        for season in &show.seasons {
+            if let Some(at) = index.get(show.season_card_id(season.season_number).as_str()) {
+                seasons.push((*at, show, season.season_number));
+            }
+        }
+    }
+    seasons
+}
+
+/// The shows whose episodes settle whether a listed season downloads again:
+/// each show Sonarr monitors with a season listed, once. An unmonitored
+/// show downloads nothing, whatever its episodes say.
+pub fn shows_to_settle<'a>(listed: &[OutsideDeletion], series: &'a [ArrSeries]) -> Vec<&'a ArrSeries> {
+    let mut shows: Vec<&ArrSeries> =
+        listed_seasons(listed, series).into_iter().filter(|(_, show, _)| show.monitored == Some(true)).map(|(_, show, _)| show).collect();
+    // Seasons of one show are listed together, so its duplicates are adjacent.
+    shows.dedup_by(|a, b| std::ptr::eq(*a, *b));
+    shows
+}
+
+/// Settle whether each listed season of a monitored show downloads again from
+/// its episodes as Sonarr reads them `now` (`episodes`, by
+/// [`ArrSeries::subject`]): only when one that has aired is monitored with no
+/// file. A show whose episodes are missing from `episodes` keeps the flags'
+/// answer, which warns rather than hides.
+pub fn settle_seasons(listed: &mut [OutsideDeletion], series: &[ArrSeries], episodes: &HashMap<String, SonarrEpisodes>, now: u64) {
+    for (at, show, season) in listed_seasons(listed, series) {
+        if show.monitored != Some(true) {
+            continue;
+        }
+        if let Some(wanted) = episodes.get(&show.subject()).and_then(|read| read.wants_aired(season, now)) {
+            listed[at].monitored = Some(wanted);
+        }
+    }
 }
 
 #[cfg(test)]

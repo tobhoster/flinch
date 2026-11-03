@@ -268,14 +268,15 @@ async fn instance_disks(client: &reqwest::Client, arr: &Connection) -> Result<fl
     );
     let diskspace: Vec<ArrDiskSpace> = serde_json::from_value(disks?).context("diskspace payload shape")?;
     let roots: Vec<ArrRootFolder> = serde_json::from_value(roots?).context("rootfolder payload shape")?;
-    // The recycle bin only decides how long evicted bytes are credited;
-    // unreadable settings fall back to the longer default, the safe side.
-    let recycle = match media.and_then(|value| serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape"))
+    // The recycle bin decides how long evicted bytes are credited, and where
+    // they go; unreadable settings fall back to the longer default, the safe side.
+    let (recycle, recycle_path) = match media
+        .and_then(|value| serde_json::from_value::<ArrMediaManagement>(value).context("mediamanagement payload shape"))
     {
-        Ok(settings) => RecycleBin::from_settings(&settings.recycle_bin, settings.recycle_bin_cleanup_days),
+        Ok(settings) => (RecycleBin::from_settings(&settings.recycle_bin, settings.recycle_bin_cleanup_days), settings.recycle_bin),
         Err(error) => {
             eprintln!("[flinch-arrd] {} recycle-bin settings unreadable, assuming {} days: {error:#}", arr.key(), RecycleBin::DEFAULT_DAYS);
-            RecycleBin::Unknown
+            (RecycleBin::Unknown, String::new())
         }
     };
     let (accessible, unreachable): (Vec<ArrRootFolder>, Vec<ArrRootFolder>) =
@@ -289,5 +290,6 @@ async fn instance_disks(client: &reqwest::Client, arr: &Connection) -> Result<fl
         diskspace: diskspace.iter().map(Into::into).collect(),
         root_folders: accessible.into_iter().map(Into::into).collect(),
         recycle,
+        recycle_path,
     })
 }
