@@ -36,8 +36,8 @@ function FieldDiff({ fields }) {
         {fields.map((field, i) => (
           <tr key={i} className="align-top">
             <td className="w-1/4 py-1 pr-3 text-fg-muted">{field.field}</td>
-            <td className="w-[37%] break-words py-1 pr-3 font-mono text-state-bad/80">{field.from ?? '—'}</td>
-            <td className="w-[38%] break-words py-1 font-mono text-state-ok/90">{field.to ?? '—'}</td>
+            <td className="w-[37%] wrap-break-word py-1 pr-3 font-mono text-state-bad/80">{field.from ?? '—'}</td>
+            <td className="w-[38%] wrap-break-word py-1 font-mono text-state-ok/90">{field.to ?? '—'}</td>
           </tr>
         ))}
       </tbody>

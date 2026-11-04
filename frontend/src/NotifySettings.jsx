@@ -33,7 +33,7 @@ const PLACEHOLDER = {
 const NEW_CHANNEL = { name: '', kind: 'discord', url_env: '', url: '', token_env: '', events: EVENTS.map(([key]) => key).filter((key) => key !== 'newsletter') };
 
 const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
-const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
+const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0';
 
 /** The editable list of channels; `onChange` gets the whole new list. */
 export function NotifyChannels({ channels, onChange }) {

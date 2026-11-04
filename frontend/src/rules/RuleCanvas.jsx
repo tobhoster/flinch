@@ -4,13 +4,13 @@ import '@xyflow/react/dist/style.css';
 import { Filter, Gauge, LayoutGrid, LogOut, Plus, ShieldCheck, Zap } from 'lucide-react';
 import { EFFECTS, EVENTS, effectLabel, effectOf, rulesPayload } from '../RuleSettings.jsx';
 import { CONDITIONS, ROW, canConnect, canonical, conditionDef, flowToRules, isEvict, newNode, rulesToFlow } from './flow.js';
-import { palette } from '../../tailwind.config.js';
+import { palette } from '../palette.js';
 
 // The Visual Rules Workspace: the rule list as chains of trigger → conditions
 // → action. It edits the same `rules` the form and YAML views edit; Settings
 // still saves them only after a preview. See flow.js for the grammar.
 
-const selectClass = 'rounded border border-line bg-ink-900 px-1.5 py-0.5 text-[12px] text-fg focus:border-fg-faint focus:outline-none';
+const selectClass = 'rounded-sm border border-line bg-ink-900 px-1.5 py-0.5 text-[12px] text-fg focus:border-fg-faint focus:outline-hidden';
 const tone = {
   trigger: 'border-l-state-info',
   condition: 'border-l-fg-faint',
@@ -23,12 +23,12 @@ const tone = {
 function Shell({ kind, icon: Icon, title, children, selected, inbound = true, outbound = true }) {
   return (
     <div className={`w-[200px] rounded-md border border-l-[3px] bg-ink-900 px-2.5 py-1.5 text-[12px] ${tone[kind]} ${selected ? 'border-fg-faint shadow-ring' : 'border-line'}`}>
-      {inbound && <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-line !bg-ink-700" />}
+      {inbound && <Handle type="target" position={Position.Left} className="h-2! w-2! border-line! bg-ink-700!" />}
       <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-fg-faint">
         <Icon size={11} /> {title}
       </div>
       <div className="mt-0.5 text-fg">{children}</div>
-      {outbound && <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-line !bg-ink-700" />}
+      {outbound && <Handle type="source" position={Position.Right} className="h-2! w-2! border-line! bg-ink-700!" />}
     </div>
   );
 }

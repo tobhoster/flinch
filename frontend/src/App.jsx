@@ -117,17 +117,17 @@ export default function App() {
               <img src="/logo-dark.png" alt="" className="h-6 w-6" />
               <span className="text-sm font-semibold tracking-wide text-fg">FLINCH</span>
             </span>
-            <div className="order-2 basis-full sm:order-none sm:basis-auto">
+            <div className="order-2 basis-full sm:order-0 sm:basis-auto">
               <StatusLine status={status} loading={loading} />
             </div>
-            <div className="order-3 basis-full sm:order-none sm:ml-auto sm:basis-auto">
+            <div className="order-3 basis-full sm:order-0 sm:ml-auto sm:basis-auto">
               <Connections status={status} />
             </div>
-            <button onClick={onTrigger} disabled={running} className="btn order-1 ml-auto sm:order-none sm:ml-0">
+            <button onClick={onTrigger} disabled={running} className="btn order-1 ml-auto sm:order-0 sm:ml-0">
               {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
               {running ? 'Running…' : 'Trigger run'}
             </button>
-            <button onClick={onLogOut} title="End this browser's session" className="btn order-1 sm:order-none">
+            <button onClick={onLogOut} title="End this browser's session" className="btn order-1 sm:order-0">
               <LogOut size={13} /> Log out
             </button>
           </div>
@@ -154,9 +154,9 @@ export default function App() {
           {tab === 'settings' && <Settings status={status} />}
         </main>
       </div>
-      {/* Above everything the dashboard can open: a Sheet, an explainer (z-[60]). */}
+      {/* Above everything the dashboard can open: a Sheet, an explainer (z-60). */}
       {locked && (
-        <div className="fixed inset-0 z-[70] overflow-y-auto bg-ink-950/95">
+        <div className="fixed inset-0 z-70 overflow-y-auto bg-ink-950/95">
           <Login loginConfigured={locked.loginConfigured} sso={locked.sso} reason={locked.reason} onLogin={onLogin} />
         </div>
       )}

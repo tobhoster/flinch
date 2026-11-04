@@ -41,7 +41,7 @@ export default function OutsideDeletions({ items }) {
       )}
       <ul className="space-y-1 text-fg-muted">
         {ordered.slice(0, LIMIT).map((d) => (
-          <li key={d.id} className="break-words">
+          <li key={d.id} className="wrap-break-word">
             <span className="text-fg">{d.title || d.id}{d.season_label ? ` ${d.season_label}` : ''}</span>
             {' · '}<span className="num">{day(d.at_unix)}</span>
             {' · '}{how(d)}

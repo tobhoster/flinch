@@ -77,7 +77,7 @@ export function Explain({ term }) {
       </button>
       {open && createPortal(
         <div ref={panel} id={id} role="region" aria-label={entry.term} onClick={(e) => e.stopPropagation()}
-          className="fixed z-[60] rounded-md border border-line bg-ink-800 px-3 py-2 text-left text-xs font-normal leading-snug text-fg-muted shadow-soft"
+          className="fixed z-60 rounded-md border border-line bg-ink-800 px-3 py-2 text-left text-xs font-normal leading-snug text-fg-muted shadow-soft"
           style={{ left: pos.left, top: pos.top, width: pos.width }}>
           <p className="mb-0.5 font-medium text-fg">{entry.term}</p>
           <p>{entry.body}</p>

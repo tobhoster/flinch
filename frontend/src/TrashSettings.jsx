@@ -86,7 +86,7 @@ export function TrashInstances({ form, onChange }) {
         </div>
       ))}
       <div className="space-y-1.5">
-        <label htmlFor="trash-extra" className="text-fg-muted">Extra instances</label>
+        <label htmlFor="trash-extra" className="block text-fg-muted">Extra instances</label>
         <p className="text-[12px] text-fg-faint">
           One config per extra instance, keyed <code>radarr@4k</code> or <code>sonarr@anime</code>, in the same fields. An extra instance without an entry is not synced: a 4K or anime library rarely wants the HD preset.
         </p>

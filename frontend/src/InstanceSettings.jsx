@@ -15,7 +15,7 @@ const HTTP = /^https?:\/\//;
 const NEW_INSTANCE = { app: 'radarr', name: '', url: '', key_env: '', archive_root: '', compact_profile: '', public_url: '' };
 
 const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
-const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
+const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0';
 
 /** The form's copy of `settings.instances`: every field a string. */
 export function instancesForm(instances) {

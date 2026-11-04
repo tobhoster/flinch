@@ -18,7 +18,7 @@ const PLACEHOLDER = {
 const NEW_CLIENT = { kind: 'qbittorrent', url: '', username: '', password_env: '' };
 
 const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
-const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
+const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0';
 
 /** The editable list of clients; `onChange` gets the whole new list. */
 export function TorrentClients({ clients, onChange }) {

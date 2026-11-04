@@ -36,7 +36,7 @@ function Group({ group, act }) {
   const chosen = decision?.keep;
   return (
     <li className="space-y-1 rounded-md border border-line-soft p-2">
-      <div className="break-words">
+      <div className="wrap-break-word">
         <span className="text-fg">{group.title}{group.year ? ` (${group.year})` : ''}</span>
         {' · '}<span className="num">{GiB(group.redundant_bytes)}</span> GiB redundant
       </div>
@@ -104,7 +104,7 @@ export default function Dupes({ dupes }) {
       {acted.length > 0 && (
         <ul className="space-y-0.5 text-fg-muted">
           {acted.slice(0, LIMIT).map((a) => (
-            <li key={`${a.copy}:${a.at_unix}`} className="break-words">
+            <li key={`${a.copy}:${a.at_unix}`} className="wrap-break-word">
               <span className="text-fg">{a.title}</span> · <span className="num">{day(a.at_unix)}</span> · {OUTCOME[a.outcome] ?? a.outcome}
               {' · '}<span className="num">{GiB(a.bytes)}</span> GiB{a.detail ? ` · ${a.detail}` : ''}
             </li>

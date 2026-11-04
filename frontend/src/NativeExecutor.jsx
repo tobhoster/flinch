@@ -21,7 +21,7 @@ function Recent({ item, asked, onRestore }) {
       : null;
   return (
     <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-      <span className="min-w-0 break-words">
+      <span className="min-w-0 wrap-break-word">
         <span className="text-fg">{item.title}</span>
         <span className="text-fg-faint"> · {GiB(item.bytes)} GiB · {day(item.deleted_at)}{item.announced ? ' · after Leaving Soon' : ''}</span>
         {item.seerr && <span className="block text-fg-faint">{item.seerr}</span>}
@@ -68,16 +68,16 @@ export default function NativeExecutor({ native: n, dryRun }) {
             <span className="num">{n.failures}</span> {n.failures === 1 ? 'write' : 'writes'} failed, retried next run.
           </li>
         )}
-        {held.slice(0, HELD_SHOWN).map((line) => <li key={line} className="break-words">Held: {line}</li>)}
+        {held.slice(0, HELD_SHOWN).map((line) => <li key={line} className="wrap-break-word">Held: {line}</li>)}
         {held.length > HELD_SHOWN && <li>…and {held.length - HELD_SHOWN} more held.</li>}
-        {(n.problems || []).map((problem) => <li key={problem} className="break-words text-state-warn">{problem}</li>)}
+        {(n.problems || []).map((problem) => <li key={problem} className="wrap-break-word text-state-warn">{problem}</li>)}
       </ul>
       {(n.leaving || []).length > 0 && (
         <>
           <h4 className="mt-3 text-fg">Leaving Soon <Explain term="leaving_soon" /></h4>
           <ul className="mt-1 space-y-1 text-fg-muted">
             {n.leaving.map((item) => (
-              <li key={item.id} className="break-words">
+              <li key={item.id} className="wrap-break-word">
                 <span className="text-fg">{item.title}</span> · {GiB(item.bytes)} GiB · leaves {day(item.until)} unless someone plays it
               </li>
             ))}

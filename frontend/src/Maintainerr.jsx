@@ -74,10 +74,10 @@ export default function MaintainerrSync({ sync: s, native, dryRun }) {
           </li>
         )}
         {(s.problems || []).map((problem) => (
-          <li key={problem} className="break-words text-state-warn">{problem}</li>
+          <li key={problem} className="wrap-break-word text-state-warn">{problem}</li>
         ))}
         {(s.warnings || []).map((warning) => (
-          <li key={warning} className="break-words text-state-warn">
+          <li key={warning} className="wrap-break-word text-state-warn">
             <span className="text-fg-muted">Advice:</span> {warning}
           </li>
         ))}

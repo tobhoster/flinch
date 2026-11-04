@@ -215,7 +215,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
           <div role="radiogroup" aria-label="Filter" className="hidden items-center rounded-md border border-line bg-ink-900 p-0.5 sm:inline-flex">
             {FILTERS.map((f) => (
               <button key={f.key} role="radio" aria-checked={filter === f.key} onClick={() => setFilter(f.key)}
-                className={`rounded px-2.5 py-1 text-xs transition-colors ${filter === f.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
+                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${filter === f.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
                 {f.label} <span className="num text-fg-faint">{counts[f.key]}</span>
               </button>
             ))}
@@ -226,7 +226,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
           </select>
           {themes.length > 0 && (
             <select aria-label="Theme" value={activeTheme} onChange={(e) => setTheme(e.target.value)}
-              className={`${selectCls} w-full sm:w-auto sm:max-w-[14rem]`}>
+              className={`${selectCls} w-full sm:w-auto sm:max-w-56`}>
               <option value="">All themes</option>
               {themes.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
@@ -238,7 +238,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
           <div role="radiogroup" aria-label="Search by" className="inline-flex items-center rounded-md border border-line bg-ink-900 p-0.5">
             {SEARCH_MODES.map((m) => (
               <button key={m.key} role="radio" aria-checked={mode === m.key} onClick={() => switchMode(m.key)}
-                className={`rounded px-2.5 py-1 text-xs transition-colors ${mode === m.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
+                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${mode === m.key ? 'bg-ink-700 text-fg' : 'text-fg-muted hover:text-fg'}`}>
                 {m.label}
               </button>
             ))}
@@ -247,8 +247,8 @@ export default function MediaTable({ items, kind, focus, instances }) {
             <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint" />
             <input ref={inputRef} value={q} onChange={(e) => editQuery(e.target.value)} onKeyDown={submit} placeholder={placeholder}
               aria-label={mode === 'meaning' ? 'Search by meaning' : 'Search titles'} enterKeyHint="search" maxLength={200}
-              className="min-h-[40px] w-full rounded-md border border-line bg-ink-900 py-1.5 pl-8 pr-8 text-[13px] placeholder:text-fg-faint focus:border-fg-faint focus:outline-none sm:min-h-0" />
-            <kbd className="absolute right-2 hidden sm:block top-1/2 -translate-y-1/2 rounded border border-line px-1 text-[10px] text-fg-faint">/</kbd>
+              className="min-h-[40px] w-full rounded-md border border-line bg-ink-900 py-1.5 pl-8 pr-8 text-[13px] placeholder:text-fg-faint focus:border-fg-faint focus:outline-hidden sm:min-h-0" />
+            <kbd className="absolute right-2 hidden sm:block top-1/2 -translate-y-1/2 rounded-sm border border-line px-1 text-[10px] text-fg-faint">/</kbd>
           </div>
         </div>
 
@@ -292,7 +292,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
               {rows.map((i) => (
                 <tr key={i.id} tabIndex={0} onClick={() => setSel(i)}
                   onKeyDown={(e) => e.key === 'Enter' && setSel(i)}
-                  className="cursor-pointer border-b border-line-soft last:border-0 hover:bg-ink-800/60 focus:bg-ink-800/60 focus:outline-none">
+                  className="cursor-pointer border-b border-line-soft last:border-0 hover:bg-ink-800/60 focus:bg-ink-800/60 focus:outline-hidden">
                   <td className="px-3 py-1"><TitleCell item={i} /></td>
                   {COLUMNS.map((c) => (
                     <td key={c.label} className={`whitespace-nowrap px-3 py-1 ${c.right ? 'text-right' : ''}`}>{c.render(i)}</td>
@@ -318,7 +318,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
                   {COLUMNS.map((c) => (
                     <div key={c.label} className={`min-w-0 ${c.wide ? 'col-span-2' : ''}`}>
                       <dt className="text-xs text-fg-muted">{c.label}</dt>
-                      <dd className="break-words">{c.render(i)}</dd>
+                      <dd className="wrap-break-word">{c.render(i)}</dd>
                     </div>
                   ))}
                 </dl>
@@ -336,7 +336,7 @@ export default function MediaTable({ items, kind, focus, instances }) {
   );
 }
 
-const selectCls = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none';
+const selectCls = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden';
 
 function Th({ children, sortKey, sort, onSort, right, term }) {
   const active = sortKey && sort.key === sortKey;
@@ -359,11 +359,11 @@ function Poster({ item, large = false }) {
   const [failed, setFailed] = useState(false);
   const size = large ? 'h-[90px] w-[60px]' : 'h-9 w-6';
   if (!item.poster_url || failed) {
-    return <div className={`${size} shrink-0 rounded-sm border border-line bg-ink-800`} aria-hidden />;
+    return <div className={`${size} shrink-0 rounded-xs border border-line bg-ink-800`} aria-hidden />;
   }
   return (
     <img src={item.poster_url} alt="" loading="lazy" onError={() => setFailed(true)}
-      className={`${size} shrink-0 rounded-sm border border-line object-cover`} />
+      className={`${size} shrink-0 rounded-xs border border-line object-cover`} />
   );
 }
 
@@ -383,7 +383,7 @@ function InstanceBadge({ item }) {
   if (!ref?.instance) return null;
   return (
     <span title={`From ${instanceLabel(ref.app, ref.instance)}`}
-      className="ml-1.5 inline-block rounded-sm border border-line px-1 align-middle text-[10.5px] leading-4 text-fg-muted">
+      className="ml-1.5 inline-block rounded-xs border border-line px-1 align-middle text-[10.5px] leading-4 text-fg-muted">
       {ref.instance}
     </span>
   );

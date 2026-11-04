@@ -62,7 +62,7 @@ function UpgradeSearches({ search }) {
       {picks.length > 0 && (
         <ul className="mt-1 space-y-1 text-fg-muted">
           {picks.map((p) => (
-            <li key={p.card_id} className="break-words">
+            <li key={p.card_id} className="wrap-break-word">
               <span className="text-fg">{p.title}</span>
               {' · '}P(watch) <span className="num">{Math.round(p.p_watch * 100)}%</span>
               {' · '}<span className="num">{GiB(p.bytes)}</span> → up to <span className="num">{GiB(p.expected_bytes)}</span> GiB
@@ -79,7 +79,7 @@ function UpgradeSearches({ search }) {
       {recent.length > 0 && (
         <ul className="mt-2 space-y-1 text-fg-muted">
           {recent.slice(0, LIMIT).map((s) => (
-            <li key={`${s.card_id}-${s.at}`} className="break-words">
+            <li key={`${s.card_id}-${s.at}`} className="wrap-break-word">
               <span className="text-fg">{s.title}</span> · {day(s.at)} · {SEARCH_OUTCOME[s.outcome?.state] ?? s.outcome?.state}
               {s.outcome?.state === 'failed' && <span className="text-fg-faint"> ({s.outcome.reason})</span>}
             </li>
@@ -116,7 +116,7 @@ export default function QualityActions({ actions, churn, search }) {
           {moves.length > 0 && (
             <ul className="mt-1 space-y-1 text-fg-muted">
               {moves.flatMap((m) => m.cards).map((c) => (
-                <li key={c.card_id} className="break-words">
+                <li key={c.card_id} className="wrap-break-word">
                   <span className="text-fg">{c.title}</span>
                   {' · '}<span className="num">{GiB(c.bytes)}</span> GiB
                   {c.release_bytes != null && <> → a <span className="num">{GiB(c.release_bytes)}</span> GiB release</>}
@@ -133,7 +133,7 @@ export default function QualityActions({ actions, churn, search }) {
           {recent.length > 0 && (
             <ul className="mt-2 space-y-1 text-fg-muted">
               {recent.slice(0, LIMIT).map((a) => (
-                <li key={`${a.card_id}-${a.at}`} className="break-words">
+                <li key={`${a.card_id}-${a.at}`} className="wrap-break-word">
                   <span className="text-fg">{a.title}</span> · {day(a.at)} · {OUTCOME[a.outcome?.state] ?? a.outcome?.state}
                   {a.outcome?.state === 'landed' && <> (<span className="num">{GiB(a.from_bytes)}</span> → <span className="num">{GiB(a.outcome.bytes)}</span> GiB)</>}
                   {a.outcome?.state === 'failed' && <span className="text-fg-faint"> ({a.outcome.reason})</span>}
@@ -150,7 +150,7 @@ export default function QualityActions({ actions, churn, search }) {
           <SectionTitle hint={`over ${churn.limit} grabs in 30 days`} term="upgrade_churn">Grabbed again and again</SectionTitle>
           <ul className="space-y-1 text-fg-muted">
             {flagged.slice(0, LIMIT).map((c) => (
-              <li key={c.card_id} className="break-words">
+              <li key={c.card_id} className="wrap-break-word">
                 <span className="text-fg">{c.title}</span>
                 {' · '}<span className="num">{c.grabs}</span> grabs, <span className="num">{c.imports}</span> imports
                 {' · '}{c.applied ? GUARD[c.applied.action] ?? c.applied.action : 'flagged'}

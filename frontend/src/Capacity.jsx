@@ -96,7 +96,7 @@ function Warning({ children }) {
   return (
     <div className="mt-3 flex gap-2 rounded-md bg-state-warn/10 px-3 py-2 text-state-warn">
       <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
-      <div className="min-w-0 break-words">{children}</div>
+      <div className="min-w-0 wrap-break-word">{children}</div>
     </div>
   );
 }
@@ -132,10 +132,10 @@ function VolumeRow({ v, marks, window }) {
 /** Use bar, a lighter extension to the projected use, and the target (solid) and emergency (red) marks. */
 function Gauge({ used, projected, marks, tone, label, className }) {
   return (
-    <div className={`relative rounded-sm bg-ink-700 ${className}`}
+    <div className={`relative rounded-xs bg-ink-700 ${className}`}
       role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(barPct(used))}>
-      <div className={`absolute inset-y-0 left-0 rounded-sm ${PROJECTED_BAR}`} style={{ width: `${barPct(projected)}%` }} />
-      <div className={`absolute inset-y-0 left-0 rounded-sm ${BAR_TONES[tone]}`} style={{ width: `${barPct(used)}%` }} />
+      <div className={`absolute inset-y-0 left-0 rounded-xs ${PROJECTED_BAR}`} style={{ width: `${barPct(projected)}%` }} />
+      <div className={`absolute inset-y-0 left-0 rounded-xs ${BAR_TONES[tone]}`} style={{ width: `${barPct(used)}%` }} />
       <div className={`absolute -bottom-1 -top-1 ${TARGET_MARK}`} style={{ left: `${barPct(marks.target)}%` }} title={`Target ${pct(marks.target)}`} />
       <div className={`absolute -bottom-1 -top-1 ${EMERGENCY_MARK}`} style={{ left: `${barPct(marks.emergency)}%` }} title={`Emergency ${pct(marks.emergency)}`} />
     </div>

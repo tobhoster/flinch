@@ -17,7 +17,7 @@ export default function Themes({ themes }) {
       <SectionTitle hint={`${list.length} themes`} term="themes">Storage by theme</SectionTitle>
       <ul className="space-y-1 text-fg-muted">
         {list.slice(0, LIMIT).map((t) => (
-          <li key={t.name} className="flex flex-wrap items-baseline gap-x-2 break-words">
+          <li key={t.name} className="flex flex-wrap items-baseline gap-x-2 wrap-break-word">
             <span className={t.cold ? 'text-state-warn' : 'text-fg'}>{t.name}</span>
             <span><span className="num">{GiB(t.bytes)}</span> GiB</span>
             <span>· <span className="num">{t.titles}</span> titles</span>

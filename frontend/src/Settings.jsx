@@ -357,7 +357,7 @@ export default function Settings({ status }) {
           <Row label="Deletes" htmlFor="executor"
             help="Maintainerr deletes what FLINCH hands to its collections. Native: FLINCH announces in Plex and deletes through Radarr and Sonarr itself, and needs no Maintainerr.">
             <select id="executor" value={form.executor || 'maintainerr'} onChange={set('executor')}
-              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
               <option value="maintainerr">Maintainerr</option>
               <option value="native">FLINCH (native)</option>
             </select>
@@ -370,14 +370,14 @@ export default function Settings({ status }) {
               </Row>
               <Row label="Shelf on" htmlFor="native.leaving_soon_server" help="Plex keeps one collection per library, promoted to home. Jellyfin/Emby (the server under Jellyfin) keeps one collection for the whole server and has no home promotion: name it to sort first. Switching moves every item back off the shelf; its window restarts.">
                 <select id="native.leaving_soon_server" value={form.native.leaving_soon_server || 'plex'} onChange={setIn('native', 'leaving_soon_server')}
-                  className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+                  className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
                   <option value="plex">Plex</option>
                   <option value="jellyfin">Jellyfin / Emby</option>
                 </select>
               </Row>
               <Row label="Movies" htmlFor="native.delete_mode" help="Seasons always keep the show: their episode files go and the season is unmonitored.">
                 <select id="native.delete_mode" value={form.native.delete_mode || 'file_and_unmonitor'} onChange={setIn('native', 'delete_mode')}
-                  className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+                  className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
                   <option value="file_and_unmonitor">Delete the file and unmonitor</option>
                   <option value="remove_entry">Remove the movie from Radarr</option>
                 </select>
@@ -448,7 +448,7 @@ export default function Settings({ status }) {
         <Section title="Jellyfin / Emby">
           <Row label="Server" htmlFor="jellyfin.kind" help="Read for every user's played state. Leaving Soon and collections stay in Plex.">
             <select id="jellyfin.kind" value={form.jellyfin?.kind || 'jellyfin'} onChange={setIn('jellyfin', 'kind')}
-              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
               <option value="jellyfin">Jellyfin</option>
               <option value="emby">Emby</option>
             </select>
@@ -502,7 +502,7 @@ export default function Settings({ status }) {
           </Row>
           <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept. Native keeps the model's own (384 for all-minilm); a shorter cut works only for models trained for it, such as embeddinggemma, and is lighter and coarser. Changing it embeds every title again.">
             <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
-              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
               {dimensionChoices(form.embedding.dimensions).map((d) => <option key={d} value={d}>{d === 0 ? 'Native (model\'s own length)' : d}</option>)}
             </select>
           </Row>
@@ -627,7 +627,7 @@ export default function Settings({ status }) {
           <Row label="On churn" htmlFor="upgrade_guard.action"
             help="Unmonitor stops the item downloading at all. Upgrades off applies to every item on its profile, and is skipped for profiles the quality sync manages.">
             <select id="upgrade_guard.action" value={form.upgrade_guard.action || 'flag'} onChange={setIn('upgrade_guard', 'action')}
-              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
               <option value="flag">Flag only</option>
               <option value="unmonitor">Unmonitor the item</option>
               <option value="upgrades_off">Turn upgrades off on its profile</option>
@@ -666,7 +666,7 @@ export default function Settings({ status }) {
           </Row>
           <Row label="Keep" htmlFor="dupes.prefer" help="Which copy the recommendation keeps when Radarr and the household's plays do not decide. Quality advice to downgrade prefers HD.">
             <select id="dupes.prefer" value={form.dupes?.prefer || 'highest'} onChange={setIn('dupes', 'prefer')}
-              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
+              className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0">
               <option value="highest">The highest picture</option>
               <option value="hd">HD over 4K</option>
             </select>

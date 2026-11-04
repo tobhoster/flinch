@@ -13,7 +13,7 @@ const KINDS = [
 const NEW_SOURCE = { kind: 'tracearr', name: '', url: '', token_env: '', client_id_env: '', retention_days: 0 };
 
 const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
-const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
+const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0';
 
 /** The list as the form edits it: every field present. */
 export function watchSourcesForm(sources) {
