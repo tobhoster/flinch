@@ -1,6 +1,6 @@
 //! The fit and its adoption gate.
 
-use super::super::adopt::fit_model;
+use super::super::adopt::{self, fit_model, Adoption, FitStatus};
 use super::super::candidate::{self, ModelKind};
 use super::super::load::Household;
 use super::*;
@@ -49,6 +49,41 @@ fn a_clear_household_signal_is_learnt_and_adopted() {
     let model = fit_model(&household(items), &dataset, NOW, default_cuts().len());
     assert_eq!(model.shortfall(), None, "{:?}", model.metrics);
     assert!(model.metrics.auc > model.metrics.priors_auc - 0.02 && model.metrics.brier < model.metrics.priors_brier);
+}
+
+#[test]
+fn a_fit_learnt_on_another_judges_answers_is_refitted() {
+    let dir = std::env::temp_dir().join(format!("flinch-fit-judge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let items = recency_driven(60);
+    let dataset = panel(&items, &default_cuts(), HORIZON_DAYS);
+    let model = FittedModel { judge_model: Some("judge-a".into()), ..fit_model(&household(items), &dataset, NOW, default_cuts().len()) };
+    assert_eq!(adopt::adopt(&dir, &model).unwrap(), Adoption::Written);
+    let status = FitStatus {
+        fitted_at_unix: NOW,
+        adopted: true,
+        shortfall: None,
+        kind: model.kind,
+        fitted_on: model.fitted_on.clone(),
+        metrics: model.metrics.clone(),
+        hazard: model.hazard,
+        priors: HazardModel::default(),
+    };
+    std::fs::write(dir.join("fit.json"), serde_json::to_vec(&status).unwrap()).unwrap();
+    std::fs::write(dir.join("items.json"), "[]").unwrap();
+    let judge = |model: &str| {
+        let settings = serde_json::json!({"taste": {"judge_enabled": true, "judge_model": model}});
+        std::fs::write(dir.join("settings.json"), settings.to_string()).unwrap();
+    };
+
+    judge("judge-a");
+    assert!(load_model(&dir).is_some(), "the judge it learnt on still asks");
+    assert!(adopt::refit_if_due(&dir, NOW + 3_600).is_none(), "fitted an hour ago: not due");
+    judge("judge-b");
+    assert!(load_model(&dir).is_none(), "another judge's verdicts are another taste feature");
+    let refit = adopt::refit_if_due(&dir, NOW + 3_600).expect("refitted at once, not a day later");
+    assert!(refit.is_ok_and(|status| status.fitted_at_unix == NOW + 3_600));
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

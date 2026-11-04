@@ -25,7 +25,7 @@ export const GLOSSARY = {
   },
   model: {
     term: 'Watch model',
-    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays, season cycle, whether everyone who played it finished it, and — for a title nobody played — how readily the household would play it (taste: the title’s 20 nearest neighbours by the Ollama embedding vectors of each title’s description, marked played or not by each viewer, are put to Clef, which judges whether that viewer would play it; set up under Settings → Embeddings and Settings → Taste). Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
+    body: 'A survival hazard: λ₀ per day, scaled by recency, viewings, show plays, season cycle, whether everyone who played it finished it, and — for a title nobody played — how readily the household would play it (taste: the title’s 20 nearest neighbours by the Ollama embedding vectors of each title’s description, marked played or not by each viewer, are put to a judge model on Ollama, which judges whether that viewer would play it; set up under Settings → Embeddings and Settings → Taste). Once a day FLINCH scores it on past dates whose outcome it knows, using titles the fit did not see. A fitted model replaces the hand-set priors only when it beats them there.',
   },
   projection: {
     term: 'Storage projection',

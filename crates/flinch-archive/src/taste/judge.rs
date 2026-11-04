@@ -1,5 +1,5 @@
-//! Clef's verdicts: the question taste asks, the answers cache, and the lookup
-//! the pure taste functions go through.
+//! The taste judge's verdicts: the question taste asks, the answers cache,
+//! and the lookup the pure taste functions go through.
 //!
 //! The question is one yes/no ("noul") per audience and title: given the
 //! title's description and its nearest titles, each marked by whether that
@@ -28,7 +28,7 @@ pub const QUESTION_VERSION: u32 = 1;
 /// The one question asked, by name.
 pub const QUESTION: &str = "would_play";
 /// The Ollama model judging taste unless the operator names another.
-pub const DEFAULT_MODEL: &str = "clef";
+pub const DEFAULT_MODEL: &str = "kev:4b-q4_K_M";
 /// Bounds of [`TasteConfig::judge_daily_budget`].
 pub const MAX_DAILY_BUDGET: u32 = 20_000;
 /// Days an answer (or a pending question) stays without being looked up.
@@ -50,9 +50,11 @@ const MAX_MODEL_CHARS: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TasteConfig {
-    /// Ask Clef. Off, taste is absent everywhere (0, no evidence).
+    /// Ask the judge model. Off, taste is absent everywhere (0, no evidence).
     pub judge_enabled: bool,
-    /// The Ollama decision model (`ollama pull clef`, or `clef:cloud`).
+    /// The Ollama decision model answering `/v1/systemone` questions
+    /// ([`DEFAULT_MODEL`], or another such as `clef-flash`, `clef` or
+    /// `clef:cloud`).
     pub judge_model: String,
     /// Most questions asked per UTC day.
     pub judge_daily_budget: u32,
@@ -80,9 +82,14 @@ impl TasteConfig {
         }
         Ok(())
     }
+
+    /// The judge model asked, trimmed; `None` while the judge is off.
+    pub fn active_model(&self) -> Option<&str> {
+        self.judge_enabled.then(|| self.judge_model.trim())
+    }
 }
 
-/// What Clef is shown about one title for one audience. Fields are declared
+/// What the judge is shown about one title for one audience. Fields are declared
 /// in alphabetical order, so the serialised state is canonical.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
@@ -273,7 +280,7 @@ impl AnswerCache {
         queue.into_iter().map(|(key, pending)| (key.clone(), pending.state.clone())).collect()
     }
 
-    /// Keep Clef's answer `p` to the question under `key`, asked on the UTC
+    /// Keep the judge's answer `p` to the question under `key`, asked on the UTC
     /// day of `now`.
     pub fn answer(&mut self, key: String, p: f64, now: u64) {
         self.pending.remove(&key);
@@ -346,7 +353,7 @@ impl<'a> Judge<'a> {
         Self { cache: Some(cache), asked: Asked::default() }
     }
 
-    /// Clef's probability that the audience plays the title `state`
+    /// The judge's probability that the audience plays the title `state`
     /// describes; `None` until it has answered (the question is recorded).
     pub fn p(&mut self, state: State) -> Option<f64> {
         let cache = self.cache?;

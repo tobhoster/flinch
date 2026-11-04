@@ -18,7 +18,7 @@ fn questions(cache: &AnswerCache, from: usize, count: usize) -> Asked {
 
 fn cache() -> AnswerCache {
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(DEFAULT_MODEL);
     cache
 }
 

@@ -23,24 +23,27 @@ fn store(entries: &[(&str, [f32; 2])]) -> VectorStore {
     store
 }
 
-/// A Clef stand-in: the played share of the two nearest titles, pulled
+/// The judge model the answers come from.
+const MODEL: &str = judge::DEFAULT_MODEL;
+
+/// A judge stand-in: the played share of the two nearest titles, pulled
 /// toward even odds.
-fn clef(state: &State) -> f64 {
+fn stand_in(state: &State) -> f64 {
     let near = &state.nearest[..state.nearest.len().min(2)];
     (near.iter().filter(|neighbour| neighbour.played).count() as f64 + 0.5) / (near.len() as f64 + 1.0)
 }
 
 /// What the daemon does over two cycles: `run` once to learn its questions,
-/// answer every one as `clef` would, then `run` again on the answers.
-fn judged<T>(mut clef: impl FnMut(&State) -> f64, mut run: impl FnMut(&mut Judge<'_>) -> T) -> T {
+/// answer every one as `answer` would, then `run` again on the answers.
+fn judged<T>(mut answer: impl FnMut(&State) -> f64, mut run: impl FnMut(&mut Judge<'_>) -> T) -> T {
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     run(&mut judge);
     let asked = judge.finish();
     cache.note(&asked, NOW);
     for (key, state) in cache.queue(&asked) {
-        cache.answer(key, clef(&state), NOW);
+        cache.answer(key, answer(&state), NOW);
     }
     let mut judge = Judge::new(&cache);
     let out = run(&mut judge);
@@ -143,7 +146,7 @@ fn taste_of(record: &Record, vectors: &VectorStore, subject: &str, judge: &mut J
 }
 
 fn judged_taste(record: &Record, vectors: &VectorStore, subject: &str) -> f64 {
-    judged(clef, |judge| taste_of(record, vectors, subject, judge)).unwrap_or(f64::NAN)
+    judged(stand_in, |judge| taste_of(record, vectors, subject, judge)).unwrap_or(f64::NAN)
 }
 
 /// The household of [`household`] played 2 of its 5 titles.
@@ -158,7 +161,7 @@ fn log_odds(p: f64) -> f64 {
 #[case::what_the_household_does_anyway_is_no_evidence(HOUSEHOLD_RATE, 0.0)]
 #[case::unlikely(0.2, log_odds(0.2) - log_odds(HOUSEHOLD_RATE))]
 #[case::certain_is_bounded(1.0, log_odds(0.99) - log_odds(HOUSEHOLD_RATE))]
-fn clefs_probability_against_the_audiences_own_rate_is_the_taste(#[case] p: f64, #[case] taste: f64) {
+fn the_judges_probability_against_the_audiences_own_rate_is_the_taste(#[case] p: f64, #[case] taste: f64) {
     let vectors = vectors();
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let read = judged(|_| p, |judge| taste_of(&record, &vectors, "radarr-10", judge));
@@ -176,7 +179,7 @@ fn a_title_like_the_ones_played_reads_warm_and_one_like_the_ones_left_reads_cold
 }
 
 #[test]
-fn clef_is_shown_the_description_and_the_nearest_titles_marked_played() {
+fn the_judge_is_shown_the_description_and_the_nearest_titles_marked_played() {
     let vectors = vectors();
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let mut shown = Vec::new();
@@ -217,7 +220,7 @@ fn the_warmest_viewer_speaks_and_a_viewer_still_unanswered_holds_the_taste_back(
     let pool = Pool::new(&vectors, record.household.subjects.keys().map(String::as_str));
     let Some(shortlist) = pool.shortlist("radarr-10") else { panic!("radarr-10 has a vector") };
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     assert_eq!(shortlist.read(&record, &mut judge), None, "nothing is answered yet");
     let asked = judge.finish();
@@ -269,7 +272,7 @@ fn a_row_never_hears_an_outcome_that_closed_after_its_cut() {
     let mut dataset =
         vec![played_by("radarr-1", early - 60 * DAY, ANN), played_by("radarr-2", early - 60 * DAY, ANN), row("radarr-10", early, false)];
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     fill(&mut dataset, &vectors, &seen, HORIZON, &mut judge);
     assert_eq!(dataset[2].features.taste, 0.0);
@@ -278,7 +281,7 @@ fn a_row_never_hears_an_outcome_that_closed_after_its_cut() {
     let closed = early - 120 * DAY;
     let later =
         vec![row("radarr-1", closed, true), row("radarr-2", closed, true), row("radarr-3", closed, false), row("radarr-10", early, false)];
-    let filled = judged(clef, |judge| {
+    let filled = judged(stand_in, |judge| {
         let mut rows = later.clone();
         fill(&mut rows, &vectors, &Activity::default(), HORIZON, judge);
         rows[3].features.taste
@@ -291,7 +294,7 @@ fn a_season_is_never_judged_by_its_own_show() {
     let vectors = vectors();
     // Only the show's own first season, played, is close to it.
     let record = Record::as_of(&[row("sonarr-9-s1", OLD, true), row("radarr-1", OLD, false)], &Activity::default(), HORIZON, NOW);
-    let taste = judged(clef, |judge| for_cards(&[card("sonarr-9-s2", None)], &vectors, &record, judge));
+    let taste = judged(stand_in, |judge| for_cards(&[card("sonarr-9-s2", None)], &vectors, &record, judge));
     assert!(taste.get("sonarr-9-s2").is_some_and(|taste| *taste <= 0.0), "{taste:?}");
 }
 
@@ -306,7 +309,7 @@ fn only_titles_nobody_played_are_asked_and_seasons_share_their_show() {
         card("sonarr-9-s3", None),
         card("radarr-99", None),
     ];
-    let taste = judged(clef, |judge| for_cards(&cards, &vectors, &record, judge));
+    let taste = judged(stand_in, |judge| for_cards(&cards, &vectors, &record, judge));
     assert!(taste.contains_key("radarr-10"));
     assert!(!taste.contains_key("radarr-11"), "played: its plays speak for it");
     assert_eq!(taste.get("sonarr-9-s2"), taste.get("sonarr-9-s3"));
@@ -327,7 +330,7 @@ fn played_rows_keep_their_taste_at_zero() {
 fn a_reading_names_the_nearest_titles_that_went_its_way() {
     let vectors = vectors();
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
-    let readings = judged(clef, |judge| read_cards(&[card("radarr-10", None), card("radarr-11", None)], &vectors, &record, judge));
+    let readings = judged(stand_in, |judge| read_cards(&[card("radarr-10", None), card("radarr-11", None)], &vectors, &record, judge));
     let title = |subject: &str| match subject {
         "radarr-1" => Some("Hot Fuzz"),
         "radarr-2" => Some("Paddington"),
@@ -347,7 +350,7 @@ fn unanswered_questions_are_collected_once_and_the_judge_switched_off_asks_none(
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let cards = [card("radarr-10", None), card("sonarr-9-s2", None), card("sonarr-9-s3", None), card("radarr-99", None)];
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     assert!(read_cards(&cards, &vectors, &record, &mut judge).is_empty(), "nothing is answered yet: no taste anywhere");
     let asked = judge.finish();
@@ -368,7 +371,7 @@ fn a_title_without_its_description_is_not_asked() {
     vectors.insert("radarr-10".into(), bare, vec![0.9, 0.1]).expect("a 2-d vector");
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     assert_eq!(taste_of(&record, &vectors, "radarr-10", &mut judge), None);
     assert_eq!(judge.finish().missing(), 0);
@@ -377,7 +380,7 @@ fn a_title_without_its_description_is_not_asked() {
 /// The keys of the questions `cards` ask with `record`.
 fn keys(cards: &[ArchiveCard], vectors: &VectorStore, record: &Record) -> Vec<String> {
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     read_cards(cards, vectors, record, &mut judge);
     let asked = judge.finish();
@@ -405,9 +408,9 @@ fn a_day_later_the_same_outcomes_ask_the_same_question() {
 #[test]
 fn another_model_or_question_version_is_another_key() {
     let state = State { nearest: vec![Neighbour { title: "Heat (1995)".into(), played: true }], title: "Title: Ronin".into() };
-    assert_eq!(judge::key("clef", &state), judge::key("clef", &state.clone()));
-    assert_ne!(judge::key("clef", &state), judge::key("clef:cloud", &state));
-    assert_eq!(judge::key("clef", &state).len(), 64, "hex SHA-256");
+    assert_eq!(judge::key(MODEL, &state), judge::key(MODEL, &state.clone()));
+    assert_ne!(judge::key(MODEL, &state), judge::key("another-judge", &state));
+    assert_eq!(judge::key(MODEL, &state).len(), 64, "hex SHA-256");
     let shown = serde_json::to_string(&state).expect("encodes");
     assert_eq!(shown, r#"{"nearest":[{"played":true,"title":"Heat (1995)"}],"title":"Title: Ronin"}"#, "canonical key order");
 }
@@ -425,7 +428,7 @@ fn a_new_model_clears_the_cache_and_unused_answers_age_out() {
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let cards = [card("radarr-10", None), card("radarr-11", None)];
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let mut judge = Judge::new(&cache);
     read_cards(&cards, &vectors, &record, &mut judge);
     let asked = judge.finish();
@@ -440,9 +443,9 @@ fn a_new_model_clears_the_cache_and_unused_answers_age_out() {
     assert_eq!((cache.answered(), cache.pending()), (0, 0));
 
     cache.answer("k".into(), 0.5, NOW);
-    assert!(!cache.retarget("clef"));
-    assert!(cache.retarget("clef:cloud"), "another judge's answers are not this one's");
-    assert_eq!((cache.answered(), cache.model()), (0, "clef:cloud"));
+    assert!(!cache.retarget(MODEL));
+    assert!(cache.retarget("another-judge"), "another judge's answers are not this one's");
+    assert_eq!((cache.answered(), cache.model()), (0, "another-judge"));
 }
 
 #[test]
@@ -450,7 +453,7 @@ fn this_cycles_questions_are_asked_first() {
     let vectors = vectors();
     let record = Record::as_of(&household(), &Activity::default(), HORIZON, NOW);
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(MODEL);
     let ask = |cache: &AnswerCache, cards: &[ArchiveCard]| {
         let mut judge = Judge::new(cache);
         read_cards(cards, &vectors, &record, &mut judge);

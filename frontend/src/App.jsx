@@ -266,7 +266,7 @@ function Connections({ status }) {
         : { state: 'up', why: `${emb.with_vector} of ${emb.subjects} titles have a vector, ${emb.pending} to go, ${emb.budget_left} left today` }),
     });
   }
-  // The Clef taste judge likewise; off, taste counts for nothing.
+  // The taste judge likewise; off, taste counts for nothing.
   const taste = status.taste;
   if (taste?.configured) {
     services.push({

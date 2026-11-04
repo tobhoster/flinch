@@ -293,7 +293,7 @@ async fn cycle(args: &Args, http: &reqwest::Client, settings: &flinch_archive::d
         vectors: &vectors,
         record: running.outcomes.as_ref().unwrap_or(&household),
     };
-    // Clef judges both, through one answers cache.
+    // The taste judge answers both, through one answers cache.
     let taste_judge::Judged { out: (taste, inflow), status: taste_status } =
         taste_judge::judge(http, &settings.ollama, &settings.taste, cycle_now, |judge| {
             let taste = running

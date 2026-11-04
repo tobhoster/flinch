@@ -127,7 +127,7 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRACEARR_API_KEY, optional: true } }
             - name: FLINCH_TRAKT_CLIENT_ID
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: TRAKT_CLIENT_ID, optional: true } }
-            # Ollama API key, needed only for ollama.com (clef:cloud); used when
+            # Ollama API key, needed only for ollama.com (e.g. clef:cloud); used when
             # Settings > Ollama names OLLAMA_API_KEY as its key variable. A
             # local Ollama needs none.
             - name: OLLAMA_API_KEY
@@ -139,7 +139,7 @@ spec:
             capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            # Embeddings and the Clef taste judge run on Ollama, not in this pod.
+            # Embeddings and the taste judge run on Ollama, not in this pod.
             limits: { memory: 512Mi }
           volumeMounts:
             - { name: watch, mountPath: /cfg, readOnly: true }

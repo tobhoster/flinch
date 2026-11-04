@@ -48,9 +48,9 @@ pub struct Household {
     pub tautulli_rows: usize,
     /// Every title's embedding vector the daemon has cached.
     pub vectors: crate::embedding::VectorStore,
-    /// Clef's taste answers, pointed at the configured judge model, while the
-    /// judge is switched on in `settings.json`; `None` while it is off (or
-    /// the settings are unreadable), and taste stays 0.
+    /// The taste judge's answers, pointed at the configured judge model,
+    /// while the judge is switched on in `settings.json`; `None` while it is
+    /// off (or the settings are unreadable), and taste stays 0.
     pub answers: Option<crate::taste::AnswerCache>,
 }
 
@@ -124,16 +124,21 @@ pub fn load_household(state_dir: &Path) -> Result<Household, LoadError> {
         })
         .collect();
     let vectors = crate::embedding::VectorStore::read(state_dir)?;
-    let taste = crate::daemon::read_settings(&state_dir.join("settings.json")).map(|settings| settings.taste).unwrap_or_default();
-    let answers = match taste.judge_enabled {
-        true => {
+    let answers = match configured_taste(state_dir).active_model() {
+        Some(model) => {
             let mut cache = crate::taste::AnswerCache::read(state_dir)?;
-            cache.retarget(taste.judge_model.trim());
+            cache.retarget(model);
             Some(cache)
         }
-        false => None,
+        None => None,
     };
     Ok(Household { items, unreadable_rows, plex_rows: plex.len(), tautulli_rows: streams.len(), vectors, answers })
+}
+
+/// Taste as `settings.json` configures it; the defaults (judge off) when it
+/// is missing or unreadable.
+pub(super) fn configured_taste(state_dir: &Path) -> crate::taste::TasteConfig {
+    crate::daemon::read_settings(&state_dir.join("settings.json")).map(|settings| settings.taste).unwrap_or_default()
 }
 
 /// A library item with its plays, or `None` when nothing is on disk.

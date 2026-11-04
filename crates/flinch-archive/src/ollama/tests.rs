@@ -62,13 +62,13 @@ fn client() -> reqwest::Client {
 
 #[tokio::test]
 async fn texts_are_embedded_in_order_with_the_key_as_a_bearer_token() {
-    let (base, server) = fake(vec![(200, r#"{"model":"embeddinggemma","embeddings":[[0.1,0.2],[0.3,0.4]]}"#)]);
-    let vectors = embed(&client(), &config(&format!("{base}/"), "k3y"), "embeddinggemma", &["a", "b"]).await.expect("embedded");
+    let (base, server) = fake(vec![(200, r#"{"model":"all-minilm","embeddings":[[0.1,0.2],[0.3,0.4]]}"#)]);
+    let vectors = embed(&client(), &config(&format!("{base}/"), "k3y"), "all-minilm", &["a", "b"]).await.expect("embedded");
     assert_eq!(vectors, vec![vec![0.1, 0.2], vec![0.3, 0.4]]);
     let seen = server.join().expect("fake");
     assert!(seen[0].head.starts_with("post /api/embed "), "{}", seen[0].head);
     assert!(seen[0].head.contains("authorization: bearer k3y"), "{}", seen[0].head);
-    assert_eq!(seen[0].body, serde_json::json!({"model": "embeddinggemma", "input": ["a", "b"], "truncate": true}));
+    assert_eq!(seen[0].body, serde_json::json!({"model": "all-minilm", "input": ["a", "b"], "truncate": true}));
 }
 
 #[tokio::test]
@@ -81,8 +81,8 @@ async fn a_local_ollama_is_asked_without_any_key() {
 #[rstest]
 #[case::model_not_pulled(
     404,
-    r#"{"error":"model \"embeddinggemma\" not found, try pulling it first"}"#,
-    "has no model embeddinggemma: run `ollama pull embeddinggemma`"
+    r#"{"error":"model \"all-minilm\" not found, try pulling it first"}"#,
+    "has no model all-minilm: run `ollama pull all-minilm`"
 )]
 #[case::old_ollama(404, "404 page not found", "does not serve /api/embed: update Ollama")]
 #[case::wrong_key(401, r#"{"error":"unauthorized"}"#, "refused the request (HTTP 401)")]
@@ -91,7 +91,7 @@ async fn a_local_ollama_is_asked_without_any_key() {
 #[tokio::test]
 async fn a_refusal_says_what_to_do_and_never_the_key(#[case] status: u16, #[case] body: &'static str, #[case] says: &str) {
     let (base, server) = fake(vec![(status, body)]);
-    let error = embed(&client(), &config(&format!("{base}/?secret=q"), "k3y"), "embeddinggemma", &["a", "b"]).await.expect_err("refused");
+    let error = embed(&client(), &config(&format!("{base}/?secret=q"), "k3y"), "all-minilm", &["a", "b"]).await.expect_err("refused");
     server.join().expect("fake");
     let message = error.to_string();
     assert!(message.contains(says), "{message}");
@@ -104,7 +104,7 @@ async fn an_unreachable_ollama_is_named_by_its_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let base = format!("http://{}", listener.local_addr().expect("address"));
     drop(listener);
-    let error = embed(&client(), &config(&format!("{base}/path?key=k3y"), ""), "embeddinggemma", &["a"]).await.expect_err("refused");
+    let error = embed(&client(), &config(&format!("{base}/path?key=k3y"), ""), "all-minilm", &["a"]).await.expect_err("refused");
     let message = error.to_string();
     assert!(message.starts_with(&format!("Ollama at {base} is unreachable: ")), "{message}");
     assert!(!message.contains("k3y") && !message.contains("/path"), "{message}");
@@ -115,17 +115,17 @@ fn would_play() -> Questions {
 }
 
 #[tokio::test]
-async fn clef_is_asked_the_state_and_typed_questions() {
+async fn a_decision_model_is_asked_the_state_and_typed_questions() {
     let (base, server) =
-        fake(vec![(200, r#"{"model":"clef","answers":{"would_play":{"type":"noul","noul":0.65}},"usage":{"input_tokens":411}}"#)]);
+        fake(vec![(200, r#"{"model":"kev:4b-q4_K_M","answers":{"would_play":{"type":"noul","noul":0.65}},"usage":{"input_tokens":411}}"#)]);
     let state = serde_json::json!({"title": "Heat", "nearest": []});
-    let answers = decide(&client(), &config(&base, ""), "clef", &state, &would_play()).await.expect("answered");
+    let answers = decide(&client(), &config(&base, ""), "kev:4b-q4_K_M", &state, &would_play()).await.expect("answered");
     assert_eq!(answers.get("would_play"), Some(&Answer::Noul { noul: 0.65 }));
     let seen = server.join().expect("fake");
     assert!(seen[0].head.starts_with("post /v1/systemone "), "{}", seen[0].head);
     assert_eq!(
         seen[0].body,
-        serde_json::json!({"model": "clef", "state": state, "questions": {"would_play": {"type": "noul", "instructions": "Would they play it?"}}})
+        serde_json::json!({"model": "kev:4b-q4_K_M", "state": state, "questions": {"would_play": {"type": "noul", "instructions": "Would they play it?"}}})
     );
 }
 
@@ -136,7 +136,7 @@ async fn clef_is_asked_the_state_and_typed_questions() {
 #[tokio::test]
 async fn an_answer_missing_or_out_of_range_is_an_error(#[case] body: &'static str, #[case] says: &str) {
     let (base, server) = fake(vec![(200, body)]);
-    let error = decide(&client(), &config(&base, ""), "clef", &serde_json::json!({}), &would_play()).await.expect_err("refused");
+    let error = decide(&client(), &config(&base, ""), "kev:4b-q4_K_M", &serde_json::json!({}), &would_play()).await.expect_err("refused");
     server.join().expect("fake");
     assert!(error.to_string().contains(says), "{error}");
 }

@@ -47,7 +47,7 @@ pub struct RuntimeSettings {
     /// Embedding every title through Ollama, behind the taste feature; off
     /// until the operator switches it on.
     pub embedding: crate::embedding::EmbeddingConfig,
-    /// Taste judged by Clef ([`crate::taste::judge`]); off by default.
+    /// Taste judged by an Ollama decision model ([`crate::taste::judge`]); off by default.
     pub taste: crate::taste::TasteConfig,
     /// A Jellyfin or Emby server read for every user's watch state; off while
     /// its URL is blank.

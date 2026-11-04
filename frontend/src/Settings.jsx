@@ -85,8 +85,8 @@ function archiveSummary(archive) {
 function toForm(settings) {
   const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner }, notify: { ...settings.notify } };
   form.ollama = { url: 'http://localhost:11434', token: '', api_key_env: '', ...settings.ollama };
-  form.embedding = { enabled: false, model: 'embeddinggemma', dimensions: 256, daily_budget: 500, ...settings.embedding };
-  form.taste = { judge_enabled: false, judge_model: 'clef', judge_daily_budget: 500, ...settings.taste };
+  form.embedding = { enabled: false, model: 'all-minilm', dimensions: 0, daily_budget: 500, ...settings.embedding };
+  form.taste = { judge_enabled: false, judge_model: 'kev:4b-q4_K_M', judge_daily_budget: 500, ...settings.taste };
   form.dupes = { ...settings.dupes };
   form.archive = { ...settings.archive };
   form.household = { ...settings.household };
@@ -477,7 +477,7 @@ export default function Settings({ status }) {
 
         <Section title="Ollama">
           <Row label="URL" htmlFor="ollama.url"
-            help="Serves the title vectors and search (/api/embed) and Clef's taste answers (/v1/systemone). A local Ollama, or https://ollama.com for cloud models.">
+            help="Serves the title vectors and search (/api/embed) and the taste judge's answers (/v1/systemone). A local Ollama, or https://ollama.com for cloud models.">
             <TextField id="ollama.url" placeholder="http://localhost:11434" spellCheck={false} autoComplete="off" value={form.ollama.url} onChange={setIn('ollama', 'url')} />
           </Row>
           <Row label="API key" htmlFor="ollama.token" help="Only ollama.com needs one; a local Ollama needs none. Never sent back to the browser. Blank keeps the saved one; a new URL needs it again.">
@@ -497,10 +497,10 @@ export default function Settings({ status }) {
             </Toggle>
           </Row>
           <Row label="Model" htmlFor="embedding.model"
-            help="Any Ollama embedding model, pulled first (ollama pull embeddinggemma). embeddinggemma describes titles best; all-minilm or nomic-embed-text work too. Switching embeds every title again.">
-            <TextField id="embedding.model" placeholder="embeddinggemma" spellCheck={false} autoComplete="off" value={form.embedding.model} onChange={setIn('embedding', 'model')} />
+            help="Any Ollama embedding model, pulled first (ollama pull all-minilm). all-minilm is small and fast on CPU; embeddinggemma or nomic-embed-text are larger and slower. Switching embeds every title again.">
+            <TextField id="embedding.model" placeholder="all-minilm" spellCheck={false} autoComplete="off" value={form.embedding.model} onChange={setIn('embedding', 'model')} />
           </Row>
-          <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept. Native keeps the model's own (768 for embeddinggemma); a shorter cut, for models trained for it such as embeddinggemma, is lighter and coarser. Changing it embeds every title again.">
+          <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept. Native keeps the model's own (384 for all-minilm); a shorter cut works only for models trained for it, such as embeddinggemma, and is lighter and coarser. Changing it embeds every title again.">
             <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
               className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
               {dimensionChoices(form.embedding.dimensions).map((d) => <option key={d} value={d}>{d === 0 ? 'Native (model\'s own length)' : d}</option>)}
@@ -513,14 +513,14 @@ export default function Settings({ status }) {
 
         <Section title="Taste">
           <Row label="Judge" htmlFor="taste.judge_enabled"
-            help="For a title nobody played yet, Clef (through the Ollama above) reads the 20 nearest titles each viewer had, played or not, and judges whether they would play it. Needs embeddings. Off: taste counts for nothing.">
+            help="For a title nobody played yet, the judge model (through the Ollama above) reads the 20 nearest titles each viewer had, played or not, and judges whether they would play it. Needs embeddings. Off: taste counts for nothing.">
             <Toggle id="taste.judge_enabled" checked={!!form.taste.judge_enabled} onChange={setIn('taste', 'judge_enabled')}>
-              Ask Clef about taste
+              Ask the judge about taste
             </Toggle>
           </Row>
           <Row label="Model" htmlFor="taste.judge_model"
-            help="clef runs on your Ollama (ollama pull clef, about 20 GB; on CPU about 45 s a question); clef:cloud runs on ollama.com with an API key and sends it what each viewer played. Switching clears the cached answers.">
-            <TextField id="taste.judge_model" placeholder="clef" spellCheck={false} autoComplete="off" value={form.taste.judge_model} onChange={setIn('taste', 'judge_model')} />
+            help="An Ollama model answering /v1/systemone questions, pulled first (ollama pull kev:4b-q4_K_M, about 5 s a question on CPU). clef-flash or clef rank tastes better but are 4-10x slower and need 14-25 GB; clef:cloud runs on ollama.com with an API key and sends it what each viewer played. Switching clears the cached answers and refits.">
+            <TextField id="taste.judge_model" placeholder="kev:4b-q4_K_M" spellCheck={false} autoComplete="off" value={form.taste.judge_model} onChange={setIn('taste', 'judge_model')} />
           </Row>
           <Row label="Daily budget" htmlFor="taste.judge_daily_budget" help="Most questions asked per day (UTC), at most three minutes per run, this run's titles first. Answers are kept in taste_answers.json, so a title is asked again only when what its viewers played changes.">
             <NumberField {...numIn('taste', 'judge_daily_budget', { min: 1, max: 20000, step: 50 })} unit="questions" />

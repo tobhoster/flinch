@@ -173,7 +173,7 @@ TAUTULLI_API_KEY=<tautulli api key>
 | `QBITTORRENT_PASSWORD`, `TRANSMISSION_PASSWORD` | no | torrent client passwords, seen by flinch-arrd as `FLINCH_QBIT_PASSWORD` and `FLINCH_TRANSMISSION_PASSWORD`: name those variables in Settings > Torrents. See [Torrents](#torrents) |
 | `TRACEARR_API_KEY` | no | a Tracearr public API key (generated in Tracearr's Settings, `trr_pub_…`), seen by flinch-arrd as `FLINCH_TRACEARR_KEY`: add a Tracearr source in Settings > Watch sources with that variable. See [Watch sources](#watch-sources-tracearr-and-trakt) |
 | `TRAKT_CLIENT_ID`, `TRAKT_TOKEN_<NAME>` | no | a Trakt application's client id (mapped to `FLINCH_TRAKT_CLIENT_ID`) and one OAuth access token per household member: add a variable per member to the flinch-arrd manifest the same way, e.g. `FLINCH_TRAKT_ANN` from `TRAKT_TOKEN_ANN`. See [Watch sources](#watch-sources-tracearr-and-trakt) |
-| `OLLAMA_API_KEY` | with ollama.com | an ollama.com API key, mapped into both flinch-arrd and flinch-web: name `OLLAMA_API_KEY` as the key variable in Settings > Ollama, or type the key there instead. A local Ollama needs none. See [Taste](#taste-ollama-and-clef) |
+| `OLLAMA_API_KEY` | with ollama.com | an ollama.com API key, mapped into both flinch-arrd and flinch-web: name `OLLAMA_API_KEY` as the key variable in Settings > Ollama, or type the key there instead. A local Ollama needs none. See [Taste](#taste-ollama) |
 
 Leave out the keys you do not use. The Radarr and Sonarr keys are required
 (the daemon exits without them), and the UI stays locked without the login.
@@ -505,33 +505,49 @@ Maintainerr, or what FLINCH handed there earlier still leaves on Maintainerr's
 schedule. The Executor card lists FLINCH's deletes of the last 30 days with a
 Restore button (monitor and search again).
 
-### Taste (Ollama and Clef)
+### Taste (Ollama)
 
 Optional. For titles nobody has played yet, P(watch) can lean on whether the
 household would play them. FLINCH finds the titles most like each one by an
-embedding of each movie's and show's catalogue description, and asks Clef
-(Cloudflare's 27B decision model) whether each viewer would play it, judging
+embedding of each movie's and show's catalogue description, and asks a taste
+judge (an Ollama decision model) whether each viewer would play it, judging
 by which of those look-alikes they played. Both run on
 [Ollama](https://ollama.com), not in FLINCH: the vectors through
-`POST /api/embed`, Clef through `POST /v1/systemone`. Off, FLINCH runs as
-before.
+`POST /api/embed`, the judge through `POST /v1/systemone`. Off, FLINCH runs
+as before.
 
 Before switching it on, pull the models on the Ollama host:
 
 ```bash
-ollama pull embeddinggemma   # about 620 MB: the vectors
-ollama pull clef             # about 20 GB: the taste judge
+ollama pull all-minilm        # about 46 MB: the vectors
+ollama pull kev:4b-q4_K_M     # the taste judge
 ```
 
-Clef needs about 20 GB of memory while loaded. On a CPU-only host it is slow:
-on an i7-12700T (20 threads, no GPU) one question took about 45 s warm and
-70 s with the model loading, so a cycle's 180 s judge budget asks three or
-four and a 500-question day fills over many cycles. Answers are cached, so
-only new or changed look-alikes are asked again.
+Judge choices, measured on an i7-12700T (20 threads, no GPU, Ollama 0.40.14)
+with 9 sanity cases (3 viewer tastes × 3 titles). Pair order is the share of
+pairs where the matching taste got the higher p (0.5 is chance):
 
-Or skip the local model: set the taste model to `clef:cloud`, which runs on
-ollama.com and needs an ollama.com API key (Settings > Ollama). Each question
-then carries, to ollama.com, the titles a viewer played and left unplayed.
+| Judge model | Loaded memory | Median s/question | Pair order |
+| --- | --- | --- | --- |
+| `laya:421m-typed-decisions-bf16` | 0.9 GB | 0.5 | 0.56 |
+| `kev:0.8b-q8_0` | 2.6 GB | 2.5 | 0.78 |
+| `kev:4b-q4_K_M` (default) | 6.6 GB | 4.8 | 0.89 |
+| `clef-flash` (9B) | 14 GB | 21 | 1.00 |
+| `clef` (27B) | 25 GB | 50 | 1.00 |
+
+laya did not separate tastes in this check. `clef-flash` and `clef` rank
+better but are 4–10× slower and 2–4× bigger. With Ollama limited to 6
+threads, `kev:4b-q4_K_M` took 4.6 s and `clef-flash` 29 s; a 6-core i5-8500T
+will be slower than these figures. A cycle's 180 s judge budget and the
+answer cache bound the cost: only new or changed look-alikes are asked again.
+`clef:cloud` runs on ollama.com instead and needs an ollama.com API key
+(Settings > Ollama); each question then carries, to ollama.com, the titles a
+viewer played and left unplayed.
+
+Embedding is cheap: about 0.03 s per title with `all-minilm` (46 MB on disk,
+49 MB loaded), 0.11 s with `embeddinggemma` (0.09 s with
+`embeddinggemma:300m-qat-q8_0`); `embeddinggemma` and `nomic-embed-text`
+remain choices.
 
 The description is built from content metadata only: title, year, genres,
 certification, runtime, original language, studio or network, series type,
@@ -553,8 +569,8 @@ Settings > Embeddings:
 | Field | Default | Notes |
 | --- | --- | --- |
 | Embed titles | off | `embedding.enabled`: embed new and changed titles each cycle |
-| Model | `embeddinggemma` | `embedding.model`: any Ollama embedding model (`all-minilm`, `nomic-embed-text`, …), pulled first; switching embeds every title again |
-| Dimensions | 256 | `embedding.dimensions`: 0 (*Native*) keeps the model's own length; 32–4096 cuts each vector to that length and re-normalises it (Matryoshka truncation, for models trained for it: embeddinggemma keeps 128, 256, 512 or 768 meaningful). Changing it embeds every title again |
+| Model | `all-minilm` | `embedding.model`: any Ollama embedding model (`embeddinggemma`, `nomic-embed-text`, …), pulled first; switching embeds every title again |
+| Dimensions | 0 (*Native*) | `embedding.dimensions`: 0 keeps the model's own length (384 for `all-minilm`); 32–4096 cuts each vector to that length and re-normalises it (Matryoshka truncation, only for models trained for it: embeddinggemma keeps 128, 256, 512 or 768 meaningful). Changing it embeds every title again |
 | Daily budget | 500 | `embedding.daily_budget`: at most this many titles (1–20000) embedded per UTC day, on-disk titles first |
 
 Settings > Taste:
@@ -562,7 +578,7 @@ Settings > Taste:
 | Field | Default | Notes |
 | --- | --- | --- |
 | Judge | off | `taste.judge_enabled`: off, taste is 0 everywhere |
-| Model | `clef` | `taste.judge_model`: `clef` on your Ollama, or `clef:cloud` on ollama.com; switching clears the cached answers |
+| Model | `kev:4b-q4_K_M` | `taste.judge_model`: any Ollama model that answers `/v1/systemone` typed questions (e.g. `kev:4b-q4_K_M`, `clef-flash`, `clef`, `clef:cloud`; see the table above); switching clears the cached answers and refits the adopted fit, which was learned on the old judge's answers |
 | Daily budget | 500 | `taste.judge_daily_budget`: at most this many questions (1–20000) asked per UTC day |
 
 - **Prompts.** Models whose name starts with `embeddinggemma` get
@@ -570,17 +586,17 @@ Settings > Taste:
   `task: search result | query: ` before a search; `bge*` models get bge's
   query instruction; other models the bare text.
 - **Budgets and failures.** A cycle embeds for at most two minutes and asks
-  Clef for at most three, and the plan waits for both. Ollama unreachable,
+  the judge for at most three, and the plan waits for both. Ollama unreachable,
   or without the model: the header's entry turns red with what to do (e.g.
-  "Ollama at http://localhost:11434 has no model embeddinggemma: run
-  `ollama pull embeddinggemma`"), the cached vectors and answers stay, and
+  "Ollama at http://localhost:11434 has no model all-minilm: run
+  `ollama pull all-minilm`"), the cached vectors and answers stay, and
   the cycle goes on.
-- **Cached answers.** Clef's answers are kept in `taste_answers.json`, keyed
+- **Cached answers.** The judge's answers are kept in `taste_answers.json`, keyed
   by the model, the question and what was asked (the nearest titles and
   whether the viewer played each), so a title is asked again only when that
   changes. A title not answered yet reads taste 0 until its question comes
   up; each cycle asks this cycle's titles first. Answers unused for 30 days
-  are dropped. How it is asked: [Taste](../docs/how-it-works.md#taste-ollama-vectors-clef-judges).
+  are dropped. How it is asked: [Taste](../docs/how-it-works.md#taste-ollama-vectors-a-judge-model).
 - **Memory.** No model runs in FLINCH's pods, so the manifests give
   `flinch-arrd` a 512 Mi and `flinch-web` a 256 Mi memory limit. Size the
   Ollama host for the models instead.
@@ -591,7 +607,7 @@ Settings > Taste:
   old model name (`embeddinggemma-2`, `bge-small-en-v1.5`,
   `all-minilm-l6-v2`) is kept as it is and reads as an Ollama model, so the
   header says Ollama has no such model until you set Model to an Ollama name
-  such as `embeddinggemma`. Vectors made in-process are embedded once more
+  such as `all-minilm`. Vectors made in-process are embedded once more
   through Ollama, and an existing `hazard.json` is refitted. The `models/`
   directory those versions left on the state volume is no longer read:
   delete it to free the space.
@@ -1000,11 +1016,11 @@ file reads as "nothing yet".
 | `operator-keeps.json` | the cards your own Maintainerr exclusions keep, as last read | rewritten by the next cycle that reads Maintainerr; an outage before then plans without them (nothing is synced during it) |
 | `playback.json`, `tautulli.json` | raw plays, the daily fit's input | fitting waits for new history |
 | `fit.json` | the last daily fit: the candidate judged (recalibrated priors or full fit), its out-of-fold AUC, Brier and ECE beside the priors', its parameters, and why it was or was not adopted | refitted on the next cycle |
-| `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate | the priors run until a fit is adopted again |
+| `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate, and the judge model its taste weight was learned on (none while the judge was off) | the priors run until a fit is adopted again; a judge model that differs from the configured one refits that cycle |
 | `episode-guids.json` | episode `plex://` GUIDs of resolved shows, for plays recorded before a library migration (refreshed at most daily, only while such plays exist) | re-read from Plex on the next cycle that needs it |
 | `arr-history.json` | when each title was on disk, and the files removed in the last 30 days, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
 | `embeddings.json` | the taste vectors: model (`ollama:<model>`) and dimensions they were made with, per movie and show its display title (e.g. `Heat (1995)`), the description it embedded, its hash and its vector, and how many titles were embedded today (UTC) | every title is embedded again, within the daily budget |
-| `taste_answers.json` | Clef's taste answers: the model they came from, each answer with the day it was last used (pruned after 30 days unused), and the questions still waiting | every question is asked again, within the daily budget; taste reads 0 until its answer is back |
+| `taste_answers.json` | the taste judge's answers: the model they came from, each answer with the day it was last used (pruned after 30 days unused), and the questions still waiting | every question is asked again, within the daily budget; taste reads 0 until its answer is back |
 | `themes.json` | each movie's and show's theme (clusters of the taste vectors) and the theme names, with when they were computed and a fingerprint of the vectors (recomputed daily or when a vector changes) | recomputed on the next cycle |
 | `notify.json` | per notification channel the events it was sent (kept 120 days), its posts of the last hour, and each problem's run of cycles | events still current are sent once more; problem runs start over |
 | `notify-test.json`, `notify-test-result.json` | a Send test the UI asked for, and the daemon's answer | nothing; press Send test again |

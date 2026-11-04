@@ -128,7 +128,7 @@ R = P(watch within 90 days) × C_reacq × A_household
   for the film played every December, **finished** (1 when everyone who
   played it got to the end and nobody's latest play stopped short; see
   below), and **taste** (for a title nobody played: whether the household
-  would play it, judged by Clef, see [Taste](#taste-ollama-vectors-clef-judges)). The hand-set
+  would play it, judged by the taste judge, see [Taste](#taste-ollama-vectors-a-judge-model)). The hand-set
   priors are λ₀ = 0.004/day and β = −0.5 (recency), 0 (viewings), +0.7 (show
   plays), +0.3 (annual cycle), −2.5 (finished), 0 (taste), set from this
   household's record: finished titles are almost never replayed, so a
@@ -168,7 +168,7 @@ claims, or no seeders and retention terms (see
 [Integrations](#integrations-by-identity--never-by-title) for what each is
 asked, and [deploy/README.md](../deploy/README.md#configure) to connect them).
 
-### Taste (Ollama vectors, Clef judges)
+### Taste (Ollama vectors, a judge model)
 
 Without it, every download nobody has opened looks the same to the hazard:
 "never played, N days on disk". Taste says whether this household would play
@@ -178,7 +178,7 @@ it, judged against what it played of the titles most like it.
    only — Radarr/Sonarr and Plex: title, year, genres, overview, people,
    studio or network, rating, language, runtime, franchise — and has
    [Ollama](https://ollama.com) embed it (`POST /api/embed`, the model in
-   Settings → Embeddings, `embeddinggemma` by default; a show's seasons share
+   Settings → Embeddings, `all-minilm` by default; a show's seasons share
    the show's vector). Models named `embeddinggemma…` get the
    `task: classification | query: ` prefix, `bge…` models bge's query
    instruction, others the bare text. Dimensions above 0 cut each vector to
@@ -193,18 +193,18 @@ it, judged against what it played of the titles most like it.
    fails on it. Nothing runs in-process any more: the candle encoders
    (EmbeddingGemma 2, bge-small, MiniLM), their weights download and poster
    (vision) vectors are removed; Ollama's embed API takes text only. Setting
-   it up: [deploy/README.md](../deploy/README.md#taste-ollama-and-clef).
-2. **Clef judges against the household's own outcomes.** The panel (see
+   it up: [deploy/README.md](../deploy/README.md#taste-ollama).
+2. **A judge model judges against the household's own outcomes.** The panel (see
    [Accuracy](#accuracy-you-can-check)) records, for each title and cut date,
    whether anything played it in the 90 days after, and who. For a title
    nobody played, the vectors still pick the 20 most similar titles (cosine
-   similarity) from other shows or films with a closed outcome. Clef,
-   Cloudflare's 27B decision model (`ollama pull clef`, about 20 GB, or
-   `clef:cloud` on ollama.com), gets them through Ollama's
+   similarity) from other shows or films with a closed outcome. The judge,
+   an Ollama decision model, `kev:4b-q4_K_M` by default (choices and their
+   speed: [deploy/README.md](../deploy/README.md#taste-ollama)), gets them through Ollama's
    `POST /v1/systemone`: the candidate's description and those titles,
    nearest first, each marked played or unplayed, and one yes/no question,
    `would_play`: judging by those, would this viewer play the title within
-   90 days of it arriving? Taste is the log-odds of Clef's answer p minus
+   90 days of it arriving? Taste is the log-odds of the judge's answer p minus
    the log-odds of that viewer's own played rate, so 0 means "what this
    viewer does with anything" (no evidence) and negative means "titles like
    this sit unplayed here". The similarity-weighted neighbour rate of
@@ -218,9 +218,9 @@ it, judged against what it played of the titles most like it.
    taste 0 meanwhile; once a cycle the daemon asks the pending questions,
    this cycle's titles first, within Settings → Taste → Daily budget
    (`taste.judge_daily_budget`, 1–20000 per UTC day) and three minutes.
-   Answers unused for 30 days are pruned; changing the Clef model clears the
+   Answers unused for 30 days are pruned; changing the judge model clears the
    cache. The daily refit adds its panel rows' missing answers to the
-   pending ones, so the fit learns from Clef's answers once they are in;
+   pending ones, so the fit learns from the judge's answers once they are in;
    `flinch-fit` only reads answers unless run with `--write`.
 4. **Per viewer, warmest wins.** A household-wide share blurs its people: the
    one person who watches comedies can play every one while the comedies sit
@@ -240,8 +240,11 @@ it, judged against what it played of the titles most like it.
    learned from, household-wide and per viewer, stored with it in
    `state/hazard.json`. A `hazard.json` whose taste coefficient was learned
    on the old neighbour rate does not load, and the daemon refits on its
-   next cycle. The taste half-life (`taste.half_life_days`) is removed with
-   that rate: what Clef is shown holds no weights to decay; a settings.json
+   next cycle. The fit also records which judge model it learned taste on
+   (none while the judge was off); when that differs from the configured
+   judge, the adopted fit counts as unreadable and the daemon refits that
+   cycle. The taste half-life (`taste.half_life_days`) is removed with
+   that rate: what the judge is shown holds no weights to decay; a settings.json
    that still has it loads and ignores it.
 6. **Gated like everything else.** Its prior weight is 0, so under the priors
    it moves nothing. It enters P(watch) only through the full fit, and only
@@ -640,7 +643,7 @@ unwatched* (`crates/flinch-archive/src/inflow.rs`):
   Netflix (DE), a service you have". Checked before taste; unknown
   availability names nothing.
 
-Taste here is Clef's answer of *Taste (Ollama vectors, Clef judges)* asked with the
+Taste here is the judge's answer of *Taste (Ollama vectors, a judge model)* asked with the
 adopted fit's outcomes, or, under the priors, with the household-wide record
 of the current library (a title is played if any part of it ever was). It
 is advice only and never feeds P(watch) from this path. Each suggestion
@@ -1262,7 +1265,7 @@ dry run.
 ### Themes: where the disk goes, and what nobody visits
 
 Once a day, and whenever a taste vector changes, the daemon clusters the
-vectors of every movie and show ([Taste](#taste-ollama-vectors-clef-judges)) with
+vectors of every movie and show ([Taste](#taste-ollama-vectors-a-judge-model)) with
 spherical k-means: cosine similarity, k ≈ √(n/2) clamped to 4–24, k-means++
 seeding from a fixed seed, ties to the lower index and at most 30 rounds, so
 the same vectors always give the same themes. Fewer than 16 titles with a
@@ -1476,7 +1479,7 @@ against `state/embeddings.json`; a season scores as its show, and titles
 without a vector yet are counted but not listed. A query is at most 200
 characters. With no vectors the API answers 409 with what to switch on; with
 Ollama unreachable or without that model, 502 with what is wrong. For
-EmbeddingGemma models the query carries the retrieval prompt
+models named `embeddinggemma…` (not the default) the query carries the retrieval prompt
 `task: search result | query:` although the cached descriptions carry the
 classification prompt. Measured before the move to Ollama, on the removed
 in-process EmbeddingGemma 2: on 16
@@ -1502,7 +1505,7 @@ flowchart LR
         ARR["Radarr / Sonarr<br/>ids · files · disks · imports · queue"]
         PX["Plex + Tautulli<br/>GUIDs · history"]
         EXT["Seerr · Prowlarr · SABnzbd<br/>claims · availability"]
-        EMB["Ollama<br/>embeddings · Clef"]
+        EMB["Ollama<br/>embeddings · judge"]
     end
     subgraph DECIDE["decide"]
         ID["identity join<br/>(GUID)"] --> REG["regret<br/>P(watch) × C_reacq × A"]
@@ -1511,7 +1514,7 @@ flowchart LR
         EXC -->|pinned| KEEP["keep"]
         CAP["per-disk forecast<br/>B_target, recycle credit"] --> PLAN
         FIT["daily fit<br/>(out-of-fold gate)"] --> REG
-        TASTE["taste<br/>Clef on nearest titles"] --> FIT
+        TASTE["taste<br/>judge on nearest titles"] --> FIT
         REG --> QA["quality advice<br/>keep · downgrade · evict"]
     end
     subgraph OUT["act"]

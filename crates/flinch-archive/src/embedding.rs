@@ -4,7 +4,7 @@
 //! with titles like it is the next best evidence. "Like it" is measured by
 //! sentence-embedding vectors of each title's catalogue description:
 //! [`text`] writes that description from content metadata only, the
-//! operator's Ollama embeds it ([`crate::ollama::embed`], EmbeddingGemma by
+//! operator's Ollama embeds it ([`crate::ollama::embed`], MiniLM by
 //! default), and [`store`] caches the vectors in the state directory so each
 //! title is embedded once per text change. Nothing runs in-process.
 //!
@@ -21,7 +21,7 @@ pub use text::{display_title, movie_text, series_text, text_hash, RECIPE_VERSION
 /// The vector cache, in the state directory.
 pub const STORE_FILE: &str = "embeddings.json";
 /// The Ollama model embedding titles unless the operator names another.
-pub const DEFAULT_MODEL: &str = "embeddinggemma";
+pub const DEFAULT_MODEL: &str = "all-minilm";
 /// What a store's model id starts with: its vectors came from Ollama.
 const OLLAMA_MODEL: &str = "ollama:";
 
@@ -86,8 +86,8 @@ pub struct EmbeddingConfig {
     pub enabled: bool,
     /// The Ollama embedding model (`ollama pull <model>` on the server).
     pub model: String,
-    /// Matryoshka truncation of the model's vectors, re-normalised; 0 keeps
-    /// the model's own length.
+    /// Matryoshka truncation of the model's vectors, re-normalised, for models
+    /// trained for it; 0 (the default) keeps the model's own length.
     pub dimensions: u32,
     /// Most subjects embedded per UTC day, so a first run over a large library
     /// spreads over days instead of occupying Ollama for hours.
@@ -96,7 +96,7 @@ pub struct EmbeddingConfig {
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
-        Self { enabled: false, model: DEFAULT_MODEL.to_string(), dimensions: 256, daily_budget: 500 }
+        Self { enabled: false, model: DEFAULT_MODEL.to_string(), dimensions: 0, daily_budget: 500 }
     }
 }
 

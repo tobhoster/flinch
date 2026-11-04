@@ -59,13 +59,13 @@ fn show(status: &str) -> ArrSeries {
     }
 }
 
-/// The suggestions once Clef has answered every question they asked; the
+/// The suggestions once the judge has answered every question they asked; the
 /// stand-in reads the played share of the three nearest titles.
 fn run(cards: &[ArchiveCard], series: &[ArrSeries], requests: &[Request], vectors: &VectorStore) -> Vec<Suggestion> {
     let record = record();
     let inputs = Inputs { cards, series, movies: &[], requests, streams: &HashMap::new(), vectors, record: &record };
     let mut cache = AnswerCache::default();
-    cache.retarget("clef");
+    cache.retarget(crate::taste::judge::DEFAULT_MODEL);
     let mut judge = Judge::new(&cache);
     suggest(&inputs, &mut judge);
     let asked = judge.finish();

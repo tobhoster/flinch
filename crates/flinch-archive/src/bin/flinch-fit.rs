@@ -5,7 +5,7 @@
 //! `playback.json` and `tautulli.json` for every play, `embeddings.json` and
 //! `taste_answers.json` for taste), builds a temporal panel of "as of"
 //! questions, judges each candidate out of fold, and prints the report. Taste
-//! questions Clef has not answered yet leave their rows at no taste. With
+//! questions the judge has not answered yet leave their rows at no taste. With
 //! `--write` it writes `hazard.json` only if the fit beats the priors (and
 //! removes a stale one if not) — the same gate the daemon's daily refit uses —
 //! and records the unanswered taste questions for the daemon to ask. `--now
@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
             Some(reason) => println!("priors stay: {reason}"),
         }
         if household.answers.is_some() {
-            println!("{} taste questions still to ask Clef", asked.missing());
+            println!("{} taste questions still to ask the judge", asked.missing());
         }
     }
     if args.write {

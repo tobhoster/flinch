@@ -6,12 +6,12 @@
 //! embedding space from its content alone — story, genres, people, studio
 //! ([`crate::embedding`]) — and the panel already records, per title, whether
 //! it was played in the horizon after each cut, and by whom. The vectors
-//! retrieve a title's nearest titles with a closed outcome; Clef, Ollama's
-//! decision model, reads them and judges ([`judge`]): shown the title's
-//! description and those neighbours, each marked played or not, would this
-//! audience play it? Taste is that probability as log-odds against the
-//! audience's own played rate (0 when Clef expects what that audience does
-//! with anything: no evidence either way).
+//! retrieve a title's nearest titles with a closed outcome; the taste judge,
+//! a decision model on Ollama, reads them and judges ([`judge`]): shown the
+//! title's description and those neighbours, each marked played or not,
+//! would this audience play it? Taste is that probability as log-odds
+//! against the audience's own played rate (0 when the judge expects what
+//! that audience does with anything: no evidence either way).
 //!
 //! A household is several people, and the household-wide record blurs them: a
 //! comedy can sit among horror nobody else touches while the one person who
@@ -297,7 +297,7 @@ impl Shortlist<'_> {
 
     /// Who speaks for the household, and their taste: the warmest viewer with
     /// a question to ask, or the household as a whole when no viewer has one.
-    /// Each audience's lean is Clef's log-odds minus that audience's own
+    /// Each audience's lean is the judge's log-odds minus that audience's own
     /// played rate, so a typical title for a viewer who plays little reads 0,
     /// not cold. Every audience's question is looked up, so all of them are
     /// recorded when some are unanswered.

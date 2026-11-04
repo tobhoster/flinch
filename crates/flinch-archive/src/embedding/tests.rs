@@ -157,7 +157,7 @@ fn only_an_ollama_model_name_and_a_usable_length_are_accepted(#[case] config: Em
 
 #[test]
 fn a_store_names_its_ollama_model() {
-    assert_eq!(model_id(" embeddinggemma "), "ollama:embeddinggemma");
+    assert_eq!(model_id(" nomic-embed-text "), "ollama:nomic-embed-text");
     assert_eq!(ollama_model("ollama:all-minilm"), Some("all-minilm"));
     assert_eq!(ollama_model("google/embeddinggemma-2@00000000"), None, "an in-process model's vectors are another space");
     assert_eq!(ollama_model("ollama:"), None);

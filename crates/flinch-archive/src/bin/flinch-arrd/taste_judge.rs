@@ -1,7 +1,8 @@
-//! The taste judge's step: once a cycle, Clef is asked the taste questions
-//! still waiting in `taste_answers.json` — this cycle's cards first, then
-//! what the daily refit's panel left — within `taste.judge_daily_budget` and a
-//! per-cycle time budget, through the operator's Ollama (`/v1/systemone`).
+//! The taste judge's step: once a cycle, the judge model is asked the taste
+//! questions still waiting in `taste_answers.json` — this cycle's cards
+//! first, then what the daily refit's panel left — within
+//! `taste.judge_daily_budget` and a per-cycle time budget, through the
+//! operator's Ollama (`/v1/systemone`).
 //!
 //! The cycle's taste lookups are pure ([`flinch_archive::taste`]): they run
 //! once to learn what is missing, the answers that fit the budgets are asked
@@ -14,8 +15,8 @@ use flinch_archive::ollama::{self, Answer, OllamaConfig};
 use flinch_archive::taste::{judge, AnswerCache, Judge, TasteConfig, TasteStatus};
 use std::time::{Duration, Instant};
 
-/// The longest one cycle spends asking: a 27B model on CPU answers in
-/// seconds to a minute, and the plan waits for it.
+/// The longest one cycle spends asking: a judge model on CPU answers in
+/// seconds (a 4B one) to a minute (a 27B one), and the plan waits for it.
 const CYCLE_BUDGET: Duration = Duration::from_secs(180);
 
 /// What the cycle's lookups returned on the answers, and the judge's status.

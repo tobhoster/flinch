@@ -114,7 +114,7 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
     let items_with_plays = household.items.iter().filter(|item| !item.plays.is_empty()).count();
     FittedModel {
         fitted_on: format!(
-            "{} library items ({items_with_plays} with plays, {} titles with a taste vector, {} Clef taste answers), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
+            "{} library items ({items_with_plays} with plays, {} titles with a taste vector, {} taste answers), {} history + {} Tautulli rows, panel of {} examples at {cut_count} cut dates, horizon {HORIZON_DAYS:.0} d",
             household.items.len(),
             household.vectors.len(),
             household.answers.as_ref().map_or(0, AnswerCache::answered),
@@ -127,6 +127,7 @@ pub fn fit_model(household: &Household, dataset: &[Example], now: u64, cut_count
         metrics,
         outcomes: crate::taste::Record::as_of(dataset, &activity(household), horizon_secs(), now),
         taste_version: TASTE_VERSION,
+        judge_model: household.answers.as_ref().map(|answers| answers.model().to_string()),
     }
 }
 
@@ -162,15 +163,16 @@ pub fn read_status(state_dir: &Path) -> Option<FitStatus> {
 /// The daemon's refit: at most once per [`REFIT_SECS`], and only once it has
 /// published a library to fit on. `None` when none was due.
 pub fn refit_if_due(state_dir: &Path, now: u64) -> Option<Result<FitStatus, RefitError>> {
-    // A `hazard.json` this build cannot read (written for other features or
-    // another outcome record) is refitted now rather than a day later.
+    // A `hazard.json` this build cannot read (written for other features,
+    // another outcome record or another judge model) is refitted now rather
+    // than a day later.
     let unreadable = state_dir.join(MODEL_FILE).exists() && super::load_model(state_dir).is_none();
     let due = unreadable || read_status(state_dir).is_none_or(|last| now.saturating_sub(last.fitted_at_unix) >= REFIT_SECS);
     (due && state_dir.join("items.json").exists()).then(|| refit(state_dir, now))
 }
 
 /// Build the panel `now`, give its never-played rows their taste, and fit it.
-/// Also returns the taste questions its rows asked that Clef has not
+/// Also returns the taste questions its rows asked that the judge has not
 /// answered yet, for [`record_questions`].
 pub fn panel_fit(household: &Household, now: u64) -> (Vec<Example>, FittedModel, Asked) {
     let cuts = default_cuts();

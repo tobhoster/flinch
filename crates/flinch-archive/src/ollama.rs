@@ -7,7 +7,7 @@
 //!   (<https://github.com/ollama/ollama/blob/main/docs/api.md#generate-embeddings>):
 //!   `{"model", "input": [...], "truncate": true}` in,
 //!   `{"embeddings": [[...], ...]}` out, one vector per text in order.
-//! - `POST /v1/systemone` asks a decision model such as Clef typed questions
+//! - `POST /v1/systemone` asks a decision model (the taste judge) typed questions
 //!   about a `state`: `{"model", "state", "questions": {name: {"type":
 //!   "noul", "instructions"}}}` in, `{"answers": {name: {"type": "noul",
 //!   "noul": p}}}` out. Only yes/no ("noul") questions are asked here; the
@@ -27,8 +27,8 @@ pub const DEFAULT_URL: &str = "http://localhost:11434";
 /// One batch of texts: an embedding model on CPU takes seconds per batch, and
 /// a model Ollama has to load first takes longer.
 const EMBED_TIMEOUT: Duration = Duration::from_secs(60);
-/// One decision: Clef is a 27B model, and on CPU a single answer can take a
-/// minute or more.
+/// One decision: the default 4B judge answers in seconds on CPU, but an
+/// operator's 27B model can take a minute or more for a single answer.
 const DECIDE_TIMEOUT: Duration = Duration::from_secs(120);
 const EMBED: &str = "/api/embed";
 const DECIDE: &str = "/v1/systemone";

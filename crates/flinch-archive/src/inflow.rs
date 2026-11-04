@@ -18,7 +18,7 @@
 //! Taste is advice here, not a P(watch) input: it is asked with the adopted
 //! fit's outcomes when there is one, else with [`household_record`]. Every
 //! rule fails closed: a title without a vector, without any closed outcome
-//! to compare, or whose question Clef has not answered yet, is never called
+//! to compare, or whose question the judge has not answered yet, is never called
 //! cold. Nothing here writes to Sonarr, Radarr, Seerr or Maintainerr; the
 //! suggestions are published for the operator, who may approve some for
 //! [`act`] to carry out.

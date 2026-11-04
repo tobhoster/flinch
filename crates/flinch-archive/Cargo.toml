@@ -20,7 +20,7 @@ good_lp = { workspace = true }
 libc = "0.2"
 # The household's no-login links (requests/link.rs): HMAC-SHA256 and its
 # constant-time check from ring, the token's encoding from base64; taste's
-# Clef answer keys (taste/judge.rs) are ring's SHA-256 too. Both are already
+# answer keys (taste/judge.rs) are ring's SHA-256 too. Both are already
 # in the tree (rustls, flinch-web's sign-in); nothing new is fetched.
 ring = "0.17"
 base64 = "0.22"

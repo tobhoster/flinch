@@ -110,10 +110,10 @@ fn recording_the_panels_questions_keeps_answers_the_daemon_wrote_since() {
     let asked = judge.finish();
     // Meanwhile the daemon answered another and wrote the file.
     let mut daemon = AnswerCache::default();
-    daemon.retarget("clef");
+    daemon.retarget(crate::taste::judge::DEFAULT_MODEL);
     daemon.answer("answered-meanwhile".into(), 0.6, NOW);
     daemon.write(&dir).unwrap();
-    adopt::record_questions(&dir, Some("clef"), &asked, NOW).unwrap();
+    adopt::record_questions(&dir, Some(crate::taste::judge::DEFAULT_MODEL), &asked, NOW).unwrap();
     let after = AnswerCache::read(&dir).unwrap();
     assert_eq!((after.answered(), after.pending()), (1, 1), "the daemon's answer stays beside the panel's question");
     std::fs::remove_dir_all(&dir).ok();

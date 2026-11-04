@@ -56,11 +56,13 @@ fn embedder() -> fake::Server {
 
 #[tokio::test]
 async fn titles_are_embedded_through_ollama_with_their_title_and_text_kept() {
+    // A model with a task prompt: the prompt is sent, never kept.
+    let config = EmbeddingConfig { model: "embeddinggemma".into(), ..config() };
     let (_turn, dir) = state_dir("ollama-embed").await;
     let server = embedder();
     let (movies, plex_content, plex_ids) = (movies(), HashMap::new(), HashMap::new());
     let library = Library { movies: &movies, series: &[], plex_content: &plex_content, plex_ids: &plex_ids };
-    let refresh = embeddings::refresh(&client(), &ollama(&server.base), &config(), library, now()).await;
+    let refresh = embeddings::refresh(&client(), &ollama(&server.base), &config, library, now()).await;
     assert_eq!((refresh.status.embedded, refresh.status.problem.as_deref()), (2, None));
     assert_eq!(refresh.status.model, "ollama:embeddinggemma");
     let sent: serde_json::Value = serde_json::from_str(&server.requests()[0].body).expect("a JSON request");
@@ -95,27 +97,28 @@ fn heat() -> State {
 }
 
 #[tokio::test]
-async fn a_question_waits_while_clef_is_missing_and_is_answered_once_it_is_there() {
+async fn a_question_waits_while_the_judge_model_is_missing_and_is_answered_once_it_is_there() {
     let (_turn, dir) = state_dir("ollama-judge").await;
     let config = TasteConfig { judge_enabled: true, ..TasteConfig::default() };
-    let missing = fake::serve(|_| (404, r#"{"error":"model 'clef' not found"}"#.into()));
+    let missing = fake::serve(|_| (404, format!(r#"{{"error":"model '{}' not found"}}"#, judge::DEFAULT_MODEL)));
     let first = taste_judge::judge(&client(), &ollama(&missing.base), &config, now(), |judge| judge.p(heat())).await;
     assert_eq!(first.out, None, "no answer, no taste");
     let problem = first.status.problem.clone().unwrap_or_default();
-    assert!(problem.contains("has no model clef: run `ollama pull clef`"), "{problem}");
+    let model = judge::DEFAULT_MODEL;
+    assert!(problem.contains(&format!("has no model {model}: run `ollama pull {model}`")), "{problem}");
     assert_eq!((first.status.answered, first.status.pending, first.status.asked), (0, 1, 0));
     assert_eq!(AnswerCache::read(&dir).expect("written").pending(), 1, "the question waits on disk");
 
-    let clef = fake::serve(|request| match request.route() {
-        "/v1/systemone" => (200, r#"{"model":"clef","answers":{"would_play":{"type":"noul","noul":0.7}}}"#.into()),
+    let judging = fake::serve(|request| match request.route() {
+        "/v1/systemone" => (200, r#"{"answers":{"would_play":{"type":"noul","noul":0.7}}}"#.into()),
         _ => (404, "{}".into()),
     });
-    let second = taste_judge::judge(&client(), &ollama(&clef.base), &config, now(), |judge| judge.p(heat())).await;
+    let second = taste_judge::judge(&client(), &ollama(&judging.base), &config, now(), |judge| judge.p(heat())).await;
     assert_eq!(second.out, Some(0.7), "answered this cycle, read this cycle");
     assert_eq!((second.status.answered, second.status.pending, second.status.asked, second.status.problem), (1, 0, 1, None));
     assert_eq!(second.status.budget_left, config.judge_daily_budget - 1);
-    let asked: serde_json::Value = serde_json::from_str(&clef.requests()[0].body).expect("a JSON request");
-    assert_eq!(asked["model"], "clef");
+    let asked: serde_json::Value = serde_json::from_str(&judging.requests()[0].body).expect("a JSON request");
+    assert_eq!(asked["model"], model);
     assert_eq!(asked["state"], serde_json::json!({"nearest": [{"played": true, "title": "Ronin (1998)"}], "title": "Title: Heat"}));
     assert_eq!(asked["questions"][judge::QUESTION]["type"], "noul");
 
