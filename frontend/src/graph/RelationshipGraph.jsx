@@ -4,7 +4,7 @@ import { HardDrive, Loader2, Maximize2, Search, Shield, User, X } from 'lucide-r
 import { loadGraph } from '../api.js';
 import { Card, EmptyState, GiB, day, pct } from '../ui.jsx';
 import { DEFAULT_FILTERS, EDGE_STYLE, neighbours, toGraph } from './model.js';
-import { palette } from '../../tailwind.config.js';
+import { palette } from '../palette.js';
 import RuleOverride from './RuleOverride.jsx';
 
 // The Graph tab: items, the people who watch and request them, the disks they
@@ -113,7 +113,7 @@ function Row({ k, children }) {
   return (
     <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-2 py-0.5">
       <span className="text-fg-faint">{k}</span>
-      <span className="min-w-0 break-words text-fg">{children}</span>
+      <span className="min-w-0 wrap-break-word text-fg">{children}</span>
     </div>
   );
 }
@@ -124,7 +124,7 @@ function linkedTo(graph, id, kind, side = 'target') {
 
 function Inspector({ node, graph, onSelect, onClose }) {
   const Chip = ({ n }) => (
-    <button className="mr-1 mt-1 inline-flex max-w-full items-center rounded border border-line px-1.5 py-0.5 text-[12px] text-fg hover:bg-ink-700" onClick={() => onSelect(n.id)}>
+    <button className="mr-1 mt-1 inline-flex max-w-full items-center rounded-sm border border-line px-1.5 py-0.5 text-[12px] text-fg hover:bg-ink-700" onClick={() => onSelect(n.id)}>
       <span className="truncate">{label(n)}</span>
     </button>
   );
@@ -191,7 +191,7 @@ function Legend({ data }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-fg-muted">
       <span className="inline-flex items-center gap-1">
-        <span className="h-2 w-16 rounded-sm" style={{ background: `linear-gradient(90deg, ${palette.state.bad}, ${palette.state.warn}, ${palette.state.ok})` }} />
+        <span className="h-2 w-16 rounded-xs" style={{ background: `linear-gradient(90deg, ${palette.state.bad}, ${palette.state.warn}, ${palette.state.ok})` }} />
         P(watch) <span className="num">0 → 15% → 50%</span>
       </span>
       <span>size = GiB on disk</span>

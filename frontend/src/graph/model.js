@@ -1,7 +1,7 @@
 // `/api/graph` as nodes and links for the force layout, with the filters the
 // Graph tab offers. Pure: the component owns the simulation and the drawing.
 
-import { palette } from '../../tailwind.config.js';
+import { palette } from '../palette.js';
 
 // `strength` shapes the layout: items cluster on their disk; people and
 // safeguards pull lightly, so one person who watches everything cannot fold

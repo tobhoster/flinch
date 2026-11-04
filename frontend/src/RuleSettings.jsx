@@ -51,7 +51,7 @@ export const RANGES = [
 const NEW_RULE = { name: '', enabled: true, scope: {}, effect: { type: 'keep' } };
 
 const inputClass = 'input min-h-[40px] w-full sm:min-h-0';
-const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0';
+const selectClass = 'min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-hidden sm:min-h-0';
 
 /** A scope without its empty conditions, as the server writes it. */
 export function clean(scope) {
@@ -311,14 +311,57 @@ export function RulesEditor({ rules, onChange, onPreviewed, lastRun, context }) 
   };
   const yaml = rules.length ? toYaml(rulesPayload(rules)) : '[]';
   return (
-    <div className="w-full space-y-3">
-      <div className="flex flex-wrap gap-2">
-        <button className={`btn ${view === 'form' ? 'btn-primary' : ''}`} onClick={() => setView('form')}>Rules</button>
-        <button className="btn" onClick={() => setWorkspace(true)}><Workflow size={13} /> Visual workspace</button>
-        <button className={`btn ${view === 'yaml' ? 'btn-primary' : ''}`} onClick={() => setView('yaml')}>YAML</button>
+    <>
+      <div className="w-full space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <button className={`btn ${view === 'form' ? 'btn-primary' : ''}`} onClick={() => setView('form')}>Rules</button>
+          <button className="btn" onClick={() => setWorkspace(true)}><Workflow size={13} /> Visual workspace</button>
+          <button className={`btn ${view === 'yaml' ? 'btn-primary' : ''}`} onClick={() => setView('yaml')}>YAML</button>
+        </div>
+        {view === 'yaml' && (
+          <div className="relative">
+            <pre className="max-h-96 overflow-auto rounded-md border border-line-soft bg-ink-950 p-3 font-mono text-[12px] text-fg">{yaml}</pre>
+            <button className="btn absolute right-2 top-2 px-2" aria-label="Copy YAML" onClick={() => navigator.clipboard?.writeText(yaml)}><Copy size={13} /></button>
+          </div>
+        )}
+        {view === 'form' && (
+          <>
+            {rules.map((rule, i) => (
+              <div key={i} className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input type="checkbox" aria-label={`Enable ${rule.name || 'rule'}`} checked={rule.enabled !== false}
+                    onChange={(e) => set(i, { ...rule, enabled: e.target.checked })} />
+                  <span className="font-medium text-fg">{rule.name || 'Unnamed rule'}</span>
+                  <span className="text-fg-muted">{effectLabel(rule.effect)} · {scopeLabel(rule.scope)}</span>
+                  <span className="ml-auto inline-flex gap-1">
+                    <button className="btn px-2" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={13} /></button>
+                    <button className="btn px-2" aria-label="Move down" disabled={i === rules.length - 1} onClick={() => move(i, 1)}><ArrowDown size={13} /></button>
+                    <button className="btn px-2" aria-label={`Edit ${rule.name || 'rule'}`} onClick={() => setEditing(editing === i ? null : i)}><Pencil size={13} /></button>
+                    <button className="btn px-2" aria-label={`Remove ${rule.name || 'rule'}`}
+                      onClick={() => { onChange(rules.filter((_, j) => j !== i)); setEditing(null); }}><X size={13} /></button>
+                  </span>
+                </div>
+                {editing === i && <RuleForm rule={rule} onChange={(next) => set(i, next)} />}
+              </div>
+            ))}
+            <button className="btn" onClick={() => { onChange([...rules, { ...NEW_RULE, scope: {} }]); setEditing(rules.length); }}>
+              <Plus size={13} /> Add rule
+            </button>
+          </>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn" onClick={run} disabled={preview.state === 'running'}>
+            {preview.state === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Preview changes
+          </button>
+          {preview.state === 'error' && <span className="text-[12px] text-state-bad">{preview.error}</span>}
+        </div>
+        {preview.state === 'done' && <PreviewResult diff={preview.diff} />}
+        <LastRun status={lastRun} />
       </div>
+
+      {/* Full window, and outside the spacing container so the fixed overlay inherits no
+          margins: the Settings column is too narrow for a canvas and its inspector. */}
       {workspace && (
-        // Full window: the Settings column is too narrow for a canvas and its inspector.
         <div role="dialog" aria-modal="true" aria-label="Visual rules workspace" className="fixed inset-0 z-50 flex flex-col gap-3 bg-ink-950/95 p-4 sm:p-6">
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-semibold text-fg">Visual rules workspace</span>
@@ -332,45 +375,6 @@ export function RulesEditor({ rules, onChange, onPreviewed, lastRun, context }) 
           </div>
         </div>
       )}
-      {view === 'yaml' && (
-        <div className="relative">
-          <pre className="max-h-96 overflow-auto rounded-md border border-line-soft bg-ink-950 p-3 font-mono text-[12px] text-fg">{yaml}</pre>
-          <button className="btn absolute right-2 top-2 px-2" aria-label="Copy YAML" onClick={() => navigator.clipboard?.writeText(yaml)}><Copy size={13} /></button>
-        </div>
-      )}
-      {view === 'form' && (
-        <>
-          {rules.map((rule, i) => (
-            <div key={i} className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <input type="checkbox" aria-label={`Enable ${rule.name || 'rule'}`} checked={rule.enabled !== false}
-                  onChange={(e) => set(i, { ...rule, enabled: e.target.checked })} />
-                <span className="font-medium text-fg">{rule.name || 'Unnamed rule'}</span>
-                <span className="text-fg-muted">{effectLabel(rule.effect)} · {scopeLabel(rule.scope)}</span>
-                <span className="ml-auto inline-flex gap-1">
-                  <button className="btn px-2" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={13} /></button>
-                  <button className="btn px-2" aria-label="Move down" disabled={i === rules.length - 1} onClick={() => move(i, 1)}><ArrowDown size={13} /></button>
-                  <button className="btn px-2" aria-label={`Edit ${rule.name || 'rule'}`} onClick={() => setEditing(editing === i ? null : i)}><Pencil size={13} /></button>
-                  <button className="btn px-2" aria-label={`Remove ${rule.name || 'rule'}`}
-                    onClick={() => { onChange(rules.filter((_, j) => j !== i)); setEditing(null); }}><X size={13} /></button>
-                </span>
-              </div>
-              {editing === i && <RuleForm rule={rule} onChange={(next) => set(i, next)} />}
-            </div>
-          ))}
-          <button className="btn" onClick={() => { onChange([...rules, { ...NEW_RULE, scope: {} }]); setEditing(rules.length); }}>
-            <Plus size={13} /> Add rule
-          </button>
-        </>
-      )}
-      <div className="flex flex-wrap items-center gap-3">
-        <button className="btn" onClick={run} disabled={preview.state === 'running'}>
-          {preview.state === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Preview changes
-        </button>
-        {preview.state === 'error' && <span className="text-[12px] text-state-bad">{preview.error}</span>}
-      </div>
-      {preview.state === 'done' && <PreviewResult diff={preview.diff} />}
-      <LastRun status={lastRun} />
-    </div>
+    </>
   );
 }

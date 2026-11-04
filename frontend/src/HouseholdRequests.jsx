@@ -21,7 +21,7 @@ function Row({ request, onDecided }) {
   };
   const until = request.until ? ` until ${day(request.until)}` : '';
   return (
-    <li className="break-words">
+    <li className="wrap-break-word">
       <span className="text-fg">{request.title}</span>
       {' · '}{request.by}{' · '}<span className="num">{day(request.at)}</span>
       {request.kind === 'keep' && <span> · kept{until}</span>}

@@ -28,7 +28,7 @@ function Check({ checked, onChange, children }) {
   return (
     <label className="flex min-h-[40px] cursor-pointer items-start gap-2 sm:min-h-0">
       <input type="checkbox" className="mt-[3px]" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="min-w-0 break-words">{children}</span>
+      <span className="min-w-0 wrap-break-word">{children}</span>
     </label>
   );
 }

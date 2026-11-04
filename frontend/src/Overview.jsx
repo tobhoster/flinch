@@ -137,7 +137,7 @@ export default function Overview({ status, items, history, loading }) {
         {(s.evidence_problems || []).length > 0 && (
           <p className="mt-2 flex items-start gap-2 text-state-warn">
             <AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0" />
-            <span className="min-w-0 break-words">
+            <span className="min-w-0 wrap-break-word">
               Never-played reclaim is off: {s.evidence_problems.join(', ')}. <Explain term="evidence_complete" />
             </span>
           </p>
@@ -180,7 +180,7 @@ function RunFailed({ status, snapshot }) {
   return (
     <div role="alert" className="flex gap-2.5 rounded-lg border border-state-bad/40 bg-state-bad/10 px-4 py-3 text-state-bad">
       <AlertTriangle size={15} aria-hidden className="mt-0.5 shrink-0" />
-      <p className="min-w-0 break-words">
+      <p className="min-w-0 wrap-break-word">
         <span className="font-medium">Last run failed{secs === null ? '' : ` ${ago(secs)}`}:</span>
         {' '}<span className="text-fg">{status.last_error}</span>
         {snapshot && <span className="text-fg-muted"> Showing the last good snapshot.</span>}
