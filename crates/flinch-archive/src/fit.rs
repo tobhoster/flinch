@@ -49,6 +49,13 @@ pub const MIN_OUTCOMES: usize = 12;
 pub const MIN_AUC: f32 = 0.60;
 /// Item-grouped folds; together they give every row an out-of-fold forecast.
 pub const FOLDS: usize = 4;
+/// The source of the `taste` feature a fit learns its weight on: 3 is the
+/// judge's verdict against the audience's own played rate
+/// ([`crate::taste::judge`]). A `hazard.json` without it (1, the
+/// similarity-weighted rate of neighbours) or with another (2, the verdict
+/// centred at even odds) is unreadable, so the daemon refits instead of
+/// running a weight learnt on another taste.
+pub const TASTE_VERSION: u32 = 3;
 
 /// Monthly cut dates out to [`MAX_CUT_DAYS`].
 pub fn default_cuts() -> Vec<f32> {
@@ -131,6 +138,13 @@ pub struct FittedModel {
     /// The closed outcomes taste was learned from: the daemon asks taste with
     /// exactly these, so the coefficient and its input travel together.
     pub outcomes: crate::taste::Record,
+    /// [`TASTE_VERSION`] when fitted.
+    pub taste_version: u32,
+    /// The judge model whose answers the taste weight was learnt on; `None`
+    /// with the judge off. Another judge's verdicts are another feature, so a
+    /// fit from a judge other than the configured one is unreadable too.
+    #[serde(default)]
+    pub judge_model: Option<String>,
 }
 
 /// Out-of-fold scores of a candidate and of the priors on the same rows.
@@ -196,18 +210,21 @@ pub fn shortfall(kind: candidate::ModelKind, metrics: &Metrics) -> Option<String
     None
 }
 
-/// The adopted fit, if one is on file and still clears the gate. Absence is
-/// the normal case and means the hand-set priors.
+/// The adopted fit, if one is on file, was learnt on this taste
+/// ([`TASTE_VERSION`]) from the judge `settings.json` configures, and still
+/// clears the gate. Absence is the normal case and means the hand-set priors.
 pub fn load_model(state_dir: &std::path::Path) -> Option<FittedModel> {
     let text = std::fs::read_to_string(state_dir.join(adopt::MODEL_FILE)).ok()?;
     let model: FittedModel = serde_json::from_str(&text).ok()?;
-    model.shortfall().is_none().then_some(model)
+    let judge = load::configured_taste(state_dir);
+    let current = model.taste_version == TASTE_VERSION && model.judge_model.as_deref() == judge.active_model();
+    (current && model.shortfall().is_none()).then_some(model)
 }
 
 thread_local! {
     /// Deterministic split seed: the same data must always produce the same
     /// report, or nobody can check a decision twice.
-    static SPLIT_SALT: u64 = 0x5eed_1234_abcd;
+    static SPLIT_SALT: u64 = const { 0x5eed_1234_abcd };
 }
 
 /// Fold membership by item id — the grouping that stops leakage.

@@ -17,10 +17,11 @@
 //!
 //! Taste is advice here, not a P(watch) input: it is asked with the adopted
 //! fit's outcomes when there is one, else with [`household_record`]. Every
-//! rule fails closed: a title without a vector, or without any closed
-//! outcome to compare, is never called cold. Nothing here writes to Sonarr,
-//! Radarr, Seerr or Maintainerr; the suggestions are published for the
-//! operator, who may approve some for [`act`] to carry out.
+//! rule fails closed: a title without a vector, without any closed outcome
+//! to compare, or whose question the judge has not answered yet, is never called
+//! cold. Nothing here writes to Sonarr, Radarr, Seerr or Maintainerr; the
+//! suggestions are published for the operator, who may approve some for
+//! [`act`] to carry out.
 
 pub mod act;
 
@@ -29,7 +30,7 @@ use crate::card::ArchiveCard;
 use crate::embedding::{subject_of, VectorStore};
 use crate::signals::streaming::{Stream, Title};
 use crate::signals::{MediaRef, Request};
-use crate::taste::{self, Outcomes, Pool, Record};
+use crate::taste::{self, Judge, Outcomes, Pool, Record};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -100,9 +101,10 @@ pub fn household_record(cards: &[ArchiveCard], now: u64) -> Record {
     record
 }
 
-/// Every suggestion, cold and abandoned shows first, then requests.
-pub fn suggest(inputs: &Inputs<'_>) -> Vec<Suggestion> {
-    let card_taste = taste::for_cards(inputs.cards, inputs.vectors, inputs.record);
+/// Every suggestion, cold and abandoned shows first, then requests. Taste is
+/// looked up through `judge`, which records the questions still to ask.
+pub fn suggest(inputs: &Inputs<'_>, judge: &mut Judge<'_>) -> Vec<Suggestion> {
+    let card_taste = taste::for_cards(inputs.cards, inputs.vectors, inputs.record, judge);
     let mut by_subject: HashMap<&str, Vec<&ArchiveCard>> = HashMap::new();
     for card in inputs.cards {
         by_subject.entry(subject_of(&card.id)).or_default().push(card);
@@ -158,9 +160,8 @@ pub fn suggest(inputs: &Inputs<'_>) -> Vec<Suggestion> {
             });
             continue;
         }
-        let taste = subject_taste(&open.subject)
-            .or_else(|| pool.shortlist(inputs.vectors, &open.subject)?.taste(inputs.record))
-            .filter(|t| *t < COLD_TASTE);
+        let taste =
+            subject_taste(&open.subject).or_else(|| pool.shortlist(&open.subject)?.taste(inputs.record, judge)).filter(|t| *t < COLD_TASTE);
         let Some(taste) = taste else { continue };
         out.push(Suggestion {
             title: open.title.to_string(),

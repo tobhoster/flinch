@@ -73,6 +73,11 @@ spec:
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_GROUPS_CLAIM, optional: true } }
             - name: FLINCH_WEB_OIDC_NAME
               valueFrom: { secretKeyRef: { name: flinch-secrets, key: FLINCH_WEB_OIDC_NAME, optional: true } }
+            # Search by meaning embeds the query through the Ollama in Settings >
+            # Ollama; this key is used when that names OLLAMA_API_KEY as its key
+            # variable (ollama.com only; a local Ollama needs none).
+            - name: OLLAMA_API_KEY
+              valueFrom: { secretKeyRef: { name: flinch-secrets, key: OLLAMA_API_KEY, optional: true } }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -82,10 +87,9 @@ spec:
           readinessProbe: { httpGet: { path: /healthz, port: 7911 }, initialDelaySeconds: 3, periodSeconds: 10 }
           resources:
             requests: { cpu: 50m, memory: 32Mi }
-            # Search by meaning maps EmbeddingGemma 2's 542 MB of text weights
-            # on the first search and keeps them (about 550 MB resident after,
-            # 700 MB at peak); a query takes about 0.3 s of one core.
-            limits: { cpu: "1", memory: 1Gi }
+            # Search by meaning embeds the query on Ollama and scores it against
+            # state/embeddings.json here; no model runs in this pod.
+            limits: { cpu: 500m, memory: 256Mi }
       volumes: [{ name: state, persistentVolumeClaim: { claimName: flinch-state-rwx } }]
 ---
 apiVersion: v1

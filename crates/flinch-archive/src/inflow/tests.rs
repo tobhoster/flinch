@@ -1,5 +1,7 @@
 use super::*;
 use crate::card::LibraryKind;
+use crate::embedding::{Description, RECIPE_VERSION};
+use crate::taste::AnswerCache;
 use rstest::rstest;
 
 /// Comedies point one way, horror the other; the household plays comedy.
@@ -14,7 +16,13 @@ fn vectors(with_show: bool) -> VectorStore {
     if with_show {
         entries.push(("sonarr-7", vec![0.0, 1.0]));
     }
-    VectorStore::from_vectors(entries.into_iter().map(|(subject, vector)| (subject.to_string(), vector)))
+    let mut store = VectorStore::default();
+    store.retarget("ollama:test", 0, RECIPE_VERSION);
+    for (subject, vector) in entries {
+        let description = Description::new(format!("Name of {subject}"), format!("Title: {subject}"));
+        store.insert(subject.to_string(), description, vector).expect("a 2-d vector");
+    }
+    store
 }
 
 fn record() -> Record {
@@ -51,9 +59,23 @@ fn show(status: &str) -> ArrSeries {
     }
 }
 
+/// The suggestions once the judge has answered every question they asked; the
+/// stand-in reads the played share of the three nearest titles.
 fn run(cards: &[ArchiveCard], series: &[ArrSeries], requests: &[Request], vectors: &VectorStore) -> Vec<Suggestion> {
     let record = record();
-    suggest(&Inputs { cards, series, movies: &[], requests, streams: &HashMap::new(), vectors, record: &record })
+    let inputs = Inputs { cards, series, movies: &[], requests, streams: &HashMap::new(), vectors, record: &record };
+    let mut cache = AnswerCache::default();
+    cache.retarget(crate::taste::judge::DEFAULT_MODEL);
+    let mut judge = Judge::new(&cache);
+    suggest(&inputs, &mut judge);
+    let asked = judge.finish();
+    cache.note(&asked, 0);
+    for (key, state) in cache.queue(&asked) {
+        let near = &state.nearest[..state.nearest.len().min(3)];
+        let played = near.iter().filter(|neighbour| neighbour.played).count() as f64;
+        cache.answer(key, (played + 0.5) / (near.len() as f64 + 1.0), 0);
+    }
+    suggest(&inputs, &mut Judge::new(&cache))
 }
 
 #[test]
@@ -120,7 +142,7 @@ fn a_request_that_streams_on_a_service_you_have_is_named(#[case] streaming_tmdb:
         streaming_tmdb.map(|id| (Title::Tv(id), Stream { provider: "Netflix".into(), region: "DE".into() })).into_iter().collect();
     let record = record();
     let (cards, series) = ([season(1, None, None)], [show("ended")]);
-    let out = suggest(&Inputs {
+    let inputs = Inputs {
         cards: &cards,
         series: &series,
         movies: &[],
@@ -128,7 +150,8 @@ fn a_request_that_streams_on_a_service_you_have_is_named(#[case] streaming_tmdb:
         streams: &streams,
         vectors: &vectors(false),
         record: &record,
-    });
+    };
+    let out = suggest(&inputs, &mut Judge::off());
     assert_eq!(out.first().map(|s| s.rule), rule);
     if rule.is_some() {
         assert_eq!(out[0].why, "requested by sam, but it streams on Netflix (DE), a service you have");

@@ -20,16 +20,14 @@ const PERCENT = { scale: 100, ok: (v) => v > 0 && v <= 100 };
 const BYTES = { scale: 1 / GIB, digits: 2 };
 const inRange = (lo, hi) => ({ ok: (v) => v >= lo && v <= hi });
 
-/** The Matryoshka sizes EmbeddingGemma 2 keeps meaningful. */
-const DIMENSIONS = [128, 256, 512, 768];
-const GEMMA = 'embeddinggemma-2';
-/** The encoders the daemon can run, with what each costs. */
-const EMBEDDING_MODELS = [
-  [GEMMA, 'EmbeddingGemma 2 — best quality, ~580 MB weights, ~650 MB peak'],
-  ['bge-small-en-v1.5', 'bge-small — ~130 MB'],
-  ['all-minilm-l6-v2', 'MiniLM — ~90 MB'],
-];
-const halfLifeOk = (v) => v === 0 || (v >= 7 && v <= 3650);
+/** Vector lengths offered: 0 keeps the model's own, the rest are Matryoshka cuts. */
+const DIMENSIONS = [0, 128, 256, 512, 768, 1024];
+const dimensionsOk = (v) => Number.isInteger(v) && (v === 0 || (v >= 32 && v <= 4096));
+/** The offered lengths, plus a non-standard saved one so it stays selectable. */
+const dimensionChoices = (current) => {
+  const value = Number(current);
+  return DIMENSIONS.includes(value) || !Number.isFinite(value) ? DIMENSIONS : [...DIMENSIONS, value].sort((a, b) => a - b);
+};
 
 /**
  * Every numeric field as `[group, key, label, spec]`; `group` null is top
@@ -49,9 +47,9 @@ const NUMERIC = [
   ['capacity', 'max_capacity_bytes', 'Max capacity', { ...BYTES, ok: (v) => v > 0, optional: true }],
   ['planner', 'quantum_mb', 'Quantum (1–10240 MiB)', inRange(1, 10240)],
   ['planner', 'grace_period_days', 'Grace period (0–3650 days)', inRange(0, 3650)],
-  ['embedding', 'dimensions', 'Embedding dimensions', { ok: (v) => DIMENSIONS.includes(v) }],
+  ['embedding', 'dimensions', 'Embedding dimensions (0, or 32–4096)', { ok: dimensionsOk }],
   ['embedding', 'daily_budget', 'Embedding budget (1–20000 titles)', inRange(1, 20000)],
-  ['taste', 'half_life_days', 'Taste half-life (0, or 7–3650 days)', { ok: halfLifeOk }],
+  ['taste', 'judge_daily_budget', 'Taste judge budget (1–20000 questions)', inRange(1, 20000)],
   ['notify', 'digest_hour_utc', 'Digest hour (0–23 UTC)', inRange(0, 23)],
   ['notify', 'max_per_hour', 'Notifications per hour (1–120)', inRange(1, 120)],
   ['quality_actions', 'max_per_day', 'Quality moves per day (1–50)', inRange(1, 50)],
@@ -85,8 +83,10 @@ function archiveSummary(archive) {
 
 /** Settings as the form shows them: scaled numbers, user weights as editable rows. */
 function toForm(settings) {
-  const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner }, embedding: { ...settings.embedding }, notify: { ...settings.notify } };
-  form.taste = { half_life_days: 0, ...settings.taste };
+  const form = { ...settings, capacity: { ...settings.capacity }, planner: { ...settings.planner }, notify: { ...settings.notify } };
+  form.ollama = { url: 'http://localhost:11434', token: '', api_key_env: '', ...settings.ollama };
+  form.embedding = { enabled: false, model: 'all-minilm', dimensions: 0, daily_budget: 500, ...settings.embedding };
+  form.taste = { judge_enabled: false, judge_model: 'kev:4b-q4_K_M', judge_daily_budget: 500, ...settings.taste };
   form.dupes = { ...settings.dupes };
   form.archive = { ...settings.archive };
   form.household = { ...settings.household };
@@ -121,12 +121,14 @@ const parse = (raw) => (typeof raw === 'string' && raw.trim() === '' ? NaN : Num
  * Inputs hold whatever the user typed; numbers are coerced once, here, so the
  * PUT body never carries a string for a numeric field. The target must sit
  * below the emergency mark. User weight names are unique (case-insensitive)
- * and weights at least 0. The token field starts blank (the server never sends
- * it back); blank keeps the saved token while the URL is unchanged.
+ * and weights at least 0. Token fields start blank (the server never sends
+ * them back); blank keeps the saved token while the URL is unchanged.
  */
 function toPayload(form) {
-  const payload = { ...form, capacity: { ...form.capacity }, planner: { ...form.planner }, embedding: { ...form.embedding }, notify: { ...form.notify } };
-  payload.taste = { ...form.taste };
+  const payload = { ...form, capacity: { ...form.capacity }, planner: { ...form.planner }, notify: { ...form.notify } };
+  payload.ollama = { ...form.ollama, url: String(form.ollama.url || '').trim(), api_key_env: String(form.ollama.api_key_env || '').trim() };
+  payload.embedding = { ...form.embedding, model: String(form.embedding.model || '').trim() };
+  payload.taste = { ...form.taste, judge_model: String(form.taste.judge_model || '').trim() };
   payload.dupes = { ...form.dupes };
   payload.household = { ...form.household };
   Object.assign(payload, { quality_actions: { ...form.quality_actions }, upgrade_search: { ...form.upgrade_search }, upgrade_guard: { ...form.upgrade_guard }, native: { ...form.native } });
@@ -134,6 +136,7 @@ function toPayload(form) {
   payload.watch_sources = watchSourcesPayload(form.watch_sources);
   delete payload.plex_token_set;
   delete payload.jellyfin_token_set;
+  delete payload.ollama_token_set;
   const invalid = [];
   for (const [group, key, label, { scale = 1, ok = (v) => v >= 0, optional }] of NUMERIC) {
     const raw = groupOf(form, group)[key];
@@ -146,6 +149,10 @@ function toPayload(form) {
   if (!invalid.length && payload.capacity.target_utilization >= payload.capacity.emergency_utilization) {
     invalid.push('Target (below Emergency)');
   }
+  if (!/^https?:\/\/\S+$/.test(payload.ollama.url)) invalid.push('Ollama URL (http or https, no spaces)');
+  if (!/^[A-Za-z0-9_]*$/.test(payload.ollama.api_key_env)) invalid.push('Ollama key variable (letters, digits, _)');
+  if (!payload.embedding.model) invalid.push('Embedding model');
+  if (!payload.taste.judge_model) invalid.push('Taste judge model');
   const weights = {};
   for (const { name, weight } of form.planner.user_weights) {
     const key = name.trim();
@@ -214,12 +221,6 @@ export default function Settings({ status }) {
   const valueOf = (event) => (event.target.type === 'checkbox' ? event.target.checked : event.target.value);
   const set = (key) => (event) => update({ ...form, [key]: valueOf(event) });
   const setIn = (group, key) => (event) => update({ ...form, [group]: { ...form[group], [key]: valueOf(event) } });
-  const gemma = (form.embedding.model || GEMMA) === GEMMA;
-  // Posters are EmbeddingGemma 2's alone: another model switches them off.
-  const setModel = (event) => {
-    const model = event.target.value;
-    update({ ...form, embedding: { ...form.embedding, model, posters: model === GEMMA && !!form.embedding.posters } });
-  };
   const setHousehold = (key) => (event) => update({ ...form, notify: { ...form.notify, household: { ...form.notify.household, [key]: valueOf(event) } } });
   const setPcd = (key) => (event) => update({ ...form, trash: { ...form.trash, pcd: { ...form.trash.pcd, [key]: valueOf(event) } } });
   const weights = form.planner.user_weights;
@@ -474,40 +475,55 @@ export default function Settings({ status }) {
           </Row>
         </Section>
 
-        <Section title="Taste embeddings">
+        <Section title="Ollama">
+          <Row label="URL" htmlFor="ollama.url"
+            help="Serves the title vectors and search (/api/embed) and the taste judge's answers (/v1/systemone). A local Ollama, or https://ollama.com for cloud models.">
+            <TextField id="ollama.url" placeholder="http://localhost:11434" spellCheck={false} autoComplete="off" value={form.ollama.url} onChange={setIn('ollama', 'url')} />
+          </Row>
+          <Row label="API key" htmlFor="ollama.token" help="Only ollama.com needs one; a local Ollama needs none. Never sent back to the browser. Blank keeps the saved one; a new URL needs it again.">
+            <TextField id="ollama.token" type="password" autoComplete="off" placeholder={form.ollama_token_set ? 'Saved' : ''}
+              value={form.ollama.token} onChange={setIn('ollama', 'token')} />
+          </Row>
+          <Row label="Key variable" htmlFor="ollama.api_key_env" help="Or the name of an environment variable holding the key, e.g. OLLAMA_API_KEY, set in flinch-arrd and flinch-web.">
+            <TextField id="ollama.api_key_env" spellCheck={false} autoComplete="off" value={form.ollama.api_key_env} onChange={setIn('ollama', 'api_key_env')} />
+          </Row>
+        </Section>
+
+        <Section title="Embeddings">
           <Row label="Embed titles" htmlFor="embedding.enabled"
-            help="The chosen model runs inside the daemon on its CPU. The first run downloads its weights to the state volume. Off keeps the vectors already made.">
+            help="Each title's description becomes a vector from the Ollama above; taste, themes and search by meaning use them. Off keeps the vectors already made.">
             <Toggle id="embedding.enabled" checked={!!form.embedding.enabled} onChange={setIn('embedding', 'enabled')}>
               Embed new and changed titles
             </Toggle>
           </Row>
           <Row label="Model" htmlFor="embedding.model"
-            help="EmbeddingGemma 2 describes titles best. bge-small (~200 MB resident) and MiniLM (~110 MB) suit a small host, at some cost in nuance. Switching embeds every title again.">
-            <select id="embedding.model" value={form.embedding.model || GEMMA} onChange={setModel}
+            help="Any Ollama embedding model, pulled first (ollama pull all-minilm). all-minilm is small and fast on CPU; embeddinggemma or nomic-embed-text are larger and slower. Switching embeds every title again.">
+            <TextField id="embedding.model" placeholder="all-minilm" spellCheck={false} autoComplete="off" value={form.embedding.model} onChange={setIn('embedding', 'model')} />
+          </Row>
+          <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept. Native keeps the model's own (384 for all-minilm); a shorter cut works only for models trained for it, such as embeddinggemma, and is lighter and coarser. Changing it embeds every title again.">
+            <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
               className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
-              {EMBEDDING_MODELS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              {dimensionChoices(form.embedding.dimensions).map((d) => <option key={d} value={d}>{d === 0 ? 'Native (model\'s own length)' : d}</option>)}
             </select>
           </Row>
-          {gemma && (
-            <Row label="Dimensions" htmlFor="embedding.dimensions" help="Vector length kept from the model's 768. Smaller is lighter, coarser; changing it embeds every title again.">
-              <select id="embedding.dimensions" value={form.embedding.dimensions} onChange={setIn('embedding', 'dimensions')}
-                className="min-h-[40px] rounded-md border border-line bg-ink-900 px-2 text-[13px] text-fg focus:border-fg-faint focus:outline-none sm:min-h-0">
-                {DIMENSIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </Row>
-          )}
-          <Row label="Daily budget" htmlFor="embedding.daily_budget" help="Most titles embedded per day (UTC), at most two minutes of CPU per run; a large library fills in over several days.">
+          <Row label="Daily budget" htmlFor="embedding.daily_budget" help="Most titles embedded per day (UTC), at most two minutes per run, on-disk titles first; a large library fills in over several days.">
             <NumberField {...numIn('embedding', 'daily_budget', { min: 1, max: 20000, step: 50 })} unit="titles" />
           </Row>
-          <Row label="Posters" htmlFor="embedding.posters"
-            help="EmbeddingGemma 2 only. Describe each title by its poster too, through the model's vision tower: about 335 MB more weights, and several seconds of CPU per title. Posters come from the TMDB/TheTVDB address Radarr and Sonarr list, fetched without any credential. Switching it on or off embeds every title again.">
-            <Toggle id="embedding.posters" checked={!!form.embedding.posters} onChange={setIn('embedding', 'posters')} disabled={!gemma}>
-              Include the poster in each title's vector
+        </Section>
+
+        <Section title="Taste">
+          <Row label="Judge" htmlFor="taste.judge_enabled"
+            help="For a title nobody played yet, the judge model (through the Ollama above) reads the 20 nearest titles each viewer had, played or not, and judges whether they would play it. Needs embeddings. Off: taste counts for nothing.">
+            <Toggle id="taste.judge_enabled" checked={!!form.taste.judge_enabled} onChange={setIn('taste', 'judge_enabled')}>
+              Ask the judge about taste
             </Toggle>
           </Row>
-          <Row label="Taste half-life" htmlFor="taste.half_life_days"
-            help="Weigh what the household played recently above what it played long ago: an outcome counts half after this many days. 0 counts every outcome alike. The next daily fit uses it.">
-            <NumberField {...numIn('taste', 'half_life_days', { min: 0, max: 3650, step: 30 })} unit="days" />
+          <Row label="Model" htmlFor="taste.judge_model"
+            help="An Ollama model answering /v1/systemone questions, pulled first (ollama pull kev:4b-q4_K_M, about 5 s a question on CPU). clef-flash or clef rank tastes better but are 4-10x slower and need 14-25 GB; clef:cloud runs on ollama.com with an API key and sends it what each viewer played. Switching clears the cached answers and refits.">
+            <TextField id="taste.judge_model" placeholder="kev:4b-q4_K_M" spellCheck={false} autoComplete="off" value={form.taste.judge_model} onChange={setIn('taste', 'judge_model')} />
+          </Row>
+          <Row label="Daily budget" htmlFor="taste.judge_daily_budget" help="Most questions asked per day (UTC), at most three minutes per run, this run's titles first. Answers are kept in taste_answers.json, so a title is asked again only when what its viewers played changes.">
+            <NumberField {...numIn('taste', 'judge_daily_budget', { min: 1, max: 20000, step: 50 })} unit="questions" />
           </Row>
         </Section>
 

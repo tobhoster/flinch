@@ -191,6 +191,10 @@ pub struct StatusSnapshot {
     /// and why it embedded less. `None` in a status file written before.
     #[serde(default)]
     pub embedding: Option<crate::embedding::EmbeddingStatus>,
+    /// The taste judge: answers cached, questions waiting, what this cycle
+    /// asked, and why it asked less. `None` in a status file written before.
+    #[serde(default)]
+    pub taste: Option<crate::taste::TasteStatus>,
     /// Incoming storage nobody is likely to watch, advice only
     /// ([`crate::inflow`]). Empty in a status file written before.
     #[serde(default)]

@@ -250,7 +250,7 @@ pub(super) async fn gather(
         tautulli_configured,
         tautulli_complete: tautulli.as_ref().is_some_and(|fetched| fetched.complete) && tautulli_keeps_all,
         // Unknown (Plex down) is treated as shared: admin-only zeros prove nothing.
-        multi_account: plex.as_ref().map_or(true, |fetched| fetched.multi_account),
+        multi_account: plex.as_ref().is_none_or(|fetched| fetched.multi_account),
         plex_settings_unpaired: settings_url_unpaired,
         jellyfin_configured: jellyfin.configured,
         jellyfin_complete: jellyfin.complete,

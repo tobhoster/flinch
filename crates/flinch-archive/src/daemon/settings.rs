@@ -41,10 +41,13 @@ pub struct RuntimeSettings {
     pub keep_tag: String,
     pub capacity: crate::capacity::CapacityConfig,
     pub planner: crate::plan::PlannerConfig,
-    /// The in-process EmbeddingGemma 2 encoder behind the taste feature;
-    /// off until the operator switches it on.
+    /// The Ollama serving the taste vectors and the taste judge; a local one
+    /// at its default port unless the operator says otherwise.
+    pub ollama: crate::ollama::OllamaConfig,
+    /// Embedding every title through Ollama, behind the taste feature; off
+    /// until the operator switches it on.
     pub embedding: crate::embedding::EmbeddingConfig,
-    /// Taste's recency weighting ([`crate::taste::decay`]); off by default.
+    /// Taste judged by an Ollama decision model ([`crate::taste::judge`]); off by default.
     pub taste: crate::taste::TasteConfig,
     /// A Jellyfin or Emby server read for every user's watch state; off while
     /// its URL is blank.
@@ -118,6 +121,7 @@ impl Default for RuntimeSettings {
             keep_tag: "flinch-keep".to_string(),
             capacity: crate::capacity::CapacityConfig::default(),
             planner: crate::plan::PlannerConfig::default(),
+            ollama: crate::ollama::OllamaConfig::default(),
             embedding: crate::embedding::EmbeddingConfig::default(),
             taste: crate::taste::TasteConfig::default(),
             jellyfin: crate::jellyfin::JellyfinConfig::default(),
@@ -169,6 +173,7 @@ impl RuntimeSettings {
         }
         self.capacity.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.planner.validate().map_err(|error| SettingsError::Invalid(error.0))?;
+        self.ollama.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.embedding.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         self.taste.validate().map_err(|error| SettingsError::Invalid(error.0))?;
         crate::rules::validate(&self.rules)?;
@@ -267,6 +272,18 @@ mod tests {
         assert_eq!(settings.planner.grace_period_days, 30);
     }
 
+    #[test]
+    fn in_process_embedding_settings_load_with_ollama_at_its_default() {
+        let settings: RuntimeSettings = serde_json::from_str(
+            r#"{"embedding":{"enabled":true,"model":"embeddinggemma-2","dimensions":512,"posters":true},"taste":{"half_life_days":30.0}}"#,
+        )
+        .unwrap();
+        assert!(settings.validate().is_ok(), "{:?}", settings.validate());
+        assert_eq!((settings.embedding.model.as_str(), settings.embedding.dimensions), ("embeddinggemma-2", 512), "kept as typed");
+        assert_eq!(settings.ollama.url, "http://localhost:11434");
+        assert!(!settings.taste.judge_enabled, "the judge waits for the operator");
+    }
+
     #[rstest]
     #[case::interval_below_five_minutes(|s: &mut RuntimeSettings| s.interval_s = 299)]
     #[case::no_grace(|s: &mut RuntimeSettings| s.grace_runs = 0)]
@@ -274,10 +291,11 @@ mod tests {
     #[case::target_above_emergency(|s: &mut RuntimeSettings| s.capacity.target_utilization = 0.96)]
     #[case::zero_quantum(|s: &mut RuntimeSettings| s.planner.quantum_mb = 0)]
     #[case::negative_weight(|s: &mut RuntimeSettings| { s.planner.user_weights.insert("ann".into(), -1.0); })]
-    #[case::embedding_dimensions_not_a_matryoshka_size(|s: &mut RuntimeSettings| s.embedding.dimensions = 300)]
-    #[case::taste_half_life_under_a_week(|s: &mut RuntimeSettings| s.taste.half_life_days = 3.0)]
-    #[case::taste_half_life_not_finite(|s: &mut RuntimeSettings| s.taste.half_life_days = f64::NAN)]
-    #[case::bert_model_with_posters(|s: &mut RuntimeSettings| { s.embedding.model = crate::embedding::EmbeddingModel::MiniLm; s.embedding.posters = true; })]
+    #[case::embedding_dimensions_too_short(|s: &mut RuntimeSettings| s.embedding.dimensions = 16)]
+    #[case::no_embedding_model(|s: &mut RuntimeSettings| s.embedding.model = String::new())]
+    #[case::no_judge_model(|s: &mut RuntimeSettings| s.taste.judge_model = " ".into())]
+    #[case::no_judge_budget(|s: &mut RuntimeSettings| s.taste.judge_daily_budget = 0)]
+    #[case::ollama_without_a_scheme(|s: &mut RuntimeSettings| s.ollama.url = "localhost:11434".into())]
     #[case::no_leaving_soon_window(|s: &mut RuntimeSettings| s.native.leaving_soon_days = 0)]
     #[case::no_deletes_per_run(|s: &mut RuntimeSettings| s.native.max_deletes_per_run = 0)]
     fn a_value_the_settings_page_would_refuse_is_invalid(#[case] break_it: fn(&mut RuntimeSettings)) {

@@ -1,44 +1,29 @@
-//! A text embedding per library subject, for the taste feature of P(watch).
+//! A text embedding per library subject: what taste retrieves neighbours by.
 //!
 //! A never-played title has no history of its own; what the household did
 //! with titles like it is the next best evidence. "Like it" is measured by
 //! sentence-embedding vectors of each title's catalogue description:
-//! [`text`] writes that description from content metadata only, [`weights`]
-//! fetches the pinned model's weights once, [`engine`] opens the configured
-//! encoder — EmbeddingGemma 2 ([`gemma`]) or one of two small BERT encoders
-//! ([`bert`]) for hosts that cannot spare Gemma's ~650 MB — in-process with
-//! candle, and [`store`] caches the vectors in the state directory so each
-//! title is embedded once per text change.
-//!
-//! With posters on (EmbeddingGemma 2 only), the description also holds the
-//! title's poster: [`poster`] cuts it into patches, [`vision`] turns them into
-//! soft tokens the text encoder reads at the poster's placeholder, and the one
-//! vector describes both.
+//! [`text`] writes that description from content metadata only, the
+//! operator's Ollama embeds it ([`crate::ollama::embed`], MiniLM by
+//! default), and [`store`] caches the vectors in the state directory so each
+//! title is embedded once per text change. Nothing runs in-process.
 //!
 //! A subject is a movie or a show: every season of a show shares its vector,
 //! because the description (genre, cast, premise) is the show's. The vectors
 //! are L2-normalised and all of one length, so a dot product is the cosine.
 
-pub mod bert;
-pub mod engine;
-pub mod gemma;
-pub mod poster;
 pub mod store;
 pub mod text;
-pub mod vision;
-pub mod weights;
 
-pub use bert::{BertEncoder, Pooling};
-pub use engine::EmbeddingEngine;
-pub use gemma::{Encoder, ModelError};
-pub use poster::{Patches, PosterError, Preprocessing};
-pub use store::{StoreError, VectorStore};
-pub use text::{movie_text, poster_hash, series_text, text_hash, with_poster, POSTER_RECIPE_VERSION, RECIPE_VERSION};
-pub use vision::{ImageTokens, VisionEncoder};
-pub use weights::{model_id, poster_model_id, BertFiles, FetchError, ModelFiles};
+pub use store::{Description, StoreError, VectorStore};
+pub use text::{display_title, movie_text, series_text, text_hash, RECIPE_VERSION};
 
 /// The vector cache, in the state directory.
 pub const STORE_FILE: &str = "embeddings.json";
+/// The Ollama model embedding titles unless the operator names another.
+pub const DEFAULT_MODEL: &str = "all-minilm";
+/// What a store's model id starts with: its vectors came from Ollama.
+const OLLAMA_MODEL: &str = "ollama:";
 
 /// The subject a card's vector belongs to: a season (`sonarr-7-s2`,
 /// `sonarr@anime-7-s2`) shares its show's (`sonarr-7`, `sonarr@anime-7`; see
@@ -50,58 +35,44 @@ pub fn subject_of(card_id: &str) -> &str {
     }
 }
 
-/// The sentence encoder behind the vectors. EmbeddingGemma 2 is the best
-/// describer but needs ~650 MB at its peak; the two BERT encoders fit a
-/// <150 MB envelope at some cost in nuance. Switching retargets the store, so
-/// every title is embedded again by the new model.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum EmbeddingModel {
-    #[default]
-    #[serde(rename = "embeddinggemma-2")]
-    Gemma,
-    #[serde(rename = "bge-small-en-v1.5")]
-    BgeSmall,
-    #[serde(rename = "all-minilm-l6-v2")]
-    MiniLm,
+/// The store's id for vectors from the Ollama model `model`.
+pub fn model_id(model: &str) -> String {
+    format!("{OLLAMA_MODEL}{}", model.trim())
 }
 
-impl EmbeddingModel {
-    pub const ALL: [Self; 3] = [Self::Gemma, Self::BgeSmall, Self::MiniLm];
+/// The Ollama model a store's vectors came from; `None` for any other source.
+pub fn ollama_model(model_id: &str) -> Option<&str> {
+    model_id.strip_prefix(OLLAMA_MODEL).filter(|model| !model.is_empty())
+}
 
-    /// The model's own vector length (Gemma's before Matryoshka truncation).
-    pub fn native_dimensions(self) -> u32 {
-        match self {
-            Self::Gemma => 768,
-            Self::BgeSmall | Self::MiniLm => 384,
-        }
+/// The model's family, for its prompts: the name without a namespace
+/// (`hf.co/…/`) or tag (`:latest`), lowercased.
+fn family(model: &str) -> String {
+    let name = model.trim().rsplit('/').next().unwrap_or_default();
+    name.split(':').next().unwrap_or_default().to_lowercase()
+}
+
+/// What a description starts with: EmbeddingGemma's symmetric classification
+/// prompt; other models were trained without one.
+pub fn text_prefix(model: &str) -> &'static str {
+    if family(model).starts_with("embeddinggemma") {
+        "task: classification | query: "
+    } else {
+        ""
     }
+}
 
-    /// What a description starts with: EmbeddingGemma 2's symmetric
-    /// classification prompt; the BERT encoders were trained without one.
-    pub fn text_prefix(self) -> &'static str {
-        match self {
-            Self::Gemma => "task: classification | query: ",
-            Self::BgeSmall | Self::MiniLm => "",
-        }
-    }
-
-    /// What a search query starts with: each model's own retrieval prompt
-    /// (MiniLM was trained symmetric and has none).
-    pub fn query_prompt(self) -> &'static str {
-        match self {
-            Self::Gemma => "task: search result | query: ",
-            Self::BgeSmall => "Represent this sentence for searching relevant passages: ",
-            Self::MiniLm => "",
-        }
-    }
-
-    /// Roughly what the first download weighs, for the daemon's log.
-    pub fn download_mb(self) -> u32 {
-        match self {
-            Self::Gemma => 580,
-            Self::BgeSmall => 135,
-            Self::MiniLm => 92,
-        }
+/// What a search query starts with: each model's own retrieval prompt
+/// (EmbeddingGemma's search task, bge's query instruction); none for models
+/// trained symmetric.
+pub fn query_prompt(model: &str) -> &'static str {
+    let family = family(model);
+    if family.starts_with("embeddinggemma") {
+        "task: search result | query: "
+    } else if family.starts_with("bge") {
+        "Represent this sentence for searching relevant passages: "
+    } else {
+        ""
     }
 }
 
@@ -111,31 +82,30 @@ impl EmbeddingModel {
 #[serde(default)]
 pub struct EmbeddingConfig {
     /// Embed new and changed titles. Off, the cached vectors stay in use and
-    /// the model is neither downloaded nor run.
+    /// Ollama is not asked.
     pub enabled: bool,
-    /// Which encoder makes the vectors.
-    pub model: EmbeddingModel,
-    /// Matryoshka truncation of EmbeddingGemma 2's 768-d output. The BERT
-    /// encoders always keep their native 384 and ignore this field.
+    /// The Ollama embedding model (`ollama pull <model>` on the server).
+    pub model: String,
+    /// Matryoshka truncation of the model's vectors, re-normalised, for models
+    /// trained for it; 0 (the default) keeps the model's own length.
     pub dimensions: u32,
     /// Most subjects embedded per UTC day, so a first run over a large library
-    /// spreads over days instead of occupying the CPU for hours.
+    /// spreads over days instead of occupying Ollama for hours.
     pub daily_budget: u32,
-    /// Describe each title by its poster too (the *arr's upstream poster
-    /// image), through EmbeddingGemma 2's vision tower. Off, text alone.
-    pub posters: bool,
 }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
-        Self { enabled: false, model: EmbeddingModel::default(), dimensions: 256, daily_budget: 500, posters: false }
+        Self { enabled: false, model: DEFAULT_MODEL.to_string(), dimensions: 0, daily_budget: 500 }
     }
 }
 
-/// The truncations EmbeddingGemma 2 was trained to keep meaningful.
-pub const DIMENSIONS: [u32; 4] = [128, 256, 512, 768];
+/// Bounds of a non-zero [`EmbeddingConfig::dimensions`].
+pub const DIMENSIONS: (u32, u32) = (32, 4096);
 /// Bounds of [`EmbeddingConfig::daily_budget`].
 pub const MAX_DAILY_BUDGET: u32 = 20_000;
+/// The longest model name accepted.
+const MAX_MODEL_CHARS: usize = 200;
 
 /// An [`EmbeddingConfig`] outside its bounds; the message names the field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -144,33 +114,27 @@ pub struct InvalidEmbeddingConfig(pub &'static str);
 
 impl EmbeddingConfig {
     pub fn validate(&self) -> Result<(), InvalidEmbeddingConfig> {
-        if self.model == EmbeddingModel::Gemma && !DIMENSIONS.contains(&self.dimensions) {
-            return Err(InvalidEmbeddingConfig("embedding dimensions must be 128, 256, 512 or 768"));
+        let model = self.model.trim();
+        if model.is_empty() || model.chars().count() > MAX_MODEL_CHARS || model.chars().any(char::is_whitespace) {
+            return Err(InvalidEmbeddingConfig("the embedding model (embedding.model) must be an Ollama model name, without spaces"));
         }
-        if self.posters && self.model != EmbeddingModel::Gemma {
-            return Err(InvalidEmbeddingConfig("poster embeddings need the EmbeddingGemma 2 model"));
+        let (low, high) = DIMENSIONS;
+        if self.dimensions != 0 && !(low..=high).contains(&self.dimensions) {
+            return Err(InvalidEmbeddingConfig("embedding dimensions must be 0 (the model's own) or 32 to 4096"));
         }
         if !(1..=MAX_DAILY_BUDGET).contains(&self.daily_budget) {
             return Err(InvalidEmbeddingConfig("the embedding daily budget must be 1 to 20000 titles"));
         }
         Ok(())
     }
-
-    /// The length the stored vectors have: the truncation for Gemma, the
-    /// native 384 for the BERT encoders.
-    pub fn vector_dimensions(&self) -> u32 {
-        match self.model {
-            EmbeddingModel::Gemma => self.dimensions,
-            model => model.native_dimensions(),
-        }
-    }
 }
 
-/// A 768-d unit vector cut to `dimensions` and L2-normalised again (a
-/// Matryoshka prefix is only an embedding once re-normalised); `None` when
-/// the prefix is not usable.
+/// A vector cut to `dimensions` and L2-normalised again (a Matryoshka prefix
+/// is only an embedding once re-normalised); `dimensions` 0 keeps its whole
+/// length. `None` when the result is not usable: too short, zero or not finite.
 pub fn truncate(vector: &[f32], dimensions: usize) -> Option<Vec<f32>> {
-    store::unit(vector.get(..dimensions)?.to_vec())
+    let kept = if dimensions == 0 { vector } else { vector.get(..dimensions)? };
+    store::unit(kept.to_vec())
 }
 
 /// What status.json reports about the vectors (`embedding`).

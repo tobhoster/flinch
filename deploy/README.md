@@ -173,6 +173,7 @@ TAUTULLI_API_KEY=<tautulli api key>
 | `QBITTORRENT_PASSWORD`, `TRANSMISSION_PASSWORD` | no | torrent client passwords, seen by flinch-arrd as `FLINCH_QBIT_PASSWORD` and `FLINCH_TRANSMISSION_PASSWORD`: name those variables in Settings > Torrents. See [Torrents](#torrents) |
 | `TRACEARR_API_KEY` | no | a Tracearr public API key (generated in Tracearr's Settings, `trr_pub_…`), seen by flinch-arrd as `FLINCH_TRACEARR_KEY`: add a Tracearr source in Settings > Watch sources with that variable. See [Watch sources](#watch-sources-tracearr-and-trakt) |
 | `TRAKT_CLIENT_ID`, `TRAKT_TOKEN_<NAME>` | no | a Trakt application's client id (mapped to `FLINCH_TRAKT_CLIENT_ID`) and one OAuth access token per household member: add a variable per member to the flinch-arrd manifest the same way, e.g. `FLINCH_TRAKT_ANN` from `TRAKT_TOKEN_ANN`. See [Watch sources](#watch-sources-tracearr-and-trakt) |
+| `OLLAMA_API_KEY` | with ollama.com | an ollama.com API key, mapped into both flinch-arrd and flinch-web: name `OLLAMA_API_KEY` as the key variable in Settings > Ollama, or type the key there instead. A local Ollama needs none. See [Taste](#taste-ollama) |
 
 Leave out the keys you do not use. The Radarr and Sonarr keys are required
 (the daemon exits without them), and the UI stays locked without the login.
@@ -504,16 +505,49 @@ Maintainerr, or what FLINCH handed there earlier still leaves on Maintainerr's
 schedule. The Executor card lists FLINCH's deletes of the last 30 days with a
 Restore button (monitor and search again).
 
-### Taste embeddings (EmbeddingGemma 2)
+### Taste (Ollama)
 
-Optional. For titles nobody has played yet, P(watch) can lean on how readily
-the household plays similar titles. "Similar" comes from an embedding of each
-movie's and show's catalogue description, made by
-[EmbeddingGemma 2](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
-inside `flinch-arrd` itself: a pure-Rust port of its text encoder on
-[candle](https://github.com/huggingface/candle), on the CPU, with no model
-server to run. Two smaller encoders fit a tighter memory budget (see
-*Models* below). Off, FLINCH runs as before.
+Optional. For titles nobody has played yet, P(watch) can lean on whether the
+household would play them. FLINCH finds the titles most like each one by an
+embedding of each movie's and show's catalogue description, and asks a taste
+judge (an Ollama decision model) whether each viewer would play it, judging
+by which of those look-alikes they played. Both run on
+[Ollama](https://ollama.com), not in FLINCH: the vectors through
+`POST /api/embed`, the judge through `POST /v1/systemone`. Off, FLINCH runs
+as before.
+
+Before switching it on, pull the models on the Ollama host:
+
+```bash
+ollama pull all-minilm        # about 46 MB: the vectors
+ollama pull kev:4b-q4_K_M     # the taste judge
+```
+
+Judge choices, measured on an i7-12700T (20 threads, no GPU, Ollama 0.40.14)
+with 9 sanity cases (3 viewer tastes × 3 titles). Pair order is the share of
+pairs where the matching taste got the higher p (0.5 is chance):
+
+| Judge model | Loaded memory | Median s/question | Pair order |
+| --- | --- | --- | --- |
+| `laya:421m-typed-decisions-bf16` | 0.9 GB | 0.5 | 0.56 |
+| `kev:0.8b-q8_0` | 2.6 GB | 2.5 | 0.78 |
+| `kev:4b-q4_K_M` (default) | 6.6 GB | 4.8 | 0.89 |
+| `clef-flash` (9B) | 14 GB | 21 | 1.00 |
+| `clef` (27B) | 25 GB | 50 | 1.00 |
+
+laya did not separate tastes in this check. `clef-flash` and `clef` rank
+better but are 4–10× slower and 2–4× bigger. With Ollama limited to 6
+threads, `kev:4b-q4_K_M` took 4.6 s and `clef-flash` 29 s; a 6-core i5-8500T
+will be slower than these figures. A cycle's 180 s judge budget and the
+answer cache bound the cost: only new or changed look-alikes are asked again.
+`clef:cloud` runs on ollama.com instead and needs an ollama.com API key
+(Settings > Ollama); each question then carries, to ollama.com, the titles a
+viewer played and left unplayed.
+
+Embedding is cheap: about 0.03 s per title with `all-minilm` (46 MB on disk,
+49 MB loaded), 0.11 s with `embeddinggemma` (0.09 s with
+`embeddinggemma:300m-qat-q8_0`); `embeddinggemma` and `nomic-embed-text`
+remain choices.
 
 The description is built from content metadata only: title, year, genres,
 certification, runtime, original language, studio or network, series type,
@@ -521,94 +555,78 @@ Radarr collection, overview, and from Plex (when configured) tagline,
 countries, directors, writers and the cast Plex lists. Nothing about your
 household's viewing, ratings, requests, dates or tags goes in.
 
-Switch it on in Settings > Taste embeddings:
+Settings > Ollama, used by flinch-arrd and, for search, flinch-web (both must
+reach it):
 
 | Field | Default | Notes |
 | --- | --- | --- |
-| Embed titles | off | embed new and changed titles each cycle |
-| Model | EmbeddingGemma 2 | `embeddinggemma-2`, `bge-small-en-v1.5` or `all-minilm-l6-v2`; switching embeds every title again |
-| Dimensions | 256 | EmbeddingGemma 2 only: 128, 256, 512 or 768, how much of the 768-d vector is kept (Matryoshka truncation); changing it embeds every title again. The other models always keep their 384 and ignore it |
-| Daily budget | 500 | at most this many titles (1–20000) embedded per UTC day, on-disk titles first |
-| Posters | off | EmbeddingGemma 2 only: describe each title by its poster too (see below); switching it on or off embeds every title again |
-| Taste half-life | 0 (off) | `taste.half_life_days`, 7–3650: an outcome counts half after this many days (see [Taste](../docs/how-it-works.md#taste-embeddinggemma-2)); applied at the next daily refit |
+| URL | `http://localhost:11434` | `ollama.url`, http or https, no spaces. In the cluster, the Ollama Service's address (e.g. `http://ollama:11434`) |
+| API key | blank | `ollama.token`: only ollama.com needs one; a local Ollama needs none. Never sent back to the browser; blank keeps the saved one while the URL is unchanged |
+| Key variable | blank | `ollama.api_key_env`: or the name of an environment variable holding the key. The manifests map `OLLAMA_API_KEY` from `flinch-secrets` (optional) into both pods, so name `OLLAMA_API_KEY` here. Either is sent as `Authorization: Bearer` |
 
-- **Models.** Pick by memory:
+Settings > Embeddings:
 
-  | Model | Weights | Vector | Resident while embedding | Peak while loading | 16 texts × 256 tokens |
-  | --- | --- | --- | --- | --- | --- |
-  | EmbeddingGemma 2 (`google/embeddinggemma-2`, Apache 2.0) | ~580 MB | 128–768 | ~650 MB peak (below) | — | not measured (5 texts ≈ 3 s, below) |
-  | bge-small (`BAAI/bge-small-en-v1.5`, MIT) | ~130 MB | 384 | ~200 MB | ~270 MB | ~3.2 s |
-  | MiniLM (`sentence-transformers/all-MiniLM-L6-v2`, Apache 2.0) | ~90 MB | 384 | ~110 MB | ~190 MB | ~1.6 s |
+| Field | Default | Notes |
+| --- | --- | --- |
+| Embed titles | off | `embedding.enabled`: embed new and changed titles each cycle |
+| Model | `all-minilm` | `embedding.model`: any Ollama embedding model (`embeddinggemma`, `nomic-embed-text`, …), pulled first; switching embeds every title again |
+| Dimensions | 0 (*Native*) | `embedding.dimensions`: 0 keeps the model's own length (384 for `all-minilm`); 32–4096 cuts each vector to that length and re-normalises it (Matryoshka truncation, only for models trained for it: embeddinggemma keeps 128, 256, 512 or 768 meaningful). Changing it embeds every title again |
+| Daily budget | 500 | `embedding.daily_budget`: at most this many titles (1–20000) embedded per UTC day, on-disk titles first |
 
-  Measured on the 20-thread test machine. While a small model loads, its
-  memory-mapped file (clean page cache the kernel can drop) and the float32
-  copy candle makes of it are both resident; the mapping is released once
-  loaded. So only MiniLM stays under 150 MB while embedding; bge-small needs
-  about 200 MB. EmbeddingGemma 2 describes titles best. The two BERT
-  encoders run on candle's BERT port with float32 weights, four texts per
-  forward pass, each text cut to 256 tokens (a long overview loses its end);
-  bge uses CLS pooling, MiniLM mean pooling, as their sentence-transformers
-  configs say. Their first cycle downloads `config.json`, `tokenizer.json`
-  and `model.safetensors` of a pinned revision into
-  `/state/models/<model>-<revision>/` (offline: copy those three there).
-  Search uses whichever model the vectors were made with.
+Settings > Taste:
 
-- **Weights.** The first cycle with embedding on downloads the pinned
-  revision of `google/embeddinggemma-2` (Apache 2.0, no token needed) from
-  Hugging Face: its tokenizer and only the text tensors of the checkpoint
-  (one 542 MB byte range of the 1.5 GB file), into
-  `/state/models/embeddinggemma-2-<revision>/`. The daemon needs HTTPS to
-  `huggingface.co` and its file CDN that once, and follows their redirects for
-  this download only. Offline? Copy `tokenizer.json` and `text.safetensors`
-  there yourself.
-- **CPU and memory.** Float32 math on bfloat16 weights that stay
-  memory-mapped, one layer at a time (float16 is never used: the model card
-  says it breaks EmbeddingGemma). A cycle embeds for at most two minutes and
-  the plan waits for it; on a 20-thread test machine five descriptions took
-  about 3 seconds. The first cycle (download plus embedding) peaked at about
-  650 MB resident, mostly the mapped weights, which is why the manifests give
-  `flinch-arrd` a 1 Gi limit.
-- **Posters (optional).** With Posters on, each title's description also
-  holds its poster, as the model's interleaved image input: a port of
-  EmbeddingGemma 2's vision tower (Gemma 4's) on candle turns the poster into
-  up to 280 soft tokens that the text encoder reads where the description
-  says `Poster: <|image|>`, right after the title. The poster is the one
-  Radarr or Sonarr lists upstream (`images` → `poster` → `remoteUrl`, a TMDB
-  or TheTVDB CDN address), fetched with no credential or cookie, at most
-  8 MB, JPEG, PNG or WebP; the *arr's own copy is never used, since reaching
-  it takes an API key. The first cycle with posters on downloads the vision
-  tensors as well: two more byte ranges of the checkpoint (335 MB) into
-  `vision.safetensors`, plus `processor_config.json`. A poster the CDN
-  refuses or that does not decode leaves the title described by text alone
-  until its poster URL changes; a network error or CDN fault leaves it for a
-  later cycle. The vectors match the reference ONNX export (Pillow
-  preprocessing) to a cosine of 1.000000 for a PNG poster and 0.99985 to
-  0.99996 for JPEGs, where the two JPEG decoders round a few pixels
-  differently. Cost, measured on the test machine with a 2:3 poster (260
-  soft tokens): the vision tower took 12.2 s on 2 CPUs, 7.4 s on 4 and 4.9 s
-  on 8, and the text pass with the poster another 0.6–1.3 s, so a cycle's two
-  minutes embed roughly 9 to 22 titles; the daily budget still applies. Peak
-  resident memory was about 830 MB: some 580 MB of it the mapped weights,
-  which the kernel can drop and read again, and about 250 MB working memory.
-  That fits under the manifests' 1 Gi limit only because the mapped part can
-  be dropped; it was not run under that limit, so give `flinch-arrd` 1.5 Gi
-  with posters on.
-- **Off again.** Switching it off stops embedding; the vectors already made
-  stay in use. The header lists **Embeddings** while it is on; hover it for
-  coverage and the budget left today, or the last error.
+| Field | Default | Notes |
+| --- | --- | --- |
+| Judge | off | `taste.judge_enabled`: off, taste is 0 everywhere |
+| Model | `kev:4b-q4_K_M` | `taste.judge_model`: any Ollama model that answers `/v1/systemone` typed questions (e.g. `kev:4b-q4_K_M`, `clef-flash`, `clef`, `clef:cloud`; see the table above); switching clears the cached answers and refits the adopted fit, which was learned on the old judge's answers |
+| Daily budget | 500 | `taste.judge_daily_budget`: at most this many questions (1–20000) asked per UTC day |
+
+- **Prompts.** Models whose name starts with `embeddinggemma` get
+  `task: classification | query: ` before each description and
+  `task: search result | query: ` before a search; `bge*` models get bge's
+  query instruction; other models the bare text.
+- **Budgets and failures.** A cycle embeds for at most two minutes and asks
+  the judge for at most three, and the plan waits for both. Ollama unreachable,
+  or without the model: the header's entry turns red with what to do (e.g.
+  "Ollama at http://localhost:11434 has no model all-minilm: run
+  `ollama pull all-minilm`"), the cached vectors and answers stay, and
+  the cycle goes on.
+- **Cached answers.** The judge's answers are kept in `taste_answers.json`, keyed
+  by the model, the question and what was asked (the nearest titles and
+  whether the viewer played each), so a title is asked again only when that
+  changes. A title not answered yet reads taste 0 until its question comes
+  up; each cycle asks this cycle's titles first. Answers unused for 30 days
+  are dropped. How it is asked: [Taste](../docs/how-it-works.md#taste-ollama-vectors-a-judge-model).
+- **Memory.** No model runs in FLINCH's pods, so the manifests give
+  `flinch-arrd` a 512 Mi and `flinch-web` a 256 Mi memory limit. Size the
+  Ollama host for the models instead.
+- **Removed.** The in-process encoders are gone: candle, the weights
+  download, EmbeddingGemma 2, bge-small and MiniLM. So are poster (vision)
+  vectors: Ollama's embed API takes text only. A settings.json that still has
+  `embedding.posters` or `taste.half_life_days` loads; both are ignored. An
+  old model name (`embeddinggemma-2`, `bge-small-en-v1.5`,
+  `all-minilm-l6-v2`) is kept as it is and reads as an Ollama model, so the
+  header says Ollama has no such model until you set Model to an Ollama name
+  such as `all-minilm`. Vectors made in-process are embedded once more
+  through Ollama, and an existing `hazard.json` is refitted. The `models/`
+  directory those versions left on the state volume is no longer read:
+  delete it to free the space.
+- **Off again.** Switching embedding off stops embedding; the vectors already
+  made stay in use. Switching the judge off sets taste to 0. The header lists
+  **Embeddings** and **Taste** while they are on; hover either for coverage,
+  what is waiting and the budget left today, or the last error.
 - **Inflow advice.** The Overview's *Coming in, likely unwatched* card lists
   monitored shows that read cold or were abandoned, and cold Seerr requests,
   with the suggested action (e.g. unmonitor future seasons in Sonarr). FLINCH
   only reads Sonarr, Radarr and Seerr for it; acting on it is up to you. The
   abandoned rule needs no vectors; the cold rules list nothing until titles
-  are embedded.
+  are embedded and judged.
 - **Search by meaning.** With titles embedded, the Series and Movies search
-  box's *Meaning* mode finds titles by what they are about. `flinch-web` runs
-  the same encoder on the weights the daemon downloaded (it never fetches
-  them itself): about 0.3 s of one core per query, and about 550 MB resident
-  from the first search on (700 MB at peak), so the manifests give
-  `flinch-web` a 1 Gi memory and one-core CPU limit. Until the weights and
-  vectors exist the search says so and the *Title* mode works as before.
+  box's *Meaning* mode finds titles by what they are about. `flinch-web`
+  embeds the query through the same Ollama with the model the vectors were
+  made with. Until vectors exist the search says what to switch on (409);
+  with Ollama unreachable or without that model it says so (502); the
+  *Title* mode works as before.
 
 ## Install
 
@@ -998,10 +1016,11 @@ file reads as "nothing yet".
 | `operator-keeps.json` | the cards your own Maintainerr exclusions keep, as last read | rewritten by the next cycle that reads Maintainerr; an outage before then plans without them (nothing is synced during it) |
 | `playback.json`, `tautulli.json` | raw plays, the daily fit's input | fitting waits for new history |
 | `fit.json` | the last daily fit: the candidate judged (recalibrated priors or full fit), its out-of-fold AUC, Brier and ECE beside the priors', its parameters, and why it was or was not adopted | refitted on the next cycle |
-| `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate | the priors run until a fit is adopted again |
+| `hazard.json` | the adopted P(watch) hazard, present only while a fit clears the gate, and the judge model its taste weight was learned on (none while the judge was off) | the priors run until a fit is adopted again; a judge model that differs from the configured one refits that cycle |
 | `episode-guids.json` | episode `plex://` GUIDs of resolved shows, for plays recorded before a library migration (refreshed at most daily, only while such plays exist) | re-read from Plex on the next cycle that needs it |
 | `arr-history.json` | when each title was on disk, and the files removed in the last 30 days, from the Radarr and Sonarr import and delete history (refreshed daily) | read again from the *arrs on the next cycle |
-| `embeddings.json` | the taste vectors: model, dimensions and text recipe they were made with, per movie and show the hash of its description and its vector, and how many titles were embedded today (UTC) | every title is embedded again, within the daily budget |
+| `embeddings.json` | the taste vectors: model (`ollama:<model>`) and dimensions they were made with, per movie and show its display title (e.g. `Heat (1995)`), the description it embedded, its hash and its vector, and how many titles were embedded today (UTC) | every title is embedded again, within the daily budget |
+| `taste_answers.json` | the taste judge's answers: the model they came from, each answer with the day it was last used (pruned after 30 days unused), and the questions still waiting | every question is asked again, within the daily budget; taste reads 0 until its answer is back |
 | `themes.json` | each movie's and show's theme (clusters of the taste vectors) and the theme names, with when they were computed and a fingerprint of the vectors (recomputed daily or when a vector changes) | recomputed on the next cycle |
 | `notify.json` | per notification channel the events it was sent (kept 120 days), its posts of the last hour, and each problem's run of cycles | events still current are sent once more; problem runs start over |
 | `notify-test.json`, `notify-test-result.json` | a Send test the UI asked for, and the daemon's answer | nothing; press Send test again |
@@ -1020,8 +1039,6 @@ file reads as "nothing yet".
 | `arr-fleet-status.json` | the last read of every Radarr, Sonarr and Prowlarr: health, disks, stuck queue items with their reason, indexers, and the last 50 fleet actions | read again next cycle; the action log starts over |
 | `fleet-queue.json` | each queue item's bytes left and when it last progressed | every download's stall clock starts over |
 | `fleet-requests/queue-remove.<instance>-<id>`, `fleet-requests/indexer-test.<id>` | a queue removal or indexer test the UI queued, until the daemon takes it | nothing; ask again |
-| `models/embeddinggemma-2-<revision>/` | EmbeddingGemma 2's tokenizer and text weights (about 580 MB), downloaded the first time embedding runs; with Posters on also `vision.safetensors` (335 MB) and `processor_config.json` | downloaded again the next time embedding runs |
-| `models/bge-small-en-v1.5-<revision>/`, `models/all-minilm-l6-v2-<revision>/` | the chosen small model's `config.json`, `tokenizer.json` and `model.safetensors` (about 130 / 90 MB) | downloaded again the next time embedding runs |
 
 `protected.json` and `scheduled.json` record only the exclusions and
 collection members FLINCH created and verified by reading them back, so runs
@@ -1088,6 +1105,7 @@ spec:
                 - { name: SABNZBD_URL, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_URL, optional: true } } }
                 - { name: SABNZBD_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: SABNZBD_API_KEY, optional: true } } }
                 - { name: TMDB_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: TMDB_API_KEY, optional: true } } }
+                - { name: OLLAMA_API_KEY, valueFrom: { secretKeyRef: { name: flinch-secrets, key: OLLAMA_API_KEY, optional: true } } }
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

@@ -7,47 +7,33 @@
 //! nothing else of an *arr or Plex row reaches the text.
 //!
 //! The text is deterministic: lists are deduplicated and sorted, whitespace is
-//! collapsed, so its hash changes only when the description does. It starts
-//! with the model's prompt ([`super::EmbeddingModel::text_prefix`]), which is
-//! hashed with it: another model's text is another text, and re-embedded.
+//! collapsed, so its hash changes only when the description does. It carries
+//! no model prompt: the daemon puts the model's own
+//! ([`super::text_prefix`]) in front when it asks Ollama, and the bare
+//! description is what the taste judge reads.
 
-use super::EmbeddingModel;
 use crate::arr::{ArrMovie, ArrSeries};
 use crate::plex::{PlexMetadata, PlexTag};
 
 /// Bumped whenever the recipe changes, which invalidates every cached vector.
-pub const RECIPE_VERSION: u32 = 1;
-/// The recipe of text-and-poster vectors: the text recipe plus a poster
-/// placeholder, a space of its own (see [`super::weights::poster_model_id`]).
-pub const POSTER_RECIPE_VERSION: u32 = 2;
-/// Where EmbeddingGemma 2 takes an image's soft tokens.
-pub const IMAGE_PLACEHOLDER: &str = "<|image|>";
-/// The line holding the poster, right after the title so a cut overview never
-/// takes it.
-const POSTER_LINE: &str = "\nPoster: <|image|>";
+pub const RECIPE_VERSION: u32 = 2;
 
 /// The longest text sent, in characters. The overview comes last, so a long
 /// one is what gets cut; the model's context is far larger, this bounds cost.
 const MAX_CHARS: usize = 2_000;
 
-/// The text of a subject embedded with its poster: its description with the
-/// poster's placeholder after the title line. A placeholder the metadata
-/// itself happens to hold is dropped, so the poster is the only image.
-pub fn with_poster(text: &str) -> String {
-    let text = text.replace(IMAGE_PLACEHOLDER, "");
-    let at = text.find('\n').unwrap_or(text.len());
-    format!("{}{POSTER_LINE}{}", &text[..at], &text[at..])
+/// How a title is named to the taste judge: `Heat (1995)`, or the bare title
+/// when the year is unknown.
+pub fn display_title(title: &str, year: Option<u32>) -> String {
+    match year.filter(|year| *year > 0) {
+        Some(year) => format!("{} ({year})", collapse(title)),
+        None => collapse(title),
+    }
 }
 
-/// The cache key of a text embedded with the poster at `url`: a new poster
-/// is a new description.
-pub fn poster_hash(text: &str, url: &str) -> String {
-    text_hash(&format!("{text}\n{url}"))
-}
-
-/// The text of a Radarr movie for `model`, with its Plex row when Plex matched it.
-pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>, model: EmbeddingModel) -> String {
-    let mut text = Text::new(model, &movie.title);
+/// The text of a Radarr movie, with its Plex row when Plex matched it.
+pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>) -> String {
+    let mut text = Text::new(&movie.title);
     text.line("Year", movie.year.filter(|year| *year > 0).map(|year| year.to_string()));
     text.line("Kind", Some("movie".to_string()));
     text.list("Genres", movie.genres.iter().map(String::as_str).chain(tags(plex.map_or(&[][..], |row| &row.genres))), 8);
@@ -61,10 +47,10 @@ pub fn movie_text(movie: &ArrMovie, plex: Option<&PlexMetadata>, model: Embeddin
     text.finish()
 }
 
-/// The text of a Sonarr series for `model` (every season shares it), with the
-/// show's Plex row when Plex matched one of its seasons.
-pub fn series_text(series: &ArrSeries, plex: Option<&PlexMetadata>, model: EmbeddingModel) -> String {
-    let mut text = Text::new(model, &series.title);
+/// The text of a Sonarr series (every season shares it), with the show's
+/// Plex row when Plex matched one of its seasons.
+pub fn series_text(series: &ArrSeries, plex: Option<&PlexMetadata>) -> String {
+    let mut text = Text::new(&series.title);
     text.line("Year", series.year.filter(|year| *year > 0).map(|year| year.to_string()));
     text.line("Kind", Some("series".to_string()));
     text.line("Series type", Some(series.series_type.clone()));
@@ -105,8 +91,8 @@ fn collapse(value: &str) -> String {
 struct Text(String);
 
 impl Text {
-    fn new(model: EmbeddingModel, title: &str) -> Self {
-        Self(format!("{}Title: {}", model.text_prefix(), collapse(title)))
+    fn new(title: &str) -> Self {
+        Self(format!("Title: {}", collapse(title)))
     }
 
     fn line(&mut self, label: &str, value: Option<String>) {

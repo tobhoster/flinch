@@ -33,7 +33,7 @@ pub struct Span {
 
 impl Span {
     fn covers(&self, at: u64) -> bool {
-        self.from <= at && self.to.map_or(true, |to| at < to)
+        self.from <= at && self.to.is_none_or(|to| at < to)
     }
 }
 
@@ -152,7 +152,7 @@ fn merged(mut spans: Vec<Span>) -> Vec<Span> {
     let mut out: Vec<Span> = Vec::with_capacity(spans.len());
     for span in spans.into_iter().filter(|span| span.to != Some(span.from)) {
         match out.last_mut() {
-            Some(last) if last.to.map_or(true, |to| span.from <= to) => {
+            Some(last) if last.to.is_none_or(|to| span.from <= to) => {
                 last.to = last.to.zip(span.to).map(|(a, b)| a.max(b));
             }
             _ => out.push(span),
