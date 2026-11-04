@@ -537,12 +537,28 @@ pairs where the matching taste got the higher p (0.5 is chance):
 
 laya did not separate tastes in this check. `clef-flash` and `clef` rank
 better but are 4–10× slower and 2–4× bigger. With Ollama limited to 6
-threads, `kev:4b-q4_K_M` took 4.6 s and `clef-flash` 29 s; a 6-core i5-8500T
-will be slower than these figures. A cycle's 180 s judge budget and the
-answer cache bound the cost: only new or changed look-alikes are asked again.
-`clef:cloud` runs on ollama.com instead and needs an ollama.com API key
-(Settings > Ollama); each question then carries, to ollama.com, the titles a
-viewer played and left unplayed.
+threads, `kev:4b-q4_K_M` took 4.6 s and `clef-flash` 29 s. On a 6-core
+i5-8500T Kubernetes node it took about 19 s a question (107 s with the model
+loading). A cycle's 180 s judge budget and the answer cache bound the cost:
+only new or changed look-alikes are asked again. `clef:cloud` runs on
+ollama.com instead and needs an ollama.com API key (Settings > Ollama); each
+question then carries, to ollama.com, the titles a viewer played and left
+unplayed.
+
+**Memory.** The loaded sizes above include each model's own default context
+(kev: 73,728 tokens), and `/v1/systemone` ignores `OLLAMA_CONTEXT_LENGTH` and
+request options. A Modelfile does take effect; FLINCH's longest question is
+about 1,000 tokens:
+
+```bash
+printf 'FROM kev:4b-q4_K_M\nPARAMETER num_ctx 4096\n' > Modelfile
+ollama create kev-4b-4k -f Modelfile   # 4.2 GB loaded instead of 6.6
+```
+
+Then name `kev-4b-4k` as the judge model. Even at 4.2 GB, give Ollama a
+memory request equal to its limit on a node with that much to spare: a judge
+loading on a node already near full can run the whole node out of memory
+rather than just its own container.
 
 Embedding is cheap: about 0.03 s per title with `all-minilm` (46 MB on disk,
 49 MB loaded), 0.11 s with `embeddinggemma` (0.09 s with
